@@ -1,0 +1,1808 @@
+entries:
+- id: furthermore
+  type: word
+  category: transition
+  pattern: furthermore
+  weight: 1.0
+  replacements:
+    default:
+    - also
+    - and
+    formal:
+    - also
+    - and
+    casual:
+    - also
+    - and
+    professional:
+    - also
+    - and
+    friendly:
+    - also
+    - and
+  llm_only: false
+- id: moreover
+  type: word
+  category: transition
+  pattern: moreover
+  weight: 1.0
+  replacements:
+    default:
+    - and
+    formal:
+    - and
+    casual:
+    - and
+    professional:
+    - and
+    friendly:
+    - and
+  llm_only: false
+- id: additionally
+  type: word
+  category: transition
+  pattern: additionally
+  weight: 1.0
+  replacements:
+    default:
+    - also
+    - and
+    formal:
+    - also
+    - and
+    casual:
+    - also
+    - and
+    professional:
+    - also
+    - and
+    friendly:
+    - also
+    - and
+  llm_only: false
+- id: consequently
+  type: word
+  category: transition
+  pattern: consequently
+  weight: 1.0
+  replacements:
+    default:
+    - so
+    - and
+    formal:
+    - so
+    - and
+    casual:
+    - so
+    - and
+    professional:
+    - so
+    - and
+    friendly:
+    - so
+    - and
+  llm_only: false
+- id: nevertheless
+  type: word
+  category: transition
+  pattern: nevertheless
+  weight: 1.0
+  replacements:
+    default:
+    - still
+    - and
+    formal:
+    - still
+    - and
+    casual:
+    - still
+    - and
+    professional:
+    - still
+    - and
+    friendly:
+    - still
+    - and
+  llm_only: false
+- id: nonetheless
+  type: word
+  category: transition
+  pattern: nonetheless
+  weight: 1.0
+  replacements:
+    default:
+    - still
+    - and
+    formal:
+    - still
+    - and
+    casual:
+    - still
+    - and
+    professional:
+    - still
+    - and
+    friendly:
+    - still
+    - and
+  llm_only: false
+- id: accordingly
+  type: word
+  category: transition
+  pattern: accordingly
+  weight: 1.0
+  replacements:
+    default:
+    - so
+    - and
+    formal:
+    - so
+    - and
+    casual:
+    - so
+    - and
+    professional:
+    - so
+    - and
+    friendly:
+    - so
+    - and
+  llm_only: false
+- id: henceforth
+  type: word
+  category: transition
+  pattern: henceforth
+  weight: 1.0
+  replacements:
+    default:
+    - from now on
+    - and
+    formal:
+    - from now on
+    - and
+    casual:
+    - from now on
+    - and
+    professional:
+    - from now on
+    - and
+    friendly:
+    - from now on
+    - and
+  llm_only: false
+- id: in_conclusion
+  type: phrase
+  category: transition
+  pattern: in conclusion
+  weight: 1.0
+  replacements:
+    default:
+    - to wrap up
+    - and
+    formal:
+    - to wrap up
+    - and
+    casual:
+    - to wrap up
+    - and
+    professional:
+    - to wrap up
+    - and
+    friendly:
+    - to wrap up
+    - and
+  llm_only: false
+- id: in_summary
+  type: phrase
+  category: transition
+  pattern: in summary
+  weight: 1.0
+  replacements:
+    default:
+    - overall
+    - and
+    formal:
+    - overall
+    - and
+    casual:
+    - overall
+    - and
+    professional:
+    - overall
+    - and
+    friendly:
+    - overall
+    - and
+  llm_only: false
+- id: to_summarize
+  type: phrase
+  category: transition
+  pattern: to summarize
+  weight: 1.0
+  replacements:
+    default:
+    - overall
+    - and
+    formal:
+    - overall
+    - and
+    casual:
+    - overall
+    - and
+    professional:
+    - overall
+    - and
+    friendly:
+    - overall
+    - and
+  llm_only: false
+- id: on_the_other_hand
+  type: phrase
+  category: transition
+  pattern: on the other hand
+  weight: 1.0
+  replacements:
+    default:
+    - but
+    - and
+    formal:
+    - but
+    - and
+    casual:
+    - but
+    - and
+    professional:
+    - but
+    - and
+    friendly:
+    - but
+    - and
+  llm_only: false
+- id: at_the_end_of_the_day
+  type: phrase
+  category: transition
+  pattern: at the end of the day
+  weight: 1.0
+  replacements:
+    default:
+    - ultimately
+    - and
+    formal:
+    - ultimately
+    - and
+    casual:
+    - ultimately
+    - and
+    professional:
+    - ultimately
+    - and
+    friendly:
+    - ultimately
+    - and
+  llm_only: false
+- id: hence
+  type: word
+  category: transition
+  pattern: hence
+  weight: 1.0
+  replacements:
+    default:
+    - so
+    - and
+    formal:
+    - so
+    - and
+    casual:
+    - so
+    - and
+    professional:
+    - so
+    - and
+    friendly:
+    - so
+    - and
+  llm_only: false
+- id: thus
+  type: word
+  category: transition
+  pattern: thus
+  weight: 1.0
+  replacements:
+    default:
+    - so
+    - and
+    formal:
+    - so
+    - and
+    casual:
+    - so
+    - and
+    professional:
+    - so
+    - and
+    friendly:
+    - so
+    - and
+  llm_only: false
+- id: therefore
+  type: word
+  category: transition
+  pattern: therefore
+  weight: 1.0
+  replacements:
+    default:
+    - so
+    - and
+    formal:
+    - so
+    - and
+    casual:
+    - so
+    - and
+    professional:
+    - so
+    - and
+    friendly:
+    - so
+    - and
+  llm_only: false
+- id: delve_into
+  type: phrase
+  category: buzzword
+  pattern: delve into
+  weight: 1.0
+  replacements:
+    default:
+    - dig into
+    - look at
+    formal:
+    - dig into
+    - look at
+    casual:
+    - dig into
+    - look at
+    professional:
+    - dig into
+    - look at
+    friendly:
+    - dig into
+    - look at
+  llm_only: false
+- id: delve
+  type: word
+  category: buzzword
+  pattern: delve
+  weight: 1.0
+  replacements:
+    default:
+    - explore
+    - look at
+    formal:
+    - explore
+    - look at
+    casual:
+    - explore
+    - look at
+    professional:
+    - explore
+    - look at
+    friendly:
+    - explore
+    - look at
+  llm_only: false
+- id: testament_to
+  type: phrase
+  category: buzzword
+  pattern: testament to
+  weight: 1.0
+  replacements:
+    default:
+    - proof of
+    - shows
+    formal:
+    - proof of
+    - shows
+    casual:
+    - proof of
+    - shows
+    professional:
+    - proof of
+    - shows
+    friendly:
+    - proof of
+    - shows
+  llm_only: false
+- id: in_the_world_of
+  type: phrase
+  category: buzzword
+  pattern: in the world of
+  weight: 1.0
+  replacements:
+    default:
+    - in
+    formal:
+    - in
+    casual:
+    - in
+    professional:
+    - in
+    friendly:
+    - in
+  llm_only: false
+- id: when_it_comes_to
+  type: phrase
+  category: buzzword
+  pattern: when it comes to
+  weight: 1.0
+  replacements:
+    default:
+    - for
+    - about
+    formal:
+    - for
+    - about
+    casual:
+    - for
+    - about
+    professional:
+    - for
+    - about
+    friendly:
+    - for
+    - about
+  llm_only: false
+- id: landscape
+  type: word
+  category: buzzword
+  pattern: landscape
+  weight: 1.0
+  replacements:
+    default:
+    - field
+    - space
+    formal:
+    - field
+    - space
+    casual:
+    - field
+    - space
+    professional:
+    - field
+    - space
+    friendly:
+    - field
+    - space
+  llm_only: false
+- id: robust
+  type: word
+  category: buzzword
+  pattern: robust
+  weight: 1.0
+  replacements:
+    default:
+    - strong
+    - solid
+    formal:
+    - strong
+    - solid
+    casual:
+    - strong
+    - solid
+    professional:
+    - strong
+    - solid
+    friendly:
+    - strong
+    - solid
+  llm_only: false
+- id: tapestry
+  type: word
+  category: buzzword
+  pattern: tapestry
+  weight: 1.0
+  replacements:
+    default:
+    - mix
+    - blend
+    formal:
+    - mix
+    - blend
+    casual:
+    - mix
+    - blend
+    professional:
+    - mix
+    - blend
+    friendly:
+    - mix
+    - blend
+  llm_only: false
+- id: unlock
+  type: word
+  category: buzzword
+  pattern: unlock
+  weight: 1.0
+  replacements:
+    default:
+    - open up
+    - enable
+    formal:
+    - open up
+    - enable
+    casual:
+    - open up
+    - enable
+    professional:
+    - open up
+    - enable
+    friendly:
+    - open up
+    - enable
+  llm_only: false
+- id: leverage
+  type: word
+  category: buzzword
+  pattern: leverage
+  weight: 1.0
+  replacements:
+    default:
+    - use
+    formal:
+    - use
+    casual:
+    - use
+    professional:
+    - use
+    friendly:
+    - use
+  llm_only: false
+- id: steadfast
+  type: word
+  category: buzzword
+  pattern: steadfast
+  weight: 1.0
+  replacements:
+    default:
+    - steady
+    - firm
+    formal:
+    - steady
+    - firm
+    casual:
+    - steady
+    - firm
+    professional:
+    - steady
+    - firm
+    friendly:
+    - steady
+    - firm
+  llm_only: false
+- id: embarked_on_journey
+  type: phrase
+  category: buzzword
+  pattern: embarked on a journey
+  weight: 1.0
+  replacements:
+    default:
+    - started
+    - began
+    formal:
+    - started
+    - began
+    casual:
+    - started
+    - began
+    professional:
+    - started
+    - began
+    friendly:
+    - started
+    - began
+  llm_only: false
+- id: intriguing_journey
+  type: phrase
+  category: buzzword
+  pattern: intriguing journey
+  weight: 1.0
+  replacements:
+    default:
+    - story
+    - path
+    formal:
+    - story
+    - path
+    casual:
+    - story
+    - path
+    professional:
+    - story
+    - path
+    friendly:
+    - story
+    - path
+  llm_only: false
+- id: path_forged
+  type: phrase
+  category: buzzword
+  pattern: path forged
+  weight: 1.0
+  replacements:
+    default:
+    - path built
+    - route
+    formal:
+    - path built
+    - route
+    casual:
+    - path built
+    - route
+    professional:
+    - path built
+    - route
+    friendly:
+    - path built
+    - route
+  llm_only: false
+- id: familiar_face
+  type: phrase
+  category: buzzword
+  pattern: familiar face
+  weight: 1.0
+  replacements:
+    default:
+    - known name
+    - regular
+    formal:
+    - known name
+    - regular
+    casual:
+    - known name
+    - regular
+    professional:
+    - known name
+    - regular
+    friendly:
+    - known name
+    - regular
+  llm_only: false
+- id: distinctive
+  type: word
+  category: buzzword
+  pattern: distinctive
+  weight: 1.0
+  replacements:
+    default:
+    - standout
+    - unique
+    formal:
+    - standout
+    - unique
+    casual:
+    - standout
+    - unique
+    professional:
+    - standout
+    - unique
+    friendly:
+    - standout
+    - unique
+  llm_only: false
+- id: memorable
+  type: word
+  category: buzzword
+  pattern: memorable
+  weight: 1.0
+  replacements:
+    default:
+    - unforgettable
+    - notable
+    formal:
+    - unforgettable
+    - notable
+    casual:
+    - unforgettable
+    - notable
+    professional:
+    - unforgettable
+    - notable
+    friendly:
+    - unforgettable
+    - notable
+  llm_only: false
+- id: holistic
+  type: word
+  category: buzzword
+  pattern: holistic
+  weight: 1.0
+  replacements:
+    default:
+    - whole
+    - full
+    formal:
+    - whole
+    - full
+    casual:
+    - whole
+    - full
+    professional:
+    - whole
+    - full
+    friendly:
+    - whole
+    - full
+  llm_only: false
+- id: multifaceted
+  type: word
+  category: buzzword
+  pattern: multifaceted
+  weight: 1.0
+  replacements:
+    default:
+    - complex
+    - varied
+    formal:
+    - complex
+    - varied
+    casual:
+    - complex
+    - varied
+    professional:
+    - complex
+    - varied
+    friendly:
+    - complex
+    - varied
+  llm_only: false
+- id: pivotal
+  type: word
+  category: buzzword
+  pattern: pivotal
+  weight: 1.0
+  replacements:
+    default:
+    - key
+    - central
+    formal:
+    - key
+    - central
+    casual:
+    - key
+    - central
+    professional:
+    - key
+    - central
+    friendly:
+    - key
+    - central
+  llm_only: false
+- id: underscores
+  type: word
+  category: buzzword
+  pattern: underscores
+  weight: 1.0
+  replacements:
+    default:
+    - shows
+    - highlights
+    formal:
+    - shows
+    - highlights
+    casual:
+    - shows
+    - highlights
+    professional:
+    - shows
+    - highlights
+    friendly:
+    - shows
+    - highlights
+  llm_only: false
+- id: underscore
+  type: word
+  category: buzzword
+  pattern: underscore
+  weight: 1.0
+  replacements:
+    default:
+    - show
+    - highlight
+    formal:
+    - show
+    - highlight
+    casual:
+    - show
+    - highlight
+    professional:
+    - show
+    - highlight
+    friendly:
+    - show
+    - highlight
+  llm_only: false
+- id: utilize
+  type: word
+  category: buzzword
+  pattern: utilize
+  weight: 1.0
+  replacements:
+    default:
+    - use
+    formal:
+    - use
+    casual:
+    - use
+    professional:
+    - use
+    friendly:
+    - use
+  llm_only: false
+- id: facilitate
+  type: word
+  category: buzzword
+  pattern: facilitate
+  weight: 1.0
+  replacements:
+    default:
+    - help
+    - enable
+    formal:
+    - help
+    - enable
+    casual:
+    - help
+    - enable
+    professional:
+    - help
+    - enable
+    friendly:
+    - help
+    - enable
+  llm_only: false
+- id: paramount
+  type: word
+  category: buzzword
+  pattern: paramount
+  weight: 1.0
+  replacements:
+    default:
+    - main
+    - top
+    formal:
+    - main
+    - top
+    casual:
+    - main
+    - top
+    professional:
+    - main
+    - top
+    friendly:
+    - main
+    - top
+  llm_only: false
+- id: myriad
+  type: word
+  category: buzzword
+  pattern: myriad
+  weight: 1.0
+  replacements:
+    default:
+    - many
+    - lots of
+    formal:
+    - many
+    - lots of
+    casual:
+    - many
+    - lots of
+    professional:
+    - many
+    - lots of
+    friendly:
+    - many
+    - lots of
+  llm_only: false
+- id: plethora
+  type: word
+  category: buzzword
+  pattern: plethora
+  weight: 1.0
+  replacements:
+    default:
+    - many
+    - lots of
+    formal:
+    - many
+    - lots of
+    casual:
+    - many
+    - lots of
+    professional:
+    - many
+    - lots of
+    friendly:
+    - many
+    - lots of
+  llm_only: false
+- id: realm
+  type: word
+  category: buzzword
+  pattern: realm
+  weight: 1.0
+  replacements:
+    default:
+    - area
+    - field
+    formal:
+    - area
+    - field
+    casual:
+    - area
+    - field
+    professional:
+    - area
+    - field
+    friendly:
+    - area
+    - field
+  llm_only: false
+- id: crucial
+  type: word
+  category: buzzword
+  pattern: crucial
+  weight: 1.0
+  replacements:
+    default:
+    - key
+    - vital
+    formal:
+    - key
+    - vital
+    casual:
+    - key
+    - vital
+    professional:
+    - key
+    - vital
+    friendly:
+    - key
+    - vital
+  llm_only: false
+- id: comprehensive
+  type: word
+  category: buzzword
+  pattern: comprehensive
+  weight: 1.0
+  replacements:
+    default:
+    - full
+    - complete
+    formal:
+    - full
+    - complete
+    casual:
+    - full
+    - complete
+    professional:
+    - full
+    - complete
+    friendly:
+    - full
+    - complete
+  llm_only: false
+- id: nuanced
+  type: word
+  category: buzzword
+  pattern: nuanced
+  weight: 1.0
+  replacements:
+    default:
+    - subtle
+    - layered
+    formal:
+    - subtle
+    - layered
+    casual:
+    - subtle
+    - layered
+    professional:
+    - subtle
+    - layered
+    friendly:
+    - subtle
+    - layered
+  llm_only: false
+- id: seamless
+  type: word
+  category: buzzword
+  pattern: seamless
+  weight: 1.0
+  replacements:
+    default:
+    - smooth
+    - easy
+    formal:
+    - smooth
+    - easy
+    casual:
+    - smooth
+    - easy
+    professional:
+    - smooth
+    - easy
+    friendly:
+    - smooth
+    - easy
+  llm_only: false
+- id: cutting_edge
+  type: word
+  category: buzzword
+  pattern: cutting-edge
+  weight: 1.0
+  replacements:
+    default:
+    - new
+    - latest
+    formal:
+    - new
+    - latest
+    casual:
+    - new
+    - latest
+    professional:
+    - new
+    - latest
+    friendly:
+    - new
+    - latest
+  llm_only: false
+- id: game_changer
+  type: phrase
+  category: buzzword
+  pattern: game-changer
+  weight: 1.0
+  replacements:
+    default:
+    - big shift
+    - breakthrough
+    formal:
+    - big shift
+    - breakthrough
+    casual:
+    - big shift
+    - breakthrough
+    professional:
+    - big shift
+    - breakthrough
+    friendly:
+    - big shift
+    - breakthrough
+  llm_only: false
+- id: at_its_core
+  type: phrase
+  category: formulaic
+  pattern: at its core
+  weight: 1.0
+  replacements:
+    default:
+    - basically
+    - at heart
+    formal:
+    - basically
+    - at heart
+    casual:
+    - basically
+    - at heart
+    professional:
+    - basically
+    - at heart
+    friendly:
+    - basically
+    - at heart
+  llm_only: false
+- id: plays_vital_role
+  type: phrase
+  category: formulaic
+  pattern: plays a vital role
+  weight: 1.0
+  replacements:
+    default:
+    - matters
+    - helps
+    formal:
+    - matters
+    - helps
+    casual:
+    - matters
+    - helps
+    professional:
+    - matters
+    - helps
+    friendly:
+    - matters
+    - helps
+  llm_only: false
+- id: serves_as_a
+  type: phrase
+  category: formulaic
+  pattern: serves as a
+  weight: 1.0
+  replacements:
+    default:
+    - is a
+    - acts as
+    formal:
+    - is a
+    - acts as
+    casual:
+    - is a
+    - acts as
+    professional:
+    - is a
+    - acts as
+    friendly:
+    - is a
+    - acts as
+  llm_only: false
+- id: worth_noting
+  type: phrase
+  category: formulaic
+  pattern: it's worth noting
+  weight: 1.0
+  replacements:
+    default:
+    - note that
+    - keep in mind
+    formal:
+    - note that
+    - keep in mind
+    casual:
+    - note that
+    - keep in mind
+    professional:
+    - note that
+    - keep in mind
+    friendly:
+    - note that
+    - keep in mind
+  llm_only: false
+- id: worth_noting_is
+  type: phrase
+  category: formulaic
+  pattern: it is worth noting
+  weight: 1.0
+  replacements:
+    default:
+    - note that
+    - keep in mind
+    formal:
+    - note that
+    - keep in mind
+    casual:
+    - note that
+    - keep in mind
+    professional:
+    - note that
+    - keep in mind
+    friendly:
+    - note that
+    - keep in mind
+  llm_only: false
+- id: in_todays_world
+  type: phrase
+  category: formulaic
+  pattern: in today's world
+  weight: 1.0
+  replacements:
+    default:
+    - today
+    - now
+    formal:
+    - today
+    - now
+    casual:
+    - today
+    - now
+    professional:
+    - today
+    - now
+    friendly:
+    - today
+    - now
+  llm_only: false
+- id: in_this_day_and_age
+  type: phrase
+  category: formulaic
+  pattern: in this day and age
+  weight: 1.0
+  replacements:
+    default:
+    - today
+    - now
+    formal:
+    - today
+    - now
+    casual:
+    - today
+    - now
+    professional:
+    - today
+    - now
+    friendly:
+    - today
+    - now
+  llm_only: false
+- id: in_an_era_where
+  type: phrase
+  category: formulaic
+  pattern: in an era where
+  weight: 1.0
+  replacements:
+    default:
+    - now that
+    - when
+    formal:
+    - now that
+    - when
+    casual:
+    - now that
+    - when
+    professional:
+    - now that
+    - when
+    friendly:
+    - now that
+    - when
+  llm_only: false
+- id: dive_deep
+  type: phrase
+  category: buzzword
+  pattern: dive deep
+  weight: 1.0
+  replacements:
+    default:
+    - look closely
+    - dig in
+    formal:
+    - look closely
+    - dig in
+    casual:
+    - look closely
+    - dig in
+    professional:
+    - look closely
+    - dig in
+    friendly:
+    - look closely
+    - dig in
+  llm_only: false
+- id: look_no_further
+  type: phrase
+  category: formulaic
+  pattern: look no further
+  weight: 1.0
+  replacements:
+    default:
+    - this is it
+    - here it is
+    formal:
+    - this is it
+    - here it is
+    casual:
+    - this is it
+    - here it is
+    professional:
+    - this is it
+    - here it is
+    friendly:
+    - this is it
+    - here it is
+  llm_only: false
+- id: without_further_ado
+  type: phrase
+  category: formulaic
+  pattern: without further ado
+  weight: 1.0
+  replacements:
+    default:
+    - here goes
+    - let us begin
+    formal:
+    - here goes
+    - let us begin
+    casual:
+    - here goes
+    - let us begin
+    professional:
+    - here goes
+    - let us begin
+    friendly:
+    - here goes
+    - let us begin
+  llm_only: false
+- id: all_sorts_of
+  type: phrase
+  category: cliche
+  pattern: all sorts of
+  weight: 1.0
+  replacements:
+    default:
+    - many kinds of
+    - various
+    formal:
+    - many kinds of
+    - various
+    casual:
+    - many kinds of
+    - various
+    professional:
+    - many kinds of
+    - various
+    friendly:
+    - many kinds of
+    - various
+  llm_only: false
+- id: made_all_difference
+  type: phrase
+  category: cliche
+  pattern: made all the difference
+  weight: 1.0
+  replacements:
+    default:
+    - changed everything
+    - mattered a lot
+    formal:
+    - changed everything
+    - mattered a lot
+    casual:
+    - changed everything
+    - mattered a lot
+    professional:
+    - changed everything
+    - mattered a lot
+    friendly:
+    - changed everything
+    - mattered a lot
+  llm_only: false
+- id: behind_every_step
+  type: phrase
+  category: cliche
+  pattern: behind him every step
+  weight: 1.0
+  replacements:
+    default:
+    - supported throughout
+    - there throughout
+    formal:
+    - supported throughout
+    - there throughout
+    casual:
+    - supported throughout
+    - there throughout
+    professional:
+    - supported throughout
+    - there throughout
+    friendly:
+    - supported throughout
+    - there throughout
+  llm_only: false
+- id: worth_chasing
+  type: phrase
+  category: cliche
+  pattern: worth chasing
+  weight: 1.0
+  replacements:
+    default:
+    - worth pursuing
+    - worth going for
+    formal:
+    - worth pursuing
+    - worth going for
+    casual:
+    - worth pursuing
+    - worth going for
+    professional:
+    - worth pursuing
+    - worth going for
+    friendly:
+    - worth pursuing
+    - worth going for
+  llm_only: false
+- id: navigate
+  type: word
+  category: buzzword
+  pattern: navigate
+  weight: 1.0
+  replacements:
+    default:
+    - handle
+    - work through
+    formal:
+    - handle
+    - work through
+    casual:
+    - handle
+    - work through
+    professional:
+    - handle
+    - work through
+    friendly:
+    - handle
+    - work through
+  llm_only: false
+- id: foster
+  type: word
+  category: buzzword
+  pattern: foster
+  weight: 1.0
+  replacements:
+    default:
+    - build
+    - encourage
+    formal:
+    - build
+    - encourage
+    casual:
+    - build
+    - encourage
+    professional:
+    - build
+    - encourage
+    friendly:
+    - build
+    - encourage
+  llm_only: false
+- id: enhance
+  type: word
+  category: buzzword
+  pattern: enhance
+  weight: 1.0
+  replacements:
+    default:
+    - improve
+    - boost
+    formal:
+    - improve
+    - boost
+    casual:
+    - improve
+    - boost
+    professional:
+    - improve
+    - boost
+    friendly:
+    - improve
+    - boost
+  llm_only: false
+- id: streamline
+  type: word
+  category: buzzword
+  pattern: streamline
+  weight: 1.0
+  replacements:
+    default:
+    - simplify
+    - speed up
+    formal:
+    - simplify
+    - speed up
+    casual:
+    - simplify
+    - speed up
+    professional:
+    - simplify
+    - speed up
+    friendly:
+    - simplify
+    - speed up
+  llm_only: false
+- id: empower
+  type: word
+  category: buzzword
+  pattern: empower
+  weight: 1.0
+  replacements:
+    default:
+    - enable
+    - support
+    formal:
+    - enable
+    - support
+    casual:
+    - enable
+    - support
+    professional:
+    - enable
+    - support
+    friendly:
+    - enable
+    - support
+  llm_only: false
+- id: inherent
+  type: word
+  category: buzzword
+  pattern: inherent
+  weight: 1.0
+  replacements:
+    default:
+    - built-in
+    - natural
+    formal:
+    - built-in
+    - natural
+    casual:
+    - built-in
+    - natural
+    professional:
+    - built-in
+    - natural
+    friendly:
+    - built-in
+    - natural
+  llm_only: false
+- id: notably
+  type: word
+  category: buzzword
+  pattern: notably
+  weight: 1.0
+  replacements:
+    default:
+    - especially
+    - in particular
+    formal:
+    - especially
+    - in particular
+    casual:
+    - especially
+    - in particular
+    professional:
+    - especially
+    - in particular
+    friendly:
+    - especially
+    - in particular
+  llm_only: false
+- id: specifically
+  type: word
+  category: buzzword
+  pattern: specifically
+  weight: 1.0
+  replacements:
+    default:
+    - in particular
+    - exactly
+    formal:
+    - in particular
+    - exactly
+    casual:
+    - in particular
+    - exactly
+    professional:
+    - in particular
+    - exactly
+    friendly:
+    - in particular
+    - exactly
+  llm_only: false
+- id: ultimately
+  type: word
+  category: buzzword
+  pattern: ultimately
+  weight: 1.0
+  replacements:
+    default:
+    - in the end
+    - finally
+    formal:
+    - in the end
+    - finally
+    casual:
+    - in the end
+    - finally
+    professional:
+    - in the end
+    - finally
+    friendly:
+    - in the end
+    - finally
+  llm_only: false
+- id: essentially
+  type: word
+  category: buzzword
+  pattern: essentially
+  weight: 1.0
+  replacements:
+    default:
+    - basically
+    - at heart
+    formal:
+    - basically
+    - at heart
+    casual:
+    - basically
+    - at heart
+    professional:
+    - basically
+    - at heart
+    friendly:
+    - basically
+    - at heart
+  llm_only: false
+- id: arguably
+  type: word
+  category: buzzword
+  pattern: arguably
+  weight: 1.0
+  replacements:
+    default:
+    - perhaps
+    - some say
+    formal:
+    - perhaps
+    - some say
+    casual:
+    - perhaps
+    - some say
+    professional:
+    - perhaps
+    - some say
+    friendly:
+    - perhaps
+    - some say
+  llm_only: false
+- id: showcase
+  type: word
+  category: buzzword
+  pattern: showcase
+  weight: 1.0
+  replacements:
+    default:
+    - show
+    - highlight
+    formal:
+    - show
+    - highlight
+    casual:
+    - show
+    - highlight
+    professional:
+    - show
+    - highlight
+    friendly:
+    - show
+    - highlight
+  llm_only: false
+- id: elevate
+  type: word
+  category: buzzword
+  pattern: elevate
+  weight: 1.0
+  replacements:
+    default:
+    - raise
+    - lift
+    formal:
+    - raise
+    - lift
+    casual:
+    - raise
+    - lift
+    professional:
+    - raise
+    - lift
+    friendly:
+    - raise
+    - lift
+  llm_only: false
+- id: shed_light_on
+  type: phrase
+  category: buzzword
+  pattern: shed light on
+  weight: 1.0
+  replacements:
+    default:
+    - explain
+    - clarify
+    formal:
+    - explain
+    - clarify
+    casual:
+    - explain
+    - clarify
+    professional:
+    - explain
+    - clarify
+    friendly:
+    - explain
+    - clarify
+  llm_only: false
+- id: important_to_note
+  type: phrase
+  category: formulaic
+  pattern: it's important to note
+  weight: 1.0
+  replacements:
+    default:
+    - note that
+    - remember
+    formal:
+    - note that
+    - remember
+    casual:
+    - note that
+    - remember
+    professional:
+    - note that
+    - remember
+    friendly:
+    - note that
+    - remember
+  llm_only: false
+- id: in_order_to
+  type: phrase
+  category: formulaic
+  pattern: in order to
+  weight: 1.0
+  replacements:
+    default:
+    - to
+    formal:
+    - to
+    casual:
+    - to
+    professional:
+    - to
+    friendly:
+    - to
+  llm_only: false
+- id: due_to_the_fact
+  type: phrase
+  category: formulaic
+  pattern: due to the fact that
+  weight: 1.0
+  replacements:
+    default:
+    - because
+    - since
+    formal:
+    - because
+    - since
+    casual:
+    - because
+    - since
+    professional:
+    - because
+    - since
+    friendly:
+    - because
+    - since
+  llm_only: false
+- id: its_not_just
+  type: phrase
+  category: formulaic
+  pattern: it's not just
+  weight: 1.0
+  replacements: {}
+  llm_only: true
+- id: its_not_just_is
+  type: phrase
+  category: formulaic
+  pattern: it is not just
+  weight: 1.0
+  replacements: {}
+  llm_only: true
+- id: whether_youre_a
+  type: phrase
+  category: formulaic
+  pattern: whether you're a
+  weight: 1.0
+  replacements: {}
+  llm_only: true
+- id: sentence_initial_furthermore
+  type: regex
+  category: structure
+  pattern: ^(Furthermore|Moreover|Additionally),\s*
+  weight: 1.0
+  replacements: {}
+  llm_only: true
