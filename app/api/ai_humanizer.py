@@ -8,7 +8,11 @@ router = APIRouter()
 
 @router.post("/humanize", response_model=HumanizeResponse)
 async def humanize(request: HumanizeRequest):
-    """Three-stage humanizer: pattern analysis, replacement + LLM rewrite, grammar polish."""
+    """
+    Humanize text using Apify Content Humanizer (akash9078/ai-content-humanizer).
+
+    Requires APIFY_API_KEY. See https://apify.com/akash9078/ai-content-humanizer
+    """
     try:
         return await humanize_pipeline(request.text, tone=request.tone)
     except ValueError as e:

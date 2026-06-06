@@ -21,11 +21,12 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None
-    # Apify API key for YouTube interview scraping (optional)
+    # Apify API key (YouTube scraper, AI humanizer, etc.)
     apify_api_key: Optional[str] = None
+    apify_humanizer_actor_id: str = "akash9078~ai-content-humanizer"
     # Seconds to wait between blog-generation LLM calls to avoid Groq TPM rate limit (default 4)
     groq_blog_delay_seconds: float = 4.0
-    # TLS verify for Groq/httpx (truststore OS certs, then certifi). Set false only for local dev.
+    # TLS verify for outbound httpx (Groq, Tavily, SerpAPI, etc.). Uses OS trust store via truststore, then certifi. Set false only for local dev.
     groq_ssl_verify: bool = True
     
     # CORS

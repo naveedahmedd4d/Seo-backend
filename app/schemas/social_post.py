@@ -4,6 +4,7 @@ from typing import List, Optional, Any
 
 class SocialPostGenerateRequest(BaseModel):
     query: str
+    template_variant: Optional[str] = None
 
 
 class NewsResultItem(BaseModel):

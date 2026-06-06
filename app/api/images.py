@@ -39,7 +39,14 @@ async def search_images_endpoint(
 ):
     """Search images by keyword and save to history."""
     try:
-        images_data = await search_images(request.keyword, request.num_results)
+        images_data = await search_images(
+            request.keyword,
+            request.num_results,
+            source=request.source,
+            size=request.size,
+            color=request.color,
+            orientation=request.orientation,
+        )
         images = [
             ImageResult(
                 title=img.get("title", ""),

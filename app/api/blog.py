@@ -15,6 +15,7 @@ from app.services.openrouter_service import (
     resolve_celebrity_display_name,
     generate_seo_title,
     generate_meta_description,
+    generate_biography_news_meta_description,
     generate_blog_body,
     generate_faqs,
     generate_related_queries,
@@ -26,6 +27,7 @@ from app.services.openrouter_service import (
     generate_tree_titles_metas_batch,
     generate_tree_faqs_queries_batch,
     select_featured_image,
+    sanitize_religion_body,
 )
 from app.services.serpapi_service import search_images as serpapi_search_images
 from app.services.trivly_service import research_keywords, find_youtube_interview, search_youtube_interviews
@@ -36,6 +38,7 @@ from app.services.blog_consistency import (
     apply_canonical_zodiac,
     sanitize_filmography_table,
     sanitize_net_worth_body,
+    sanitize_blog_body,
 )
 from app.schemas.blog import (
     BlogGenerateRequest,
@@ -60,40 +63,10 @@ import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Max length for research context to stay within token limits
-RESEARCH_CONTEXT_MAX_LENGTH = 3500
-RESEARCH_SNIPPET_MAX_LENGTH = 500
-
-
-def _format_research_context(data: Dict[str, Any]) -> Optional[str]:
-    """Format Tavily research response into a string for LLM prompts."""
-    if not data or not isinstance(data, dict):
-        return None
-    parts: List[str] = []
-    if data.get("answer"):
-        summary = (data["answer"] or "").strip()
-        if summary:
-            parts.append(f"Summary: {summary[:800]}")
-    results = data.get("results") or []
-    if not isinstance(results, list):
-        return "\n\n".join(parts) if parts else None
-    total_len = sum(len(p) for p in parts) + (2 * (len(parts) - 1)) if parts else 0
-    for r in results:
-        if not isinstance(r, dict):
-            continue
-        title = (r.get("title") or "Source").strip()
-        content = (r.get("content") or "").strip()
-        if not content:
-            continue
-        snippet = content[:RESEARCH_SNIPPET_MAX_LENGTH]
-        if len(content) > RESEARCH_SNIPPET_MAX_LENGTH:
-            snippet += "..."
-        block = f"[{title}]: {snippet}"
-        if total_len + len(block) + 2 > RESEARCH_CONTEXT_MAX_LENGTH:
-            break
-        parts.append(block)
-        total_len += len(block) + 2
-    return "\n\n".join(parts) if parts else None
+from app.services.research_context import (
+    RESEARCH_CONTEXT_MAX_LENGTH,
+    format_research_context,
+)
 
 
 def flat_tree_child_slug(parent_slug: str, intent: str) -> str:
@@ -189,31 +162,24 @@ def _state_data_with_rewritten_tree_links(state_data: Optional[Dict[str, Any]]) 
     return sd
 
 
-def _slugify_toc_anchor(heading: str) -> str:
-    """Convert H2 heading text to markdown anchor (e.g. 'Quick Facts' -> 'quick-facts')."""
-    s = (heading or "").strip().lower()
-    s = re.sub(r"\s+", "-", s)
-    s = re.sub(r"[^a-z0-9-]", "", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or "section"
+def _state_data_without_toc(state_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return a copy of state_data with Table of Contents blocks removed from body fields."""
+    if not state_data:
+        return state_data
+    sd = copy.deepcopy(state_data)
+    if sd.get("body_content"):
+        sd["body_content"] = sanitize_blog_body(str(sd["body_content"]))
+    parent = sd.get("parent")
+    if isinstance(parent, dict) and parent.get("body_content"):
+        parent["body_content"] = sanitize_blog_body(str(parent["body_content"]))
+    for ch in sd.get("children") or []:
+        if isinstance(ch, dict) and ch.get("body_content"):
+            ch["body_content"] = sanitize_blog_body(str(ch["body_content"]))
+    return sd
 
 
-def inject_toc_if_missing(body: str) -> str:
-    """Prepend a Table of Contents after the first paragraph if body has H2s but no TOC (Rank Math)."""
-    if not body or not body.strip():
-        return body
-    headings = re.findall(r"^##\s+(.+)$", body, re.MULTILINE)
-    if len(headings) < 2:
-        return body
-    first_500 = body[:500]
-    if "- [" in first_500 or "* [" in first_500 or "1. [" in first_500:
-        return body
-    toc_lines = [f"- [{h.strip()}](#{_slugify_toc_anchor(h)})" for h in headings]
-    toc_block = "**Table of Contents**\n\n" + "\n".join(toc_lines)
-    pos = body.find("\n\n")
-    if pos == -1:
-        return toc_block + "\n\n" + body
-    return body[: pos + 2] + toc_block + "\n\n" + body[pos + 2 :]
+def _state_data_for_api(state_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    return _state_data_without_toc(_state_data_with_rewritten_tree_links(state_data))
 
 
 def _inject_youtube_embed(body: str, youtube_url: Optional[str]) -> str:
@@ -408,6 +374,146 @@ def inject_internal_links_into_body(
     return result
 
 
+CELEBRITY_CONTENT_TYPE_INTENTS: Dict[str, str] = {
+    "biography": "parent_overview",
+    "religious": "religion",
+    "net_worth": "net_worth",
+}
+
+
+async def _run_celebrity_single_article(
+    db: Session,
+    workflow_state: WorkflowState,
+    topic: str,
+    description: Optional[str],
+    keywords: list,
+    category: str,
+    research_context: Optional[str],
+    celebrity_content_type: str,
+    suggested_title: Optional[str] = None,
+    suggested_meta_description: Optional[str] = None,
+    news_context: Optional[str] = None,
+) -> None:
+    """Generate one celebrity article (biography, religious, or net worth) instead of the full tree."""
+    content_intent = CELEBRITY_CONTENT_TYPE_INTENTS[celebrity_content_type]
+
+    keyword_strategy: Optional[Dict[str, Any]] = None
+    if research_context:
+        try:
+            keyword_strategy = await extract_keyword_clusters(research_context, topic)
+        except Exception as e:
+            logger.warning("Keyword clusters extraction failed: %s", e)
+    await _blog_delay()
+
+    youtube_url: Optional[str] = None
+    if celebrity_content_type == "biography":
+        try:
+            youtube_url = await find_youtube_interview(topic)
+        except Exception as e:
+            logger.warning("YouTube interview lookup failed: %s", e)
+
+    title = (suggested_title or "").strip()
+    if not title:
+        title = await generate_seo_title(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+    meta_description = (suggested_meta_description or "").strip()
+    if celebrity_content_type == "biography" and (suggested_title or news_context):
+        from app.services.news_research_service import is_weak_biography_meta
+
+        if not meta_description or is_weak_biography_meta(
+            meta_description, suggested_title or title, None
+        ):
+            meta_description = await generate_biography_news_meta_description(
+                topic,
+                suggested_title or title,
+                research_context=research_context,
+                news_context=news_context,
+            )
+    elif not meta_description:
+        meta_description = await generate_meta_description(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+
+    body_kwargs: Dict[str, Any] = {
+        "research_context": research_context,
+        "content_intent": content_intent,
+        "keyword_strategy": keyword_strategy,
+    }
+    if celebrity_content_type == "biography":
+        body_kwargs["youtube_url"] = youtube_url
+        body_kwargs["omit_religion_in_parent"] = True
+    elif celebrity_content_type == "net_worth":
+        body_kwargs["omit_religion_refs_in_net_worth"] = True
+
+    body_content = await generate_blog_body(topic, description, keywords, category, **body_kwargs)
+    await _blog_delay()
+
+    if celebrity_content_type == "biography":
+        body_content = _inject_youtube_embed(body_content, youtube_url)
+        body_content = sanitize_filmography_table(body_content, topic)
+    elif celebrity_content_type == "net_worth":
+        body_content = sanitize_net_worth_body(body_content)
+
+    faqs = await generate_faqs(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+    )
+    await _blog_delay()
+    related_queries_raw = await generate_related_queries(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+    )
+    related_queries = _normalize_related_queries(related_queries_raw)
+
+    body_content = sanitize_blog_body(body_content or "")
+    if content_intent == "religion":
+        body_content = sanitize_religion_body(body_content)
+    body_content = _sanitize_conclusion_and_sources(body_content)
+    body_content = rewrite_legacy_person_tree_paths(body_content)
+
+    try:
+        focus_keyword = await resolve_celebrity_display_name(topic, research_context)
+    except Exception:
+        focus_keyword = topic.strip() or (keywords[0] if keywords else None)
+    if not focus_keyword:
+        focus_keyword = topic.strip() or (keywords[0] if keywords else "article")
+
+    if celebrity_content_type == "biography":
+        slug = generate_slug(title, focus_keyword=focus_keyword)
+    else:
+        parent_slug = generate_slug("", focus_keyword=focus_keyword)
+        slug = generate_slug("", parent_slug=parent_slug, intent=content_intent)
+
+    state_data: Dict[str, Any] = {
+        "topic": topic,
+        "description": description,
+        "keywords": keywords,
+        "category": category,
+        "celebrity_content_type": celebrity_content_type,
+        "content_intent": content_intent,
+        "title": title,
+        "meta_description": meta_description,
+        "body_content": body_content,
+        "faqs": faqs,
+        "related_queries": related_queries,
+        "focus_keyword": focus_keyword,
+        "slug": slug,
+    }
+    if keyword_strategy:
+        state_data["keyword_strategy"] = keyword_strategy
+    if research_context:
+        state_data["research_summary"] = research_context[:500] + ("..." if len(research_context) > 500 else "")
+
+    workflow_state.state_data = state_data
+    workflow_state.status = WorkflowStatus.COMPLETED
+    db.commit()
+
+
 async def run_blog_workflow(
     db: Session,
     workflow_id: int,
@@ -416,7 +522,11 @@ async def run_blog_workflow(
     keywords: list,
     category: str,
     user_id: int,
-    include_research: bool = True
+    include_research: bool = True,
+    celebrity_content_type: Optional[str] = None,
+    suggested_title: Optional[str] = None,
+    suggested_meta_description: Optional[str] = None,
+    news_context: Optional[str] = None,
 ):
     """Run the blog generation workflow with SEO-optimized content"""
     try:
@@ -429,7 +539,7 @@ async def run_blog_workflow(
                     desc_snippet = description.strip()[:200]
                     query = f"{topic}. {desc_snippet}"
                 data = await research_keywords(db, query, user_id)
-                research_context = _format_research_context(data)
+                research_context = format_research_context(data)
             except Exception as e:
                 logger.warning("Research step failed, generating without research: %s", e)
                 research_context = None
@@ -442,7 +552,7 @@ async def run_blog_workflow(
                     for eq in extra_queries:
                         try:
                             extra_data = await research_keywords(db, eq, user_id)
-                            extra_formatted = _format_research_context(extra_data)
+                            extra_formatted = format_research_context(extra_data)
                             if extra_formatted and len(research_context) + len(extra_formatted) + 2 < RESEARCH_CONTEXT_MAX_LENGTH * 2:
                                 research_context = research_context + "\n\n" + extra_formatted
                         except Exception as e:
@@ -467,11 +577,18 @@ async def run_blog_workflow(
             for _eq in _celebrity_queries:
                 try:
                     _extra_data = await research_keywords(db, _eq, user_id)
-                    _extra_fmt = _format_research_context(_extra_data)
+                    _extra_fmt = format_research_context(_extra_data)
                     if _extra_fmt and len(research_context) + len(_extra_fmt) + 2 < RESEARCH_CONTEXT_MAX_LENGTH * 2:
                         research_context = research_context + "\n\n" + _extra_fmt
                 except Exception as e:
                     logger.warning("Celebrity enrichment query failed: %s", e)
+
+        if news_context and news_context.strip():
+            news_block = news_context.strip()
+            if research_context:
+                research_context = news_block + "\n\n" + research_context
+            else:
+                research_context = news_block
 
         workflow_state = get_workflow_state(db, workflow_id, user_id)
         if not workflow_state:
@@ -482,7 +599,7 @@ async def run_blog_workflow(
             batch = await generate_single_blog_batch(topic, description, keywords, category, research_context)
             title = batch["title"]
             meta_description = batch["meta_description"]
-            body_content = inject_toc_if_missing(batch["body_content"] or "")
+            body_content = sanitize_blog_body(batch["body_content"] or "")
             faqs = batch["faqs"]
             related_queries = batch["related_queries"]
             # Rank Math: focus keyword and slug for URL
@@ -506,6 +623,16 @@ async def run_blog_workflow(
             workflow_state.state_data = state_data
             workflow_state.status = WorkflowStatus.COMPLETED
             db.commit()
+            return
+
+        if celebrity_content_type and celebrity_content_type in CELEBRITY_CONTENT_TYPE_INTENTS:
+            await _run_celebrity_single_article(
+                db, workflow_state, topic, description, keywords, category,
+                research_context, celebrity_content_type,
+                suggested_title=suggested_title,
+                suggested_meta_description=suggested_meta_description,
+                news_context=news_context,
+            )
             return
 
         # Tree flow: Celebrities & Public Figures (batched to reduce LLM calls and rate limits)
@@ -565,6 +692,7 @@ async def run_blog_workflow(
                 content_intent="religion",
                 keyword_strategy=keyword_strategy,
             )
+            c1_body = sanitize_religion_body(c1_body)
             await _blog_delay()
         c2_body = await generate_blog_body(
             topic, description, keywords, category,
@@ -576,6 +704,8 @@ async def run_blog_workflow(
         c2_body = sanitize_net_worth_body(c2_body)
         await _blog_delay()
 
+        parent_body = sanitize_blog_body(parent_body)
+        c2_body = sanitize_blog_body(c2_body)
         # Remove filmography rows that are clearly not about the celebrity (e.g. wrong film title)
         parent_body = sanitize_filmography_table(parent_body, topic)
 
@@ -808,6 +938,15 @@ async def generate_blog(
 ):
     """Start blog generation workflow with SEO-optimized content"""
     try:
+        if (
+            request.celebrity_content_type
+            and request.category != "Celebrities & Public Figures"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="celebrity_content_type is only valid when category is 'Celebrities & Public Figures'",
+            )
+
         # Create workflow state
         from app.models.workflow_state import WorkflowState
         workflow_state = WorkflowState(
@@ -818,13 +957,21 @@ async def generate_blog(
                 "topic": request.topic,
                 "description": request.description,
                 "keywords": request.keywords or [],
-                "category": request.category
+                "category": request.category,
+                **(
+                    {"celebrity_content_type": request.celebrity_content_type}
+                    if request.celebrity_content_type
+                    else {}
+                ),
+                **({"suggested_title": request.suggested_title} if request.suggested_title else {}),
+                **({"suggested_meta_description": request.suggested_meta_description} if request.suggested_meta_description else {}),
+                **({"news_context": request.news_context} if request.news_context else {}),
             }
         )
         db.add(workflow_state)
         db.commit()
         db.refresh(workflow_state)
-        
+
         # Run workflow in background
         background_tasks.add_task(
             run_blog_workflow,
@@ -835,7 +982,11 @@ async def generate_blog(
             request.keywords or [],
             request.category,
             current_user.id,
-            request.include_research
+            request.include_research,
+            request.celebrity_content_type,
+            request.suggested_title,
+            request.suggested_meta_description,
+            request.news_context,
         )
         
         return BlogGenerateResponse(
@@ -843,6 +994,8 @@ async def generate_blog(
             status="pending",
             message="Blog generation started"
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -901,7 +1054,7 @@ async def get_workflow_status(
     return BlogWorkflowStatus(
         id=workflow_state.id,
         status=workflow_state.status.value,
-        state_data=_state_data_with_rewritten_tree_links(workflow_state.state_data),
+        state_data=_state_data_for_api(workflow_state.state_data),
         error_message=workflow_state.error_message,
         created_at=workflow_state.created_at.isoformat(),
         updated_at=workflow_state.updated_at.isoformat() if workflow_state.updated_at else workflow_state.created_at.isoformat()
@@ -928,7 +1081,9 @@ async def update_blog_workflow(
             detail="Can only save content for completed workflows"
         )
     state_data = workflow_state.state_data or {}
-    body_content = rewrite_legacy_person_tree_paths(request.body_content)
+    body_content = sanitize_blog_body(
+        rewrite_legacy_person_tree_paths(request.body_content)
+    )
     if state_data.get("is_tree") and request.blog_key:
         key = request.blog_key
         if key == "parent":
@@ -976,7 +1131,7 @@ async def update_blog_workflow(
     return BlogWorkflowStatus(
         id=workflow_state.id,
         status=workflow_state.status.value,
-        state_data=workflow_state.state_data,
+        state_data=_state_data_for_api(workflow_state.state_data),
         error_message=workflow_state.error_message,
         created_at=workflow_state.created_at.isoformat(),
         updated_at=workflow_state.updated_at.isoformat() if workflow_state.updated_at else workflow_state.created_at.isoformat()
@@ -1318,6 +1473,7 @@ async def publish_blog(
                 "child_0": f"{path_prefix}/religion",
                 "child_1": f"{path_prefix}/net-worth",
             }
+        content = sanitize_blog_body(content or "")
         use_html = bool(request.body_content_html and request.body_content_html.strip())
 
         if use_html:

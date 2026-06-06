@@ -16,7 +16,16 @@ from app.schemas.research import (
     ContentSuggestionRequest,
     ContentSuggestionResponse,
     ResearchHistoryResponse,
+    TopicalMappingResponse,
+    AutocompleteSuggestion,
+    RelatedQueryItem,
+    ResearchSummaryRequest,
+    ResearchSummaryResponse,
+    HeadingNode,
+    NewsSourceItem,
 )
+from app.services.serpapi_service import fetch_topical_mapping
+from app.services.openrouter_service import generate_research_content_summary
 from app.workflows.research_workflow import create_research_workflow
 
 router = APIRouter()
@@ -59,6 +68,111 @@ async def get_content_suggestions_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error getting content suggestions: {str(e)}"
+        )
+
+
+@router.post("/generate-summary", response_model=ResearchSummaryResponse)
+async def generate_research_summary_endpoint(
+    request: ResearchSummaryRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Generate AI research summary and structured content outline for blog generation."""
+    if not request.query or not request.query.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query is required",
+        )
+    if not request.results:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Research results are required. Run keyword research first.",
+        )
+    try:
+        topical_dict = None
+        if request.topical_mapping:
+            topical_dict = request.topical_mapping.model_dump()
+        competitors = [c.model_dump() for c in (request.competitors or [])]
+        opportunities = [o.model_dump() for o in (request.opportunities or [])]
+        data = await generate_research_content_summary(
+            query=request.query.strip(),
+            results=request.results,
+            topical_mapping=topical_dict,
+            competitors=competitors,
+            opportunities=opportunities,
+            category=request.category,
+            celebrity_content_type=request.celebrity_content_type,
+        )
+        outline = [HeadingNode(**node) for node in data.get("outline") or []]
+        news_sources_raw = data.get("news_sources") or []
+        news_sources = [
+            NewsSourceItem(**item) if isinstance(item, dict) else NewsSourceItem()
+            for item in news_sources_raw
+        ] if news_sources_raw else None
+        return ResearchSummaryResponse(
+            summary=data.get("summary") or "",
+            h1=data.get("h1") or request.query.strip(),
+            outline=outline,
+            key_topics=data.get("key_topics") or [],
+            subtopics=data.get("subtopics") or [],
+            core_content_recommendations=data.get("core_content_recommendations") or [],
+            seo_suggestions=data.get("seo_suggestions") or [],
+            topical_coverage=data.get("topical_coverage") or [],
+            target_keywords=data.get("target_keywords") or [],
+            section_notes=data.get("section_notes"),
+            category=data.get("category") or request.category,
+            celebrity_content_type=data.get("celebrity_content_type") or request.celebrity_content_type,
+            outline_template=data.get("outline_template"),
+            news_headline=data.get("news_headline"),
+            news_hook_paragraph=data.get("news_hook_paragraph"),
+            news_meta_description=data.get("news_meta_description"),
+            news_hashtags=data.get("news_hashtags"),
+            news_sources=news_sources,
+            news_context=data.get("news_context"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating research summary: {str(e)}",
+        )
+
+
+@router.get("/topical-mapping", response_model=TopicalMappingResponse)
+async def get_topical_mapping_endpoint(
+    q: str,
+    limit: int = 8,
+    geo: str = "US",
+    hl: str = "en",
+    current_user: User = Depends(get_current_user),
+):
+    """Topical mapping: Google Autocomplete + Google Trends related queries (SerpAPI)."""
+    if not q or not q.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query parameter 'q' is required",
+        )
+    try:
+        data = await fetch_topical_mapping(q.strip(), limit=min(limit, 20), geo=geo, hl=hl)
+        return TopicalMappingResponse(
+            query=data["query"],
+            autocomplete_suggestions=[
+                AutocompleteSuggestion(**s) for s in data["autocomplete_suggestions"]
+            ],
+            related_queries=[
+                RelatedQueryItem(**r) for r in data["related_queries"]
+            ],
+            errors=data.get("errors"),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching topical mapping: {str(e)}",
         )
 
 

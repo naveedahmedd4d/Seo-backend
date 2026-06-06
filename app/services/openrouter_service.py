@@ -182,11 +182,13 @@ async def humanize_text(text: str) -> str:
 
 async def generate_news_headline(
     news_results: List[Dict[str, Any]],
-    query: Optional[str] = None
+    query: Optional[str] = None,
+    template_variant: Optional[str] = None,
 ) -> str:
     """
-    Generate a 2-line, eye-catching headline for a social media post from 7 news results.
-    Returns the headline with newline preserved between lines (max ~220 chars total).
+    Generate an eye-catching headline for a social media post from 7 news results.
+    Returns the headline with newlines preserved (max ~220–260 chars total).
+    For template_variant "pro-1" or "pro-2", returns 2–4 lines with **highlight** markers.
     """
     if not news_results:
         raise ValueError("At least one news result is required")
@@ -199,7 +201,27 @@ async def generate_news_headline(
         lines.append(f"{i}. Title: {title}\n   Source: {source}\n   Date: {date}\n   Snippet: {snippet}")
     news_block = "\n\n".join(lines)
     query_line = f"\n\nUser search query: \"{query}\"" if query else ""
-    prompt = f"""You are writing a 2-LINE headline for a social media post (Instagram, Twitter, Facebook). The goal is to stop the scroll and get engagement—clicks, likes, shares.
+    variant = (template_variant or "").strip().lower()
+    is_pro_variant = variant in ("pro-1", "pro-2")
+
+    if is_pro_variant:
+        prompt = f"""You are writing a scroll-stopping headline for a social media post (Instagram story / feed card). The visual style is bold centered text on a dark photo with marker-style highlights on key phrases.
+
+Below are 7 recent news articles. Write a headline in 2 to 4 lines:
+- Each line should be short and punchy (roughly 4–12 words per line).
+- Wrap exactly 1 to 3 short phrases in **double asterisks** for highlight blocks (e.g. **Tools that** reveal your hidden data). Each highlighted phrase must be 1–4 words.
+- Do not use any other markdown—only ** for highlights and newlines between lines.
+- Center-friendly rhythm: mix highlighted and non-highlighted words across lines.
+- Total length 100–220 characters. Accurate and not clickbait—must reflect the real story.
+- Capture the most newsworthy or emotional angle from the articles.
+{news_block}{query_line}
+
+Output only the headline. No quotes, no explanation. Use real newlines between lines."""
+        max_tokens = 260
+        max_chars = 260
+        max_lines = 4
+    else:
+        prompt = f"""You are writing a 2-LINE headline for a social media post (Instagram, Twitter, Facebook). The goal is to stop the scroll and get engagement—clicks, likes, shares.
 
 Style reference (long, descriptive, event then reaction): "Tyler Shough's Rookie Season Ends Without ROY — Fans and Analysts Debate the Snub"
 
@@ -213,13 +235,17 @@ Below are 7 recent news articles. Write a headline in exactly two lines:
 {news_block}{query_line}
 
 Output only the 2-line headline. No quotes, no explanation. Use a real newline between the two lines."""
+        max_tokens = 220
+        max_chars = 220
+        max_lines = 2
+
     if not settings.groq_api_key:
         raise ValueError(
             "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
         )
     result = await generate_blog_seo_content(
         prompt,
-        max_tokens=220,
+        max_tokens=max_tokens,
         temperature=0.75
     )
     headline = (result or "").strip().strip('"').strip("'")
@@ -227,12 +253,60 @@ Output only the 2-line headline. No quotes, no explanation. Use a real newline b
         raise ValueError(
             "The model returned an empty headline. Try again or adjust your query."
         )
-    # Keep at most 2 lines; collapse extra newlines to space within lines
-    parts = [p.replace("\n", " ").strip() for p in headline.split("\n")[:2]]
+    parts = [p.strip() for p in headline.split("\n") if p.strip()][:max_lines]
     headline = "\n".join(parts).strip()
-    if len(headline) > 220:
-        headline = headline[:217] + "..."
+    if len(headline) > max_chars:
+        headline = headline[: max_chars - 3] + "..."
+    if is_pro_variant:
+        headline = _ensure_pro1_highlight_markup(headline)
     return headline
+
+
+def _highlight_first_n_words(line: str, n: int) -> str:
+    words = line.split()
+    if not words:
+        return line
+    if len(words) <= n:
+        return f"**{' '.join(words)}**"
+    return f"**{' '.join(words[:n])}** {' '.join(words[n:])}"
+
+
+def _highlight_phrase_at(line: str, count: int, skip: int) -> str:
+    words = line.split()
+    if len(words) <= skip:
+        return _highlight_first_n_words(line, count)
+    end = min(skip + count, len(words))
+    if end <= skip:
+        return line
+    return " ".join(
+        words[:skip]
+        + [f"**{' '.join(words[skip:end])}**"]
+        + words[end:]
+    )
+
+
+def _ensure_pro1_highlight_markup(headline: str) -> str:
+    """Add **highlight** markers when the model omitted them (classic-style output)."""
+    if "**" in headline:
+        return headline
+    text = headline.strip()
+    if not text:
+        return text
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if len(lines) >= 2:
+        return "\n".join(
+            _highlight_first_n_words(lines[0], 2)
+            if i == 0
+            else _highlight_phrase_at(lines[i], 2, 1)
+            for i in range(len(lines))
+        )
+    for sep in ("—", "–", "-"):
+        if sep in text:
+            before, _, after = text.partition(sep)
+            before, after = before.strip(), after.strip()
+            if before and after:
+                return f"{_highlight_first_n_words(before, 2)} {sep} {_highlight_phrase_at(after, 2, 1)}"
+    return _highlight_first_n_words(text, 2)
 
 
 async def generate_social_post_description(
@@ -749,6 +823,15 @@ def _build_parent_article_prompt(
     omit_religion: bool = False,
 ) -> str:
     """Build full 12-section parent/overview article prompt (minimum 2,500 words)."""
+    has_news_hook = "## News hook" in (description_text or "")
+    news_hook_block = ""
+    if has_news_hook:
+        news_hook_block = """
+NEWS HOOK (required when present in Additional Context):
+- BEFORE the "## Introduction" H2, write 1 opening paragraph (no H2 heading) using the "## News hook" text from Additional Context verbatim or near-verbatim.
+- That paragraph must state the current news event, then pivot with a question like "But who is [Name]?" or similar transition into the biography.
+- The "## Introduction" section must NOT repeat the news event; focus on who they are, career context, and why they matter beyond today's headline.
+"""
     yt_instruction = (
         f'In the "First Media Appearance" section include exactly this placeholder on its own line: [YOUTUBE_EMBED: {youtube_url}] (it will be replaced with the embedded video). Then write 1-2 paragraphs on context and what the interview reveals. Do not write any raw HTML, iframe code, or embed attributes.'
         if youtube_url
@@ -761,8 +844,8 @@ def _build_parent_article_prompt(
 | Date of Birth | ... |
 | Zodiac Sign | ... |
 | Nationality | ... |
-- Internal link to the net worth companion only: use flat relative path `/name-slug-net-worth` (lowercase, hyphens). Never use `/person/.../net-worth`.
-- **Do not** mention religion, faith, spirituality, church, prayer, religious upbringing, or beliefs anywhere in this article (including Quick Facts, tables, intros, conclusions, or links)."""
+- **Do not** mention religion, faith, spirituality, church, prayer, religious upbringing, or beliefs anywhere in this article (including Quick Facts, tables, intros, conclusions, or links).
+- **Do not** add in-body links or sentences pointing to separate net worth or religion articles (e.g. "For more information on net worth, visit /name-net-worth")."""
         if omit_religion
         else """| Attribute | Details |
 |-----------|---------|
@@ -771,7 +854,7 @@ def _build_parent_article_prompt(
 | Date of Birth | ... |
 | Zodiac Sign | ... |
 | Nationality | ... |
-- Internal links to companion articles (religion / net worth) must use flat relative paths only, e.g. `/rob-smith-religion` and `/rob-smith-net-worth` (lowercase, hyphens). Never use `/person/.../religion` or `/person/.../net-worth`."""
+- **Do not** add in-body links or sentences pointing to separate net worth or religion companion articles."""
     )
     return f"""Write a comprehensive celebrity overview article. Total length 2,000-3,000 words. Use research to fact-check career dates, film titles, and awards.
 
@@ -779,6 +862,7 @@ Topic: "{topic}"{description_text}
 Target Keywords: {keywords_text}
 Writing style: {category_style}
 {research_block}
+{news_hook_block}
 
 Include where relevant (e.g. end of Conclusion): {last_updated_block}. Use this block exactly as written; do not add image placeholders or links with "blank" or placeholder URLs in the Sources line.
 
@@ -786,6 +870,7 @@ Rank Math SEO (required):
 - Focus Keyword: use the topic/primary keyword as the focus keyword. Use it in the first 1-2 sentences (beginning of content), in at least 2-3 H2/H3 subheadings, and naturally in the body. Aim for ~1% keyword density (about once per 100 words).
 - Use short paragraphs (2-4 sentences max; Rank Math flags long paragraphs).
 - Do not add a Table of Contents.
+- Do not add in-body links or call-to-action lines to separate net worth or religion articles (no `/name-net-worth` or `/name-religion` paths in the body).
 - Include at least one image placeholder with Focus Keyword in the alt text: e.g. ![Topic Name at Event](image-url) or ![Topic Name - Description](image-url).
 
 STRUCTURE (use these exact H2 headings in order):
@@ -815,11 +900,12 @@ STRUCTURE (use these exact H2 headings in order):
 - Verified information only: family, close friendships if public, marriage status, children
 - Neutral, factual tone; no rumors or unverified gossip
 
-## Filmography
+## Professional Journey
 - Use **paragraph and bullet format only** (no tables). Write in full sentences so the content is readable and not tiny.
-- **Films**: One short paragraph introducing their film work, then a bullet list. Each bullet: **Year — Title** (Role if known): one or two sentences of context or notes. Example: "- **2018 — Tu Hijo**: She played the lead in this drama; the film premiered at the Cannes Film Festival."
-- **Television Work**: A short paragraph, then bullets for major TV shows with role and brief description (full sentences).
-- **Music Videos & Other Appearances**: Paragraph and/or bullets; concise but not single-word entries.
+- Cover the person's professional path in a way that fits their field (e.g. sports teams and seasons, acting credits, music releases, business ventures, documentaries, interviews).
+- **Career highlights**: One short paragraph introducing their professional work, then a bullet list. Each bullet: **Year — Milestone** (Role/team/project if known): one or two sentences of context. Example: "- **2020 — MLB Debut**: He debuted with the San Diego Padres, beginning his major-league career."
+- For entertainers, you may include subsections in prose (e.g. films, television, music) within this section; for athletes, focus on teams, leagues, trades, and standout seasons.
+- Do not force a film/TV-only structure when the person is primarily known outside entertainment.
 
 ## Awards & Nominations (200-250 words)
 - Chronological list; highlight wins vs nominations; explain importance of major awards
@@ -832,7 +918,33 @@ STRUCTURE (use these exact H2 headings in order):
 - Do not put image placeholders (![...](image-url)) in the Conclusion. Do not put them in the Last Updated / Sources line.
 - When you include the Last Updated block, use it exactly as given (e.g. "> **Last Updated:** [date] | **Sources:** Celebrity Net Worth, Forbes"). Do not add links with "blank" or placeholder URLs; for source names use plain text or real URLs only (e.g. [Celebrity Net Worth](https://www.celebritynetworth.com/), [Forbes](https://www.forbes.com/)).
 
-Format in clean markdown. Do not include the article title. Start with the introduction. Cite sources as markdown links where relevant (use real URLs only, never "blank"). Use the Focus Keyword in at least 2 of the H2 section headings (e.g. "Early Life of [Name]", "[Name]'s Career Overview")."""
+Format in clean markdown. Do not include the article title. {"Start with the news hook opening paragraph (no heading), then continue with Introduction." if has_news_hook else "Start with the introduction."} Cite sources as markdown links where relevant (use real URLs only, never "blank"). Use the Focus Keyword in at least 2 of the H2 section headings (e.g. "Early Life of [Name]", "[Name]'s Career Overview")."""
+
+
+def sanitize_religion_body(body: str) -> str:
+    """Remove TOC blocks, placeholder images, and broken markdown image links from religion articles."""
+    if not body or not body.strip():
+        return body
+    text = body
+    text = re.sub(
+        r"\*\*Table of Contents\*\*\s*\n+(?:[-*]?\s*\[[^\]]+\]\([^)]+\)\s*\n+)+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"!\[[^\]]*\]\((?:https?://)?(?:example\.com|placeholder|image-url|/url)[^)]*\)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(
+        r"!\[[^\]]*\]\(url\)\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return text.strip()
 
 
 def _build_religion_article_prompt(
@@ -842,76 +954,50 @@ def _build_religion_article_prompt(
     category_style: str,
     research_block: str,
     last_updated_block: str,
+    description: Optional[str] = None,
 ) -> str:
-    """Build full 8-section religion article prompt (whatreligionisinfo.com style)."""
-    return f"""You are an expert celebrity religion blogger writing for whatreligionisinfo.com. Create a comprehensive, SEO-optimized article about {topic}'s religious beliefs and spiritual background.
+    """Celebrity religion article prompt — context-first outline or magazine template fallback."""
+    from app.services.celebrity_outline_templates import (
+        get_religion_format_rules,
+        get_religion_quality_rules,
+        normalize_celebrity_name,
+        outline_to_prompt_block,
+    )
+
+    name = normalize_celebrity_name(topic)
+    has_content_outline = bool(description and "## Content outline" in description)
+
+    if has_content_outline:
+        structure_block = (
+            "ARTICLE STRUCTURE: Follow the H2/H3 headings under "
+            '"## Content outline" in Additional Context exactly (including "5 Key Facts"). '
+            "Do not use the default section list below."
+        )
+    else:
+        structure_block = outline_to_prompt_block(name, include_briefs=True)
+
+    return f"""You are an expert celebrity religion blogger writing for whatreligionisinfo.com. Create a factual, SEO-optimized article about {name}'s religious beliefs and spiritual background.
 
 Topic: "{topic}"{description_text}
 Target Keywords: {keywords_text}
 Writing style: {category_style}
 {research_block}
 
-Include this recency block where appropriate: {last_updated_block}
-
 Rank Math SEO (required):
-- Focus Keyword: use the topic/primary keyword (e.g. "{topic} religion" or "{topic}") as the focus keyword. Use it in the first 1-2 sentences, in at least 2 H2/H3 subheadings, and naturally in the body. Aim for ~1% keyword density.
-- Use short paragraphs (2-4 sentences max).
+- Focus Keyword: use "{name} religion" or the topic as focus keyword in the first 1-2 sentences, in H2 "5 Key Facts About {name}'s Spiritual Beliefs", and in at least one other H2.
 - Do not add a Table of Contents.
-- Include at least one image placeholder with Focus Keyword in the alt text, e.g. ![{topic} religion belief](url).
+- Do NOT add markdown images unless Research context includes a real https URL for that image (never example.com or placeholders).
+- Do not add in-body links to sibling overview, net worth, or religion articles.
+- Include [YOUTUBE_EMBED: interview title] in the spotlight section only when research supports a real interview.
+- Last Updated: only cite sources you actually linked in the article body.
 
-ARTICLE STRUCTURE (follow exactly, use these exact H2 headings):
+{get_religion_quality_rules(name)}
 
-## Introduction (200-300 words)
-- Hook: present as a mystery or surprising revelation about their faith
-- Brief bio: birth date, profession, nationality
-- Include a Quick Facts table immediately after the first paragraph:
-| Attribute | Details |
-|-----------|---------|
-| Religion | (if known, else "—") |
-| Profession | ... |
-| Date of Birth | ... |
-| Zodiac Sign | ... |
-| Nationality | ... |
-- If you link to sibling articles (overview or net worth), use flat paths like `/name-slug` and `/name-slug-net-worth` only — never `/person/.../...` URLs.
-- Include one expert-style quote about celebrity spirituality (e.g. from a religious studies perspective)
-- Thesis statement: preview what the article will explore
+{structure_block}
 
-## Upbringing & Religious Roots (300-400 words)
-- Family background and childhood religion
-- Specific traditions, church attendance, cultural context
-- Celebrity quote about childhood if available; otherwise expert analysis on how upbringing shapes values
+{get_religion_format_rules()}
 
-## Current Spiritual Beliefs (300-400 words)
-- Evolution from childhood to present
-- Direct quotes from interviews about faith/God/spirituality where possible
-- Clarify: Do they still practice? Have they converted? Are they secular?
-- Expert commentary on generational shifts in spirituality
-
-## Career & Artistic Expression (300-400 words)
-- How beliefs influence their work (roles, music, art)
-- Specific examples: films, songs, public statements
-- Include a table with 3-4 major projects:
-| Project | Impact | Expert Opinion |
-|---------|--------|-----------------|
-| ... | ... | ... |
-- Connect themes to spiritual/religious values (compassion, justice, existential questions)
-
-## Comparisons with Other Celebrities (300-400 words)
-- 3-4 relevant comparisons (similar background, contrasting paths, same generation)
-- How do they handle faith differently? What can we learn?
-- Include diverse examples (devout, spiritual-but-not-religious, converted, secular)
-
-## Data & Expert Opinions (200-300 words)
-- Statistics if relevant (e.g. Pew Research, demographic trends)
-- 2-3 additional expert-style quotes (sociology, psychology, theology)
-- Synthesize what scholars say about this celebrity's approach
-
-## Conclusion (200 words)
-- Summarize findings without being repetitive
-- Final expert-style quote tying it all together
-- Forward-looking statement about their spiritual journey
-
-Format in clean markdown. Do not include the article title (it will be added separately). Start with the introduction. Use citations as markdown links where relevant. Total length approximately 2,200-2,800 words. Use the Focus Keyword in at least 2 H2 section headings (e.g. "[Name]'s Upbringing", "Current Beliefs of [Name]")."""
+Format in clean markdown. Do not include the article title (it will be added separately). Start with ## Introduction. Use citations as markdown links with real URLs from research only. Total length approximately 1,500 words (1,400-1,600 maximum)."""
 
 
 async def generate_blog_body(
@@ -950,10 +1036,9 @@ async def generate_blog_body(
     eeat_block = ""
     if content_intent == "net_worth":
         sibling_line = (
-            "- Linking: use flat path `/name-slug` for the overview article only — never `/person/.../...` URLs.\n"
-            "- **Do not** link to or describe a separate religion article (none exists for this person)."
+            "- **Do not** add in-body links to the overview or any religion article (none exists for this person)."
             if omit_religion_refs_in_net_worth
-            else "- Linking: flat paths `/name-slug` (overview) and `/name-slug-religion` (if applicable) — never `/person/.../...` URLs."
+            else "- **Do not** add in-body links to overview or religion companion articles."
         )
         eeat_block = f"""
 
@@ -970,9 +1055,13 @@ E-E-A-T and accuracy (YMYL financial content):
 - Include this block verbatim near the top (after the opening paragraph): {_last_updated_block_nw}
 {sibling_line}"""
     elif content_intent == "religion":
-        eeat_block = _build_religion_article_prompt(topic, description_text, keywords_text, category_style, research_block, _last_updated_block)
+        eeat_block = _build_religion_article_prompt(
+            topic, description_text, keywords_text, category_style, research_block,
+            _last_updated_block, description=description,
+        )
         prompt = eeat_block
-        return await generate_blog_seo_content(prompt, max_tokens=4500, temperature=0.6)
+        body = await generate_blog_seo_content(prompt, max_tokens=4500, temperature=0.5)
+        return sanitize_religion_body(body)
     elif content_intent == "parent_overview":
         prompt = _build_parent_article_prompt(
             topic, description_text, keywords_text, category_style,
@@ -1081,12 +1170,18 @@ Meta description 150-160 chars and must include the focus keyword. FAQs: 5 items
                 _rq.append({"query": str(q.get("query", "")).strip(), "answer": str(q.get("answer", "")).strip()})
             else:
                 _rq.append({"query": str(q).strip(), "answer": ""})
+        for item in _rq:
+            if item["query"] and not item.get("answer", "").strip():
+                item["answer"] = (
+                    f"This article explains {item['query']} in context of {topic}, "
+                    f"with background and verified public facts."
+                )
         related_queries = _rq
     except (json.JSONDecodeError, Exception):
         title = f"{topic} - Guide"
         meta_description = (description or topic)[:160]
         faqs = [{"question": f"What is {topic}?", "answer": f"This article covers {topic}."}]
-        related_queries = [{"query": f"What is {topic}", "answer": ""}, {"query": f"How to {topic}", "answer": ""}]
+        related_queries = _default_related_queries(topic)[:2]
     # Body in separate call (largest output)
     body_content = await generate_blog_body(topic, description, keywords, category, research_context=research_context)
     return {
@@ -1173,7 +1268,7 @@ Rank Math for all 3: Put Focus Keyword ([Name] or topic) in each SEO title near 
 
 Generate SEO titles and meta descriptions for 3 articles in one JSON object:
 1. parent_overview: who they are, career, fame (title pattern "Who Is [Name]? 5 Facts About Career & Fame")
-2. religion: religious beliefs, faith (title pattern "What Religion is [Name]? Key Facts Explained")
+2. religion: religious beliefs, faith (title pattern "What Religion Is [Name]? 5 Key Facts About Their Spiritual Beliefs")
 3. net_worth: net worth, income (title pattern "[Name] Net Worth: [Number] Key Facts")
 
 Return ONLY this JSON (no markdown):
@@ -1265,7 +1360,7 @@ Cite sources as markdown links only (e.g. [Celebrity Net Worth](https://www.cele
 Output format — use these exact section headers (each body is 400-700 words, markdown with ## and ###):
 
 ---PARENT_BODY---
-(Article 1: OVERVIEW, 2,000-3,000 words. Use these H2 sections in order: Introduction (200-250 words), Quick Facts (table Attribute|Details), Early Life (250-300 words + 3 bullets), First Media Appearance (YouTube or brief note), Career Overview (400-500 words: Beginnings, Transition, First Leading Role), Personal Life (250-300 words), Filmography (paragraph and bullet format only — Films, then Television Work, then Music/Other; no tables; use full sentences so content is not tiny), Awards & Nominations (200-250 words), Public Image & Legacy (200-300 words), Conclusion (150-200 words).{_yt_note} Include: {_lu_block})
+(Article 1: OVERVIEW, 2,000-3,000 words. Use these H2 sections in order: Introduction (200-250 words), Quick Facts (table Attribute|Details), Early Life (250-300 words + 3 bullets), First Media Appearance (YouTube or brief note), Career Overview (400-500 words: Beginnings, Transition, First Leading Role), Personal Life (250-300 words), Professional Journey (paragraph and bullet format only — career milestones suited to their field; no tables; use full sentences so content is not tiny), Awards & Nominations (200-250 words), Public Image & Legacy (200-300 words), Conclusion (150-200 words).{_yt_note} Include: {_lu_block})
 ...full markdown body...
 
 ---CHILD_0_BODY---
@@ -1489,69 +1584,163 @@ Return ONLY the JSON array, no other text."""
         ]
 
 
+def _parse_related_queries_response(raw: str, topic: str) -> List[Dict[str, str]]:
+    """Parse LLM JSON into [{query, answer}, ...]; accept legacy string arrays."""
+    import json
+
+    clean = (raw or "").strip()
+    for prefix in ("```json", "```"):
+        if clean.startswith(prefix):
+            clean = clean[len(prefix) :].strip()
+    if clean.endswith("```"):
+        clean = clean[:-3].strip()
+
+    parsed = json.loads(clean)
+    if not isinstance(parsed, list):
+        raise json.JSONDecodeError("Expected array", raw, 0)
+
+    out: List[Dict[str, str]] = []
+    for item in parsed[:8]:
+        if isinstance(item, dict):
+            q = str(item.get("query", "")).strip()
+            a = str(item.get("answer", "")).strip()
+            if q:
+                out.append({"query": q, "answer": a})
+        elif item is not None:
+            q = str(item).strip()
+            if q:
+                out.append({"query": q, "answer": ""})
+    return out
+
+
+def _default_related_queries(topic: str) -> List[Dict[str, str]]:
+    t = (topic or "this topic").strip()
+    return [
+        {
+            "query": f"Who is {t}",
+            "answer": (
+                f"{t} is the focus of this article, which covers background, career highlights, "
+                f"and the latest developments readers are searching for."
+            ),
+        },
+        {
+            "query": f"{t} biography",
+            "answer": (
+                f"This guide summarizes {t}'s life story, professional path, and key milestones "
+                f"using verified public sources."
+            ),
+        },
+        {
+            "query": f"{t} career",
+            "answer": (
+                f"Learn how {t} built their career, major teams or projects, and standout moments "
+                f"that shaped their public profile."
+            ),
+        },
+        {
+            "query": f"{t} latest news",
+            "answer": (
+                f"Catch up on recent headlines about {t}, including performance updates and "
+                f"context behind what is trending now."
+            ),
+        },
+        {
+            "query": f"How old is {t}",
+            "answer": (
+                f"Readers often search for {t}'s age alongside biography facts; see the Quick Facts "
+                f"section in this article for dates and background."
+            ),
+        },
+        {
+            "query": f"{t} net worth",
+            "answer": (
+                f"Earnings, contracts, and endorsements for {t} are covered where public data exists, "
+                f"with sources noted in the article."
+            ),
+        },
+        {
+            "query": f"{t} personal life",
+            "answer": (
+                f"Explore verified details about {t}'s family, upbringing, and public personal life "
+                f"without rumor or speculation."
+            ),
+        },
+        {
+            "query": f"What is {t} known for",
+            "answer": (
+                f"{t} is known for achievements in their field; this article explains why they matter "
+                f"and how their story connects to current news."
+            ),
+        },
+    ]
+
+
 async def generate_related_queries(
     topic: str,
     description: Optional[str] = None,
     keywords: List[str] = None,
     category: str = "Technology & AI",
     research_context: Optional[str] = None,
-    content_intent: Optional[str] = None
-) -> List[str]:
-    """Generate related search queries for content clustering"""
+    content_intent: Optional[str] = None,
+) -> List[Dict[str, str]]:
+    """Generate related search queries with short answers (for SEO content length)."""
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
     description_text = f"\nContext: {description}" if description else ""
-    research_block = f"\n\nResearch context (use to inform your response):\n{research_context}" if research_context else ""
+    research_block = (
+        f"\n\nResearch context (use for accurate answers — do not invent facts):\n{research_context[:3500]}"
+        if research_context
+        else ""
+    )
     intent_block = ""
     if content_intent and content_intent in CONTENT_INTENT_PROMPTS:
         intent_block = f"\n\nContent intent (queries should align with this focus):\n{CONTENT_INTENT_PROMPTS[content_intent]}"
-    
-    prompt = f"""Generate 8 related search queries that users might search for related to this blog topic.
+
+    biography_extra = ""
+    if content_intent == "parent_overview":
+        biography_extra = """
+For celebrity biography articles, include queries such as: "Who is [name]", "[name] career", "[name] team", "[name] age", "[name] net worth".
+Each answer must give useful facts (2-3 sentences), not a teaser that says "read the article only".
+"""
+
+    prompt = f"""Generate 8 related search queries users type into Google for this blog topic, WITH a helpful answer for each.
 
 Topic: "{topic}"{description_text}
 Related Keywords: {keywords_text}
-Content Category: {category}{research_block}{intent_block}
+Content Category: {category}{research_block}{intent_block}{biography_extra}
 
 Requirements:
-1. Create queries that real users would type into Google
-2. Include a mix of:
-   - "How to" queries
-   - "What is" queries  
-   - Comparison queries
-   - Best/Top queries
-   - Specific questions
-3. Each query should be related but slightly different angle
-4. Include long-tail keyword variations
+1. Each item has "query" (realistic Google search phrase) and "answer" (2-3 sentences, 35-80 words).
+2. Answers must use research context when available; if unknown, say what is not publicly confirmed.
+3. Mix: "Who is", career, team/project, age, net worth, personal life, latest news — as relevant to the topic.
+4. Answers must stand alone as mini-FAQs (valuable, specific, not empty).
+5. Do not duplicate the same facts across all eight answers.
 
-Format your response as a JSON array of strings:
-["query 1", "query 2", "query 3", "query 4", "query 5", "query 6", "query 7", "query 8"]
+Return ONLY a JSON array of 8 objects:
+[{{"query": "search phrase", "answer": "2-3 sentence answer."}}, ...]
 
-Return ONLY the JSON array, no other text."""
+Return ONLY valid JSON, no markdown fences or other text."""
 
-    import json
-    result = await generate_blog_seo_content(prompt, max_tokens=500, temperature=0.8)
-    
-    # Parse the JSON response
+    result = await generate_blog_seo_content(prompt, max_tokens=2200, temperature=0.55)
+
     try:
-        result_clean = result.strip()
-        if result_clean.startswith("```json"):
-            result_clean = result_clean[7:]
-        if result_clean.startswith("```"):
-            result_clean = result_clean[3:]
-        if result_clean.endswith("```"):
-            result_clean = result_clean[:-3]
-        result_clean = result_clean.strip()
-        
-        queries = json.loads(result_clean)
-        return queries
+        out = _parse_related_queries_response(result, topic)
+        if len(out) < 8:
+            defaults = _default_related_queries(topic)
+            seen = {x["query"].lower() for x in out}
+            for d in defaults:
+                if d["query"].lower() not in seen and len(out) < 8:
+                    out.append(d)
+                    seen.add(d["query"].lower())
+        # Backfill empty answers
+        for item in out:
+            if not item.get("answer", "").strip():
+                item["answer"] = (
+                    f"This article explains {item['query']} in context of {topic}, "
+                    f"with career background and verified public facts."
+                )
+        return out[:8]
     except json.JSONDecodeError:
-        # If parsing fails, return default queries
-        return [
-            f"What is {topic}",
-            f"How to {topic}",
-            f"Best {topic} guide",
-            f"{topic} tips and tricks",
-            f"{topic} for beginners"
-        ]
+        return _default_related_queries(topic)[:8]
 
 
 async def generate_internal_links(
@@ -1816,6 +2005,821 @@ async def generate_schema_markup(
     return base
 
 
+def _clean_json_response(text: str) -> str:
+    result_clean = (text or "").strip()
+    for prefix in ("```json", "```"):
+        if result_clean.startswith(prefix):
+            result_clean = result_clean[len(prefix) :].strip()
+    if result_clean.endswith("```"):
+        result_clean = result_clean[:-3].strip()
+    return result_clean
+
+
+def _parse_heading_nodes(raw: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw, list):
+        return []
+    nodes: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        level = item.get("level")
+        if level not in (1, 2, 3):
+            try:
+                level = int(level)
+            except (TypeError, ValueError):
+                continue
+            if level not in (1, 2, 3):
+                continue
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        children = _parse_heading_nodes(item.get("children") or [])
+        nodes.append({"level": level, "text": text, "children": children})
+    return nodes
+
+
+def _fallback_research_summary(
+    query: str,
+    results: Dict[str, Any],
+) -> Dict[str, Any]:
+    answer = (results.get("answer") or "").strip() if isinstance(results, dict) else ""
+    summary = answer[:600] if answer else f"Research summary for {query}."
+    follow_ups = results.get("follow_up_questions") or []
+    key_topics = [str(q).strip() for q in follow_ups[:5] if str(q).strip()]
+    outline: List[Dict[str, Any]] = []
+    if key_topics:
+        outline = [
+            {
+                "level": 2,
+                "text": key_topics[0][:80],
+                "children": [
+                    {"level": 3, "text": t[:80], "children": []}
+                    for t in key_topics[1:3]
+                ],
+            }
+        ]
+    return {
+        "summary": summary,
+        "h1": query,
+        "outline": outline,
+        "key_topics": key_topics or [query],
+        "subtopics": [],
+        "core_content_recommendations": [],
+        "seo_suggestions": [],
+        "topical_coverage": [],
+        "target_keywords": [query],
+    }
+
+
+def _fallback_celebrity_religion_summary(query: str, results: Dict[str, Any]) -> Dict[str, Any]:
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_CATEGORY,
+        CELEBRITY_RELIGION_TEMPLATE_ID,
+        build_celebrity_religion_outline,
+        get_religion_section_slugs,
+        normalize_celebrity_name,
+    )
+
+    name = normalize_celebrity_name(query)
+    answer = (results.get("answer") or "").strip() if isinstance(results, dict) else ""
+    summary = answer[:500] if answer else f"Research-backed religion outline for {name}."
+    slugs = get_religion_section_slugs()
+    section_notes = {slug: [f"Cover {slug} using research about {name}."] * 3 for slug in slugs[:5]}
+    return {
+        "summary": summary,
+        "h1": f"What Religion Is {name}? 5 Key Facts About Their Spiritual Beliefs",
+        "outline": build_celebrity_religion_outline(name),
+        "key_topics": [f"{name} religion", f"{name} faith", "celebrity spirituality"],
+        "subtopics": [],
+        "core_content_recommendations": [
+            f"Verify latest interviews about {name}'s beliefs",
+            "Add [YOUTUBE_EMBED: interview] if a recent interview exists",
+            "Cite primary sources with markdown links",
+        ],
+        "seo_suggestions": [f'Use focus keyword "{name} religion" in title and first paragraph'],
+        "topical_coverage": [],
+        "target_keywords": [f"{name} religion", f"what religion is {name}", name],
+        "section_notes": section_notes,
+        "category": CELEBRITY_CATEGORY,
+        "celebrity_content_type": "religious",
+        "outline_template": CELEBRITY_RELIGION_TEMPLATE_ID,
+    }
+
+
+async def generate_biography_news_seo_title(
+    name: str,
+    news_bundle: Any,
+    research_context: Optional[str] = None,
+) -> str:
+    """SEO blog title: specific news + varied biography hook (second segment)."""
+    from datetime import date
+    from app.services.news_research_service import (
+        NewsResearchBundle,
+        format_news_bundle_for_llm,
+        format_biography_hook_options_for_prompt,
+        pick_biography_title_hook,
+        ensure_biography_seo_title,
+    )
+
+    if not isinstance(news_bundle, NewsResearchBundle):
+        return ensure_biography_seo_title(f"Who Is {name}?", name)
+    year = date.today().year
+    suggested_hook = pick_biography_title_hook(name, year)
+    hook_options = format_biography_hook_options_for_prompt(year)
+    news_block = format_news_bundle_for_llm(news_bundle)
+    research_snippet = (research_context or "")[:1500]
+
+    prompt = f"""Write ONE SEO blog title for a celebrity biography article.
+
+Person (full name required at start): {name}
+Current year (use in hooks when needed): {year}
+
+News context (facts only):
+{news_block}
+
+Biography research (optional):
+{research_snippet or "(none)"}
+
+REQUIRED pattern:
+"[Full Name] [Specific news event with team/place/numbers] — [Biography hook]"
+
+Biography hook — pick ONE from this list (match gender for He/She/Her/His when applicable):
+{hook_options}
+
+Suggested hook for this person: {suggested_hook}
+Do NOT default every title to "Biography, Age & Net Worth {year}" — rotate styles like the examples below.
+
+Style examples (vary the ending):
+- Carrie Underwood Stuns Fans With New Album — Her Full Life Story
+- Elon Musk Faces Lawsuit in {year} — Biography, Family & Net Worth
+- Cristiano Ronaldo Retires From International Football — Who Is He Really?
+- Selena Gomez Wins Grammy {year} — Age, Religion, Net Worth & More
+- Taylor Swift Breaks Record Again — Full Biography & Untold Facts
+
+Rules:
+- MUST begin with: {name}
+- First segment = WHAT happened (specific facts) — NOT vague reactions like "fans praise" or "analysts debate"
+- Second segment = one biography hook from the list above (not a duplicate of the examples unless it truly fits)
+- 60-95 characters if possible; Title Case; accurate to sources
+
+Bad example: Jorge Mateo hits 4th homer — Fans praise his power surge
+
+Return ONLY the title."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=120, temperature=0.5)
+        title = (result or "").strip().strip('"').strip("'")
+        return ensure_biography_seo_title(title, name, year)
+    except Exception:
+        return ensure_biography_seo_title(news_bundle.normalized_headline, name, year)
+
+
+async def generate_biography_news_meta_description(
+    name: str,
+    seo_title: str,
+    research_context: Optional[str] = None,
+    news_context: Optional[str] = None,
+) -> str:
+    """150–160 char meta from news + built title; biography SEO keywords + year."""
+    from datetime import date
+    from app.services.news_research_service import (
+        clamp_biography_meta_description,
+        build_fallback_biography_meta_description,
+        is_weak_biography_meta,
+    )
+
+    year = date.today().year
+    research_snippet = (research_context or "")[:1500]
+    news_block = (news_context or "")[:2000]
+
+    prompt = f"""Write ONE meta description for a celebrity biography article.
+
+Person: {name}
+SEO title (do NOT copy word-for-word): {seo_title}
+Year to include: {year}
+
+News context:
+{news_block or "(use title and research only)"}
+
+Biography research:
+{research_snippet or "(none)"}
+
+RULES (all required):
+1. Length: exactly 150–160 characters (count carefully before responding).
+2. Include the year {year} (feels fresh).
+3. Start with an action word: Learn, Discover, Explore, or Find Out (pick one).
+4. Include ALL of these keywords naturally: biography, age, net worth, religion
+5. Do NOT repeat the SEO title phrasing — paraphrase the news angle instead.
+6. End by telling the reader WHAT they will learn (career, background, personal facts, etc.).
+
+Good example ({year}):
+Discover Jorge Mateo's rise in {year}. Learn biography, age, net worth, religion, and his path from minors to the Braves roster.
+
+Return ONLY the meta description text. No quotes."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=120, temperature=0.55)
+        meta = clamp_biography_meta_description(
+            (result or "").strip().strip('"').strip("'"),
+            year,
+        )
+        if is_weak_biography_meta(meta, seo_title, year):
+            meta = build_fallback_biography_meta_description(name, seo_title, year)
+        return meta
+    except Exception:
+        return build_fallback_biography_meta_description(name, seo_title, year)
+
+
+def _news_fields_from_bundle(
+    bundle: Optional[Any],
+    *,
+    seo_headline: Optional[str] = None,
+    seo_meta_description: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extract optional news hook fields from NewsResearchBundle for summary response."""
+    if not bundle:
+        return {}
+    from app.services.news_research_service import NewsResearchBundle, format_news_bundle_for_llm
+
+    if not isinstance(bundle, NewsResearchBundle):
+        return {}
+    sources = [
+        {
+            "title": item.get("title", ""),
+            "link": item.get("link", ""),
+            "source": item.get("source", ""),
+            "snippet": item.get("snippet", ""),
+            "date": item.get("date", ""),
+        }
+        for item in (bundle.news_results or [])
+    ]
+    headline = (seo_headline or "").strip() or bundle.normalized_headline
+    meta = (seo_meta_description or "").strip() or bundle.description
+    return {
+        "news_headline": headline,
+        "news_hook_paragraph": bundle.story_description,
+        "news_meta_description": meta,
+        "news_hashtags": bundle.hashtags or [],
+        "news_sources": sources,
+        "news_context": format_news_bundle_for_llm(bundle),
+    }
+
+
+def _fallback_celebrity_biography_summary(
+    query: str,
+    results: Dict[str, Any],
+    news_bundle: Optional[Any] = None,
+) -> Dict[str, Any]:
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
+        CELEBRITY_CATEGORY,
+        build_celebrity_biography_outline,
+        get_biography_section_slugs,
+        normalize_celebrity_name,
+    )
+
+    name = normalize_celebrity_name(query)
+    answer = (results.get("answer") or "").strip() if isinstance(results, dict) else ""
+    from app.services.news_research_service import (
+        build_fallback_biography_meta_description,
+        ensure_biography_seo_title,
+    )
+
+    if news_bundle:
+        h1 = ensure_biography_seo_title(news_bundle.normalized_headline, name)
+    else:
+        h1 = f"Who Is {name}? Full Biography & Career Highlights"
+    h1 = ensure_biography_seo_title(h1, name)
+    seo_meta = (
+        build_fallback_biography_meta_description(name, h1) if news_bundle else None
+    )
+    news_fields = _news_fields_from_bundle(
+        news_bundle,
+        seo_headline=h1,
+        seo_meta_description=seo_meta,
+    )
+    if news_fields.get("news_hook_paragraph"):
+        summary = (
+            f"{news_fields['news_hook_paragraph'][:300]} "
+            f"This outline covers the full biography of {name}."
+        )
+    else:
+        summary = answer[:500] if answer else f"Research-backed biography outline for {name}."
+    slugs = get_biography_section_slugs()
+    section_notes = {slug: [f"Cover {slug} using research about {name}."] * 3 for slug in slugs[:6]}
+    base = {
+        "summary": summary,
+        "h1": h1,
+        "outline": build_celebrity_biography_outline(name),
+        "key_topics": [name, f"{name} biography", f"who is {name}"],
+        "subtopics": [],
+        "core_content_recommendations": [
+            f"Verify career dates and awards for {name}",
+            "Add [YOUTUBE_EMBED: interview] in First Media Appearance if available",
+            "Cite news and biography sources with markdown links",
+        ],
+        "seo_suggestions": [f'Use focus keyword "{name}" in title and first paragraph'],
+        "topical_coverage": [],
+        "target_keywords": [name, f"{name} biography", f"who is {name}"],
+        "section_notes": section_notes,
+        "category": CELEBRITY_CATEGORY,
+        "celebrity_content_type": "biography",
+        "outline_template": CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
+    }
+    base.update(news_fields)
+    return base
+
+
+async def _generate_celebrity_biography_summary(
+    query: str,
+    results: Dict[str, Any],
+    topical_mapping: Optional[Dict[str, Any]] = None,
+    competitors: Optional[List[Dict[str, Any]]] = None,
+    opportunities: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Biography celebrity summary: fixed template outline + news hook + LLM metadata."""
+    import json
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
+        CELEBRITY_CATEGORY,
+        build_celebrity_biography_outline,
+        get_biography_section_slugs,
+        normalize_celebrity_name,
+    )
+    from app.services.news_research_service import build_news_bundle, format_news_bundle_for_llm
+    from app.services.research_context import format_research_context
+
+    name = normalize_celebrity_name(query)
+    outline = build_celebrity_biography_outline(name)
+    slugs = get_biography_section_slugs()
+    research_text = format_research_context(results) or ""
+
+    news_bundle = await build_news_bundle(query)
+    seo_headline: Optional[str] = None
+    if news_bundle:
+        seo_headline = await generate_biography_news_seo_title(name, news_bundle, research_text)
+    news_block = ""
+    if news_bundle:
+        news_block = f"\n\nCurrent news context (use for title and opening hook):\n{format_news_bundle_for_llm(news_bundle)}"
+        if seo_headline:
+            news_block += f"\n\nRequired SEO title (use as h1): {seo_headline}"
+
+    competitor_lines = []
+    for c in competitors or []:
+        if isinstance(c, dict) and (c.get("domain") or "").strip():
+            competitor_lines.append(f"- {c['domain']}")
+    opportunity_lines = []
+    for o in opportunities or []:
+        if isinstance(o, dict) and (o.get("keyword") or "").strip():
+            opportunity_lines.append(f"- {o['keyword']}")
+
+    topical_block = ""
+    if topical_mapping and isinstance(topical_mapping, dict):
+        auto_vals = [
+            (a.get("value") or "").strip()
+            for a in (topical_mapping.get("autocomplete_suggestions") or [])
+            if isinstance(a, dict) and (a.get("value") or "").strip()
+        ][:8]
+        related_vals = [
+            (r.get("query") or "").strip()
+            for r in (topical_mapping.get("related_queries") or [])
+            if isinstance(r, dict) and (r.get("query") or "").strip()
+        ][:8]
+        if auto_vals or related_vals:
+            topical_block = (
+                "Topical mapping:\n"
+                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
+                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
+            )
+
+    slug_list = ", ".join(slugs)
+    from datetime import date as _bio_date
+    from app.services.news_research_service import (
+        pick_biography_title_hook,
+        format_biography_hook_options_for_prompt,
+        ensure_biography_seo_title,
+        is_weak_biography_title,
+    )
+
+    _year = _bio_date.today().year
+    _suggested_hook = pick_biography_title_hook(name, _year)
+    _hook_options = format_biography_hook_options_for_prompt(_year)
+    title_rule = (
+        f'h1: "[{name}] [Specific news] — [ONE biography hook]". Suggested hook: {_suggested_hook}. '
+        f'Vary endings across articles — choose from: {_hook_options.replace(chr(10), "; ")}. '
+        f'Examples: "— Her Full Life Story", "— Biography, Family & Net Worth", "— Who Is He Really?", '
+        f'"— Age, Religion, Net Worth & More", "— Full Biography & Untold Facts". '
+        f'NEVER use vague social tails like "fans praise" only.'
+        if news_bundle
+        else f'h1 pattern: "Who Is {name}? Full Biography & Career Highlights" or similar SEO title.'
+    )
+    summary_rule = (
+        "summary: 2-4 sentences; LEAD with the current news event, then preview the biography."
+        if news_bundle
+        else f"summary: 2-4 sentences about who {name} is and why readers should care."
+    )
+
+    prompt = f"""You are an SEO strategist for a celebrity biography article about "{name}".
+
+Research context:
+{research_text[:3000]}
+{news_block}
+
+Competitors: {chr(10).join(competitor_lines) if competitor_lines else "(none)"}
+Opportunities: {chr(10).join(opportunity_lines) if opportunity_lines else "(none)"}
+{topical_block}
+
+The article outline headings are FIXED (already chosen). Section slugs: {slug_list}
+
+Title rule: {title_rule}
+Summary rule: {summary_rule}
+
+Return ONLY a JSON object with these keys (no outline key — headings are fixed):
+- summary: string
+- h1: string
+- section_notes: object mapping each slug listed above to an array of exactly 3-4 UNIQUE research bullets
+- key_topics: array of 5-8 strings
+- subtopics: array of 5-10 strings
+- core_content_recommendations: array of 3-8 items
+- seo_suggestions: array of 5-8 strings
+- topical_coverage: array of 5-8 strings
+- target_keywords: array of 8-12 strings (include "{name}", "{name} biography", "who is {name}")
+
+Return ONLY valid JSON."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        data = json.loads(_clean_json_response(result))
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object")
+
+        raw_notes = data.get("section_notes") or {}
+        section_notes: Dict[str, List[str]] = {}
+        if isinstance(raw_notes, dict):
+            for slug in slugs:
+                val = raw_notes.get(slug)
+                if isinstance(val, list):
+                    section_notes[slug] = [str(x).strip() for x in val if str(x).strip()][:4]
+
+        clusters = await extract_keyword_clusters(research_text, name)
+        merged_kw: List[str] = []
+        seen: set = set()
+        for kw in [
+            clusters.get("primary"),
+            *(clusters.get("secondary") or []),
+            *(clusters.get("lsi") or []),
+            name,
+            f"{name} biography",
+            f"who is {name}",
+            *(data.get("target_keywords") or []),
+        ]:
+            s = str(kw).strip() if kw else ""
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+
+        seo = [str(x).strip() for x in (data.get("seo_suggestions") or []) if str(x).strip()]
+        for q in (clusters.get("paa") or [])[:3]:
+            s = str(q).strip()
+            if s:
+                seo.append(f"Answer PAA: {s}")
+
+        topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        fallback = _fallback_celebrity_biography_summary(query, results, news_bundle)
+
+        h1 = (data.get("h1") or "").strip()
+        if not h1:
+            h1 = fallback["h1"]
+        if seo_headline:
+            h1 = seo_headline
+        elif news_bundle and is_weak_biography_title(h1, name):
+            h1 = await generate_biography_news_seo_title(name, news_bundle, research_text)
+        h1 = ensure_biography_seo_title(h1, name)
+
+        seo_meta: Optional[str] = None
+        if news_bundle or seo_headline:
+            news_ctx = format_news_bundle_for_llm(news_bundle) if news_bundle else ""
+            seo_meta = await generate_biography_news_meta_description(
+                name, h1, research_text, news_context=news_ctx
+            )
+
+        base = {
+            "summary": (data.get("summary") or "").strip() or fallback["summary"],
+            "h1": h1,
+            "outline": outline,
+            "key_topics": [str(x).strip() for x in (data.get("key_topics") or []) if str(x).strip()],
+            "subtopics": [str(x).strip() for x in (data.get("subtopics") or []) if str(x).strip()],
+            "core_content_recommendations": [
+                str(x).strip() for x in (data.get("core_content_recommendations") or []) if str(x).strip()
+            ],
+            "seo_suggestions": seo,
+            "topical_coverage": topical,
+            "target_keywords": merged_kw[:15],
+            "section_notes": section_notes or None,
+            "category": CELEBRITY_CATEGORY,
+            "celebrity_content_type": "biography",
+            "outline_template": CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
+        }
+        base.update(
+            _news_fields_from_bundle(
+                news_bundle,
+                seo_headline=h1,
+                seo_meta_description=seo_meta,
+            )
+        )
+        return base
+    except (json.JSONDecodeError, Exception):
+        return _fallback_celebrity_biography_summary(query, results, news_bundle)
+
+
+async def _generate_celebrity_religion_summary(
+    query: str,
+    results: Dict[str, Any],
+    topical_mapping: Optional[Dict[str, Any]] = None,
+    competitors: Optional[List[Dict[str, Any]]] = None,
+    opportunities: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Religious celebrity summary: fixed template outline + LLM fills notes and metadata."""
+    import json
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_CATEGORY,
+        CELEBRITY_RELIGION_TEMPLATE_ID,
+        build_celebrity_religion_outline,
+        get_religion_format_rules,
+        get_religion_quality_rules,
+        get_religion_section_slugs,
+        normalize_celebrity_name,
+    )
+    from app.services.research_context import format_research_context
+
+    name = normalize_celebrity_name(query)
+    outline = build_celebrity_religion_outline(name)
+    slugs = get_religion_section_slugs()
+    research_text = format_research_context(results) or ""
+
+    competitor_lines = []
+    for c in competitors or []:
+        if isinstance(c, dict) and (c.get("domain") or "").strip():
+            competitor_lines.append(f"- {c['domain']}")
+    opportunity_lines = []
+    for o in opportunities or []:
+        if isinstance(o, dict) and (o.get("keyword") or "").strip():
+            opportunity_lines.append(f"- {o['keyword']}")
+
+    topical_block = ""
+    if topical_mapping and isinstance(topical_mapping, dict):
+        auto_vals = [
+            (a.get("value") or "").strip()
+            for a in (topical_mapping.get("autocomplete_suggestions") or [])
+            if isinstance(a, dict) and (a.get("value") or "").strip()
+        ][:8]
+        related_vals = [
+            (r.get("query") or "").strip()
+            for r in (topical_mapping.get("related_queries") or [])
+            if isinstance(r, dict) and (r.get("query") or "").strip()
+        ][:8]
+        if auto_vals or related_vals:
+            topical_block = (
+                "Topical mapping:\n"
+                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
+                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
+            )
+
+    slug_list = ", ".join(slugs)
+    prompt = f"""You are an SEO strategist for a celebrity religion article about "{name}".
+
+Research context:
+{research_text[:3000]}
+
+Competitors: {chr(10).join(competitor_lines) if competitor_lines else "(none)"}
+Opportunities: {chr(10).join(opportunity_lines) if opportunity_lines else "(none)"}
+{topical_block}
+
+The article outline headings are FIXED (already chosen). Section slugs: {slug_list}
+
+{get_religion_quality_rules(name)}
+
+{get_religion_format_rules()}
+
+Return ONLY a JSON object with these keys (no outline key — headings are fixed):
+- summary: string (exactly 3-4 sentences; must state the direct answer about {name}'s religion/upbringing)
+- h1: string (SEO title MUST include "5 Key Facts", e.g. "What Religion Is {name}? 5 Key Facts About Their Spiritual Beliefs")
+- section_notes: object mapping each slug listed above to an array of exactly 3-4 UNIQUE research bullets (specific facts, quotes, interview refs — no "may/might" hedging; five_key_facts slug must list the 5 numbered facts to use)
+- key_topics: array of 5-8 strings
+- subtopics: array of 5-10 strings
+- core_content_recommendations: array of 3-8 items (latest interviews, embeds, URLs to verify)
+- seo_suggestions: array of 5-8 strings
+- topical_coverage: array of 5-8 strings
+- target_keywords: array of 8-12 strings (include "{name} religion", "what religion is {name}")
+
+Return ONLY valid JSON."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        data = json.loads(_clean_json_response(result))
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object")
+
+        raw_notes = data.get("section_notes") or {}
+        section_notes: Dict[str, List[str]] = {}
+        if isinstance(raw_notes, dict):
+            for slug in slugs:
+                val = raw_notes.get(slug)
+                if isinstance(val, list):
+                    section_notes[slug] = [str(x).strip() for x in val if str(x).strip()][:4]
+
+        clusters = await extract_keyword_clusters(research_text, name)
+        merged_kw: List[str] = []
+        seen: set = set()
+        for kw in [
+            clusters.get("primary"),
+            *(clusters.get("secondary") or []),
+            *(clusters.get("lsi") or []),
+            f"{name} religion",
+            f"what religion is {name}",
+            *(data.get("target_keywords") or []),
+        ]:
+            s = str(kw).strip() if kw else ""
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+
+        seo = [str(x).strip() for x in (data.get("seo_suggestions") or []) if str(x).strip()]
+        for q in (clusters.get("paa") or [])[:3]:
+            s = str(q).strip()
+            if s:
+                seo.append(f"Answer PAA: {s}")
+
+        topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+
+        return {
+            "summary": (data.get("summary") or "").strip() or _fallback_celebrity_religion_summary(query, results)["summary"],
+            "h1": (data.get("h1") or f"What Religion Is {name}? 5 Key Facts About Their Spiritual Beliefs").strip(),
+            "outline": outline,
+            "key_topics": [str(x).strip() for x in (data.get("key_topics") or []) if str(x).strip()],
+            "subtopics": [str(x).strip() for x in (data.get("subtopics") or []) if str(x).strip()],
+            "core_content_recommendations": [
+                str(x).strip() for x in (data.get("core_content_recommendations") or []) if str(x).strip()
+            ],
+            "seo_suggestions": seo,
+            "topical_coverage": topical,
+            "target_keywords": merged_kw[:15],
+            "section_notes": section_notes or None,
+            "category": CELEBRITY_CATEGORY,
+            "celebrity_content_type": "religious",
+            "outline_template": CELEBRITY_RELIGION_TEMPLATE_ID,
+        }
+    except (json.JSONDecodeError, Exception):
+        return _fallback_celebrity_religion_summary(query, results)
+
+
+async def generate_research_content_summary(
+    query: str,
+    results: Dict[str, Any],
+    topical_mapping: Optional[Dict[str, Any]] = None,
+    competitors: Optional[List[Dict[str, Any]]] = None,
+    opportunities: Optional[List[Dict[str, Any]]] = None,
+    category: Optional[str] = None,
+    celebrity_content_type: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Generate structured research summary and content outline for blog generation."""
+    import json
+    from app.services.celebrity_outline_templates import (
+        is_celebrity_biography_summary,
+        is_celebrity_religious_summary,
+    )
+    from app.services.research_context import format_research_context
+
+    if is_celebrity_religious_summary(category, celebrity_content_type):
+        return await _generate_celebrity_religion_summary(
+            query, results, topical_mapping, competitors, opportunities
+        )
+
+    if is_celebrity_biography_summary(category, celebrity_content_type):
+        return await _generate_celebrity_biography_summary(
+            query, results, topical_mapping, competitors, opportunities
+        )
+
+    research_text = format_research_context(results) or ""
+    competitor_lines = []
+    for c in competitors or []:
+        if not isinstance(c, dict):
+            continue
+        domain = (c.get("domain") or "").strip()
+        if domain:
+            competitor_lines.append(f"- {domain}")
+    opportunity_lines = []
+    for o in opportunities or []:
+        if not isinstance(o, dict):
+            continue
+        kw = (o.get("keyword") or "").strip()
+        if kw:
+            opportunity_lines.append(f"- {kw}")
+
+    topical_block = ""
+    if topical_mapping and isinstance(topical_mapping, dict):
+        auto = topical_mapping.get("autocomplete_suggestions") or []
+        related = topical_mapping.get("related_queries") or []
+        auto_vals = [
+            (a.get("value") or "").strip()
+            for a in auto
+            if isinstance(a, dict) and (a.get("value") or "").strip()
+        ][:8]
+        related_vals = [
+            (r.get("query") or "").strip()
+            for r in related
+            if isinstance(r, dict) and (r.get("query") or "").strip()
+        ][:8]
+        if auto_vals or related_vals:
+            topical_block = (
+                "Topical mapping:\n"
+                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
+                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
+            )
+
+    prompt = f"""You are an SEO content strategist. Based on the research below for "{query}", produce a structured article plan.
+
+Research context:
+{research_text[:3000]}
+
+Competitors ranking for this topic:
+{chr(10).join(competitor_lines) if competitor_lines else "(none provided)"}
+
+Content opportunities / follow-up angles:
+{chr(10).join(opportunity_lines) if opportunity_lines else "(none provided)"}
+
+{topical_block}
+
+Return ONLY a JSON object with these keys:
+- summary: string (2-4 sentences executive summary)
+- h1: string (primary article title, SEO-friendly)
+- outline: array of objects {{ "level": 2|3, "text": string, "children": [] }} (H2 sections with nested H3 children; at least 4 H2 sections)
+- key_topics: array of 5-8 main topic strings
+- subtopics: array of 5-10 subtopic strings
+- core_content_recommendations: array of 5-8 must-cover content angles based on competitors and gaps
+- seo_suggestions: array of 5-8 SEO recommendations (meta, snippets, internal links, etc.)
+- topical_coverage: array of 5-8 semantic areas or related queries to cover
+- target_keywords: array of 8-12 keywords (primary first, then secondary/LSI)
+
+Use level 2 for main sections and level 3 for subsections. Do not use level 1 in outline (h1 is separate).
+Return ONLY valid JSON, no markdown fences."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=1200, temperature=0.4)
+        data = json.loads(_clean_json_response(result))
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object")
+
+        clusters = await extract_keyword_clusters(research_text, query)
+        target_kw = data.get("target_keywords") or []
+        if not isinstance(target_kw, list):
+            target_kw = []
+        merged_kw: List[str] = []
+        seen: set = set()
+        for kw in [clusters.get("primary"), *(clusters.get("secondary") or []), *(clusters.get("lsi") or [])]:
+            s = str(kw).strip() if kw else ""
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+        for kw in target_kw:
+            s = str(kw).strip()
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+
+        seo = [str(x).strip() for x in (data.get("seo_suggestions") or []) if str(x).strip()]
+        for q in (clusters.get("paa") or [])[:3]:
+            s = str(q).strip()
+            if s:
+                seo.append(f"Answer PAA: {s}")
+        for lt in (clusters.get("long_tail") or [])[:3]:
+            s = str(lt).strip()
+            if s and s not in seo:
+                seo.append(f"Target long-tail: {s}")
+
+        topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        for lt in (clusters.get("long_tail") or []):
+            s = str(lt).strip()
+            if s and s not in topical:
+                topical.append(s)
+
+        return {
+            "summary": (data.get("summary") or "").strip() or _fallback_research_summary(query, results)["summary"],
+            "h1": (data.get("h1") or query).strip(),
+            "outline": _parse_heading_nodes(data.get("outline")),
+            "key_topics": [str(x).strip() for x in (data.get("key_topics") or []) if str(x).strip()],
+            "subtopics": [str(x).strip() for x in (data.get("subtopics") or []) if str(x).strip()],
+            "core_content_recommendations": [
+                str(x).strip() for x in (data.get("core_content_recommendations") or []) if str(x).strip()
+            ],
+            "seo_suggestions": seo,
+            "topical_coverage": topical,
+            "target_keywords": merged_kw[:15] or [query],
+        }
+    except (json.JSONDecodeError, Exception):
+        return _fallback_research_summary(query, results)
+
+
 async def extract_keyword_clusters(
     research_context: str,
     topic: str
@@ -1954,8 +2958,8 @@ When uncertain, use false."""
 
 # Content intent prompts for tree-based (celebrity) blog generation
 CONTENT_INTENT_PROMPTS = {
-    "parent_overview": """This article is the OVERVIEW/PARENT: focus on who the person is, why they are famous or trending, career highlights, and general background and public interest. Title pattern: "Who Is [Name]? Career, Fame, and Public Influence" or similar.""",
-    "religion": """This article is the RELIGION/SPIRITUAL BELIEFS child for whatreligionisinfo.com: focus on religious upbringing, current spiritual beliefs, how faith influences their work, and expert-informed analysis. Title pattern: "What Religion is [Name]? [Intriguing Subtitle]" or similar.""",
+    "parent_overview": """This article is the OVERVIEW/PARENT: focus on who the person is, why they are famous or trending, career highlights, and general background and public interest. When research provides a news hook, title pattern: "[Full Name] [Specific news] — [varied biography hook]" e.g. Her Full Life Story; Biography, Family & Net Worth; Who Is He Really?; Age, Religion, Net Worth & More; Full Biography & Untold Facts; Biography, Age & Net Worth [year]. Vary the hook — do not use the same ending every time. Never use vague social-only tails (e.g. "fans praise"). Otherwise: "Who Is [Name]? Career, Fame, and Public Influence". News-hook titles may exceed 60 characters.""",
+    "religion": """This article is the RELIGION/SPIRITUAL BELIEFS child for whatreligionisinfo.com: open with a direct answer to what religion the person practices or was raised in; include a "5 Key Facts" section; use research-backed specifics (quotes, interviews, upbringing), not vague speculation. Title pattern: "What Religion Is [Name]? 5 Key Facts About Their Spiritual Beliefs".""",
     "net_worth": """This article is the NET WORTH/FINANCIAL child: focus on net worth, compensation, assets, and liabilities—not religion or personal beliefs. Title pattern: "[Name] Net Worth: Income, Endorsements & Assets" or similar. Do not mention faith, church, or spirituality here. The religion and net worth articles must stay separate.""",
 }
 

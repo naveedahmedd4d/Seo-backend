@@ -242,11 +242,66 @@ FILM_ROW_PATTERN = re.compile(
     re.MULTILINE,
 )
 
+_TOC_BLOCK_PATTERN = re.compile(
+    r"\*\*Table of Contents\*\*\s*\n+(?:[-*]?\s*\[[^\]]+\]\([^)]+\)\s*\n+)+",
+    re.IGNORECASE,
+)
+_TOC_H2_BLOCK_PATTERN = re.compile(
+    r"^##\s+Table of Contents\s*\n+(?:[-*]?\s*\[[^\]]+\]\([^)]+\)\s*\n+)+",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_table_of_contents(body: str) -> str:
+    """Remove markdown Table of Contents blocks from article body (Rank Math can generate its own)."""
+    if not body or not body.strip():
+        return body
+    text = _TOC_BLOCK_PATTERN.sub("", body)
+    text = _TOC_H2_BLOCK_PATTERN.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+_COMPANION_CTA_PATTERN = re.compile(
+    r"(?:For more information on|To learn more about|For details on|Read more about|Learn more about)"
+    r"[^\n.]*?"
+    r"(?:net\s*worth|religion|spiritual beliefs)"
+    r"[^\n.]*?"
+    r"(?:visit|see|read|check|at)\s*"
+    r"(?:\[[^\]]*\]\([^)]+\)|/[a-z0-9-]+(?:-[a-z0-9]+)*)"
+    r"[^\n.]*?\.?\s*",
+    re.IGNORECASE,
+)
+_COMPANION_MD_LINK_PATTERN = re.compile(
+    r"\[[^\]]*\]\(/(?:person/)?[a-z0-9-]+-(?:net-worth|religion)/?\)\s*",
+    re.IGNORECASE,
+)
+_COMPANION_LINE_PATTERN = re.compile(
+    r"^[^\n]*\b/\[?[a-z0-9-]+-(?:net-worth|religion)\]?[^\n]*\n?",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_companion_article_links(body: str) -> str:
+    """Remove in-body CTAs and markdown links to net-worth / religion companion articles."""
+    if not body or not body.strip():
+        return body
+    text = _COMPANION_CTA_PATTERN.sub("", body)
+    text = _COMPANION_MD_LINK_PATTERN.sub("", text)
+    text = _COMPANION_LINE_PATTERN.sub("", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def sanitize_blog_body(body: str) -> str:
+    """Strip TOC blocks and companion-article internal links from stored body markdown."""
+    return strip_companion_article_links(strip_table_of_contents(body))
+
 
 def sanitize_filmography_table(body: str, topic: str) -> str:
     """
     Remove filmography table rows that are clearly not about the celebrity (e.g. wrong 'William' film).
-    Only runs in the ## Filmography section. Removes rows where Title is just the topic and Notes
+    Only runs in the ## Professional Journey section (or legacy ## Filmography). Removes rows where Title is just the topic and Notes
     suggest an unrelated film (no documentary/royal/interview).
     """
     if not body or not topic:
@@ -254,8 +309,10 @@ def sanitize_filmography_table(body: str, topic: str) -> str:
     topic_word = topic.strip().split()[0] if topic.strip() else ""
     if not topic_word:
         return body
-    # Limit to Filmography section (from ## Filmography to next ## or end)
-    filmography_start = body.find("## Filmography")
+    # Limit to Professional Journey section (legacy Filmography heading supported)
+    filmography_start = body.find("## Professional Journey")
+    if filmography_start == -1:
+        filmography_start = body.find("## Filmography")
     if filmography_start == -1:
         return body
     rest = body[filmography_start:]

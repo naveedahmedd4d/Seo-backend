@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from app.models.research_history import ResearchHistory
 from app.config import settings
+from app.services.http_ssl import httpx_verify
 import time
 import re
 
@@ -37,7 +38,9 @@ async def _fetch_url_content(url: str) -> Optional[str]:
     
     try:
         await _rate_limit()
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=True, verify=httpx_verify()
+        ) as client:
             # Set a user agent to avoid blocking
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -257,7 +260,7 @@ async def research_keywords(
             "include_raw_content": True
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -370,7 +373,7 @@ async def search_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]
             "search_depth": "basic",
             "max_results": 10,
         }
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, verify=httpx_verify()) as client:
             response = await client.post(url_api, headers={"Content-Type": "application/json"}, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -425,7 +428,7 @@ async def get_content_suggestions(
             "include_images": False
         }
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

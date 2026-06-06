@@ -4,11 +4,11 @@ from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.social_post_history import SocialPostHistory
-from app.services.serpapi_service import fetch_google_news_light
-from app.services.openrouter_service import generate_news_headline
-from app.services.openrouter_service import generate_social_post_description
-from app.services.openrouter_service import generate_social_post_story_description
-from app.services.openrouter_service import generate_social_post_hashtags
+from app.services.news_research_service import (
+    build_news_bundle,
+    estimate_engagement_score,
+    suggested_platforms_for_headline,
+)
 from app.schemas.social_post import (
     SocialPostGenerateRequest,
     SocialPostGenerateResponse,
@@ -30,26 +30,15 @@ async def generate_social_post(
     then use the LLM to produce a single compelling headline.
     """
     try:
-        news_results = await fetch_google_news_light(
+        bundle = await build_news_bundle(
             request.query,
-            num_results=7,
-            max_days=7,
+            template_variant=request.template_variant,
         )
-        if not news_results:
+        if not bundle:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="No news results found for the given query.",
             )
-        headline = await generate_news_headline(news_results, request.query)
-        description = await generate_social_post_description(
-            news_results, headline=headline, query=request.query
-        )
-        story_description = await generate_social_post_story_description(
-            news_results, headline=headline, query=request.query
-        )
-        hashtags = await generate_social_post_hashtags(
-            news_results, headline=headline, query=request.query, count=12
-        )
         items = [
             NewsResultItem(
                 title=item.get("title", ""),
@@ -58,39 +47,26 @@ async def generate_social_post(
                 snippet=item.get("snippet", ""),
                 date=item.get("date", ""),
             )
-            for item in news_results
+            for item in bundle.news_results
         ]
-        # Metadata from headline and first result
+        headline = bundle.headline
         word_count = len(headline.replace("\n", " ").split())
         char_count = len(headline)
-        engagement_keywords = [
-            "breaking", "shocking", "debate", "fans", "exclusive", "reveals",
-        ]
-        headline_lower = headline.lower()
-        if any(kw in headline_lower for kw in engagement_keywords):
-            estimated_engagement_score = "High"
-        elif word_count < 10 or char_count < 60:
-            estimated_engagement_score = "Low"
-        else:
-            estimated_engagement_score = "Medium"
-        suggested_platforms = ["Twitter/X", "Instagram", "Facebook"]
-        if char_count < 140:
-            suggested_platforms = ["Twitter/X (optimal)"] + [
-                p for p in suggested_platforms if p != "Twitter/X"
-            ]
-        summary = (news_results[0].get("snippet") or "")[:100]
+        summary = (bundle.news_results[0].get("snippet") or "")[:100]
         return SocialPostGenerateResponse(
             headline=headline,
             news_results=items,
             word_count=word_count,
             char_count=char_count,
-            estimated_engagement_score=estimated_engagement_score,
-            suggested_platforms=suggested_platforms,
-            hashtags=hashtags,
+            estimated_engagement_score=estimate_engagement_score(headline),
+            suggested_platforms=suggested_platforms_for_headline(headline),
+            hashtags=bundle.hashtags,
             summary=summary,
-            description=description,
-            story_description=story_description,
+            description=bundle.description,
+            story_description=bundle.story_description,
         )
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

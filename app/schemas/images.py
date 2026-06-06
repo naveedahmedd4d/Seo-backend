@@ -4,7 +4,11 @@ from typing import List, Optional, Any
 
 class ImageSearchRequest(BaseModel):
     keyword: str
-    num_results: int = 10
+    num_results: int = 100
+    source: Optional[str] = None
+    size: Optional[str] = None
+    color: Optional[str] = None
+    orientation: Optional[str] = None
 
 
 class ImageResult(BaseModel):

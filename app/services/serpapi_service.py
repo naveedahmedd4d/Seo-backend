@@ -331,30 +331,77 @@ async def fetch_google_news_light(
         raise Exception(f"Error fetching Google News: {str(e)}")
 
 
+def _build_image_tbs(
+    size: str | None = None,
+    color: str | None = None,
+    orientation: str | None = None,
+) -> str | None:
+    """Build Google Images tbs filter string for SerpAPI."""
+    parts: list[str] = []
+
+    size_map = {
+        "large": "isz:l",
+        "medium": "isz:m",
+        "icon": "isz:i",
+    }
+    if size and size in size_map:
+        parts.append(size_map[size])
+
+    color_map = {
+        "color": "ic:specific",
+        "gray": "ic:gray",
+        "transparent": "ic:trans",
+    }
+    if color and color in color_map:
+        parts.append(color_map[color])
+
+    orientation_map = {
+        "landscape": "iar:w",
+        "portrait": "iar:t",
+        "square": "iar:s",
+    }
+    if orientation and orientation in orientation_map:
+        parts.append(orientation_map[orientation])
+
+    return ",".join(parts) if parts else None
+
+
 async def search_images(
     keyword: str,
-    num_results: int = 10
+    num_results: int = 100,
+    source: str | None = None,
+    size: str | None = None,
+    color: str | None = None,
+    orientation: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Search for images using SerpAPI"""
     if not settings.serpapi_key:
         raise ValueError("SerpAPI key not configured")
-    
+
     await _rate_limit()
-    
+
     try:
         url = "https://serpapi.com/search"
-        params = {
+        query = keyword
+        if source and source not in ("all", "google"):
+            query = f"{keyword} site:{source}.com"
+
+        params: Dict[str, Any] = {
             "engine": "google_images",
             "api_key": settings.serpapi_key,
-            "q": keyword,
-            "num": num_results
+            "q": query,
+            "num": num_results,
         }
-        
+
+        tbs = _build_image_tbs(size=size, color=color, orientation=orientation)
+        if tbs:
+            params["tbs"] = tbs
+
         async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
             response = await client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            
+
             images = []
             if "images_results" in data:
                 for img in data["images_results"]:
@@ -365,9 +412,9 @@ async def search_images(
                         "thumbnail": img.get("thumbnail", ""),
                         "source": img.get("source", "")
                     })
-            
+
             return images
-            
+
     except httpx.HTTPError as e:
         raise Exception(f"SerpAPI request failed: {str(e)}")
     except Exception as e:
@@ -399,6 +446,152 @@ def get_trending_keywords_from_db(
         "fetched_at": k.fetched_at.isoformat() if k.fetched_at else None,
         "blog_workflow_id": k.blog_workflow_id,
     } for k in keywords]
+
+
+async def _serpapi_get(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Shared SerpAPI GET helper with error handling."""
+    if not settings.serpapi_key:
+        raise ValueError("SerpAPI key not configured")
+
+    await _rate_limit()
+    params = {**params, "api_key": settings.serpapi_key}
+    url = "https://serpapi.com/search.json"
+
+    async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
+        response = await client.get(url, params=params)
+        if response.status_code != 200:
+            error_data = response.text
+            try:
+                error_json = response.json()
+                error_msg = error_json.get("error", error_json.get("message", error_data))
+            except Exception:
+                error_msg = error_data
+            raise Exception(f"SerpAPI returned {response.status_code}: {error_msg}")
+
+        data = response.json()
+        if "error" in data:
+            raise Exception(f"SerpAPI error: {data['error']}")
+        return data
+
+
+async def fetch_google_autocomplete(
+    query: str,
+    limit: int = 10,
+    geo: str = "US",
+    hl: str = "en",
+) -> List[Dict[str, Any]]:
+    """
+    Google Autocomplete via SerpAPI (engine=google_autocomplete).
+    Returns suggestions with value and optional relevance.
+    """
+    if not query or not query.strip():
+        return []
+
+    data = await _serpapi_get({
+        "engine": "google_autocomplete",
+        "q": query.strip(),
+        "gl": geo.lower() if geo else "us",
+        "hl": hl,
+    })
+
+    results: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in data.get("suggestions") or []:
+        if not isinstance(item, dict):
+            continue
+        value = (item.get("value") or "").strip()
+        if not value or value.lower() in seen:
+            continue
+        seen.add(value.lower())
+        results.append({
+            "value": value,
+            "relevance": item.get("relevance"),
+            "type": item.get("type"),
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+async def fetch_google_trends_related_queries(
+    query: str,
+    limit: int = 10,
+    geo: str = "US",
+    hl: str = "en",
+) -> List[Dict[str, Any]]:
+    """
+    Google Trends related queries via SerpAPI (engine=google_trends, data_type=RELATED_QUERIES).
+    Merges rising and top queries; each item includes query, value, extracted_value, link.
+    """
+    if not query or not query.strip():
+        return []
+
+    data = await _serpapi_get({
+        "engine": "google_trends",
+        "q": query.strip(),
+        "data_type": "RELATED_QUERIES",
+        "date": "today 12-m",
+        "geo": geo.upper() if geo else "US",
+        "hl": hl,
+    })
+
+    related = data.get("related_queries") or {}
+    results: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for bucket, trend_type in (("rising", "rising"), ("top", "top")):
+        for item in related.get(bucket) or []:
+            if not isinstance(item, dict):
+                continue
+            q = (item.get("query") or "").strip()
+            if not q or q.lower() in seen:
+                continue
+            seen.add(q.lower())
+            results.append({
+                "query": q,
+                "value": item.get("value"),
+                "extracted_value": item.get("extracted_value"),
+                "link": item.get("link"),
+                "type": trend_type,
+            })
+            if len(results) >= limit:
+                return results
+
+    return results
+
+
+async def fetch_topical_mapping(
+    query: str,
+    limit: int = 8,
+    geo: str = "US",
+    hl: str = "en",
+) -> Dict[str, Any]:
+    """Fetch autocomplete suggestions and Trends related queries in parallel."""
+    autocomplete_task = fetch_google_autocomplete(query, limit=limit, geo=geo, hl=hl)
+    related_task = fetch_google_trends_related_queries(query, limit=limit, geo=geo, hl=hl)
+    autocomplete, related_queries = await asyncio.gather(
+        autocomplete_task,
+        related_task,
+        return_exceptions=True,
+    )
+
+    errors: List[str] = []
+    if isinstance(autocomplete, Exception):
+        errors.append(f"Autocomplete: {autocomplete}")
+        autocomplete = []
+    if isinstance(related_queries, Exception):
+        errors.append(f"Related queries: {related_queries}")
+        related_queries = []
+
+    if not autocomplete and not related_queries and errors:
+        raise Exception("; ".join(errors))
+
+    return {
+        "query": query.strip(),
+        "autocomplete_suggestions": autocomplete,
+        "related_queries": related_queries,
+        "errors": errors if errors else None,
+    }
 
 
 def get_used_trending_keywords_from_db(

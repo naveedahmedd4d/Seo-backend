@@ -1,5 +1,7 @@
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Literal
+
+CelebrityContentType = Literal["biography", "religious", "net_worth"]
 
 
 def _normalize_related_queries(v: List[Any]) -> List[Dict[str, str]]:
@@ -21,6 +23,20 @@ class BlogGenerateRequest(BaseModel):
     keywords: Optional[List[str]] = None
     category: str = "Technology & AI"  # Replaces tone - controls writing style
     include_research: bool = True  # Run Tavily research before generating content
+    celebrity_content_type: Optional[CelebrityContentType] = None  # Celebrities only: generate one article type
+    suggested_title: Optional[str] = None  # Pre-set SEO title (e.g. news-hook from research)
+    suggested_meta_description: Optional[str] = None
+    news_context: Optional[str] = None  # Pre-formatted news sources block for citations
+
+    @field_validator("celebrity_content_type")
+    @classmethod
+    def validate_celebrity_content_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        allowed = {"biography", "religious", "net_worth"}
+        if v not in allowed:
+            raise ValueError(f"celebrity_content_type must be one of: {', '.join(sorted(allowed))}")
+        return v
 
 
 class BlogGenerateResponse(BaseModel):
