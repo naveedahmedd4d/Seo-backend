@@ -10,6 +10,8 @@ SECRET_KEY=your-secret-key-here-change-in-production
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION=3600
 
+# Use a long random value in production (required for secure JWT sessions).
+
 # External APIs
 SERPAPI_KEY=a9b6d2de649be4fa85e93728d731534ec1f83e8db2495adce53a839015adf60a
 TAVILY_API_KEY=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

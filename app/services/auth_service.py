@@ -1,23 +1,31 @@
 from datetime import datetime, timedelta
 from typing import Optional
-from jose import JWTError, jwt
+
 import bcrypt
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
-from app.models.user import User
+
 from app.config import settings
+from app.models.user import User
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a hash"""
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"),
+            hashed_password.encode("utf-8"),
+        )
+    except ValueError:
+        # Legacy or corrupted hash stored in the database.
+        return False
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password"""
-    # Generate salt and hash password
     salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-    return hashed.decode('utf-8')
+    hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -47,10 +55,19 @@ def get_user_by_email(db: Session, email: str) -> Optional[User]:
     return db.query(User).filter(User.email == email).first()
 
 
-def create_user(db: Session, email: str, password: str) -> User:
+def create_user(
+    db: Session,
+    email: str,
+    password: str,
+    full_name: Optional[str] = None,
+) -> User:
     """Create a new user"""
     hashed_password = get_password_hash(password)
-    user = User(email=email, password_hash=hashed_password)
+    user = User(
+        email=email,
+        password_hash=hashed_password,
+        full_name=full_name,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -68,4 +85,3 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
         return None
     user = get_user_by_email(db, email)
     return user
-

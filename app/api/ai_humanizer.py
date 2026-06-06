@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.auth import get_current_user
+from app.models.user import User
 from app.schemas.ai_humanizer import HumanizeRequest, HumanizeResponse
 from app.services.humanizer.pipeline import humanize_pipeline
 
@@ -7,7 +9,10 @@ router = APIRouter()
 
 
 @router.post("/humanize", response_model=HumanizeResponse)
-async def humanize(request: HumanizeRequest):
+async def humanize(
+    request: HumanizeRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Humanize text using Apify Content Humanizer (akash9078/ai-content-humanizer).
 
