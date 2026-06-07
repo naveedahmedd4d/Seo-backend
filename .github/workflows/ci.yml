@@ -31,8 +31,9 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: python -m pytest tests/ -v
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
           DATABASE_URL: "sqlite:///:memory:"
           CORS_ORIGINS: '["https://launchtrendai.vercel.app"]'
+          PYTHONPATH: .
