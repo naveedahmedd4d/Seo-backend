@@ -34,5 +34,5 @@ jobs:
         run: pytest tests/ -v
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production
-          DATABASE_URL: sqlite:///:memory:
+          DATABASE_URL: "sqlite:///:memory:"
           CORS_ORIGINS: '["https://launchtrendai.vercel.app"]'
