@@ -1,5 +1,11 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
 from typing import Optional
+
+from pydantic_settings import BaseSettings
+
+# Always load backend/.env regardless of process working directory (e.g. uvicorn from repo root).
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ENV_FILE = _BACKEND_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -31,10 +37,27 @@ class Settings(BaseSettings):
     
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
+    # Public API URL (used for social post image URLs — must be reachable by external platforms)
+    api_public_url: str = "http://localhost:8000"
+    frontend_url: str = "http://localhost:3000"
+
+    # Pinterest OAuth
+    pinterest_client_id: Optional[str] = None
+    pinterest_client_secret: Optional[str] = None
+    pinterest_redirect_uri: Optional[str] = None
+
+    # X / Mastodon / Blogger OAuth redirect overrides (optional)
+    x_redirect_uri: Optional[str] = None
+    mastodon_redirect_uri: Optional[str] = None
+    blogger_redirect_uri: Optional[str] = None
+    reddit_redirect_uri: Optional[str] = None
+    reddit_user_agent: Optional[str] = None
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = {
+        "env_file": str(_ENV_FILE),
+        "case_sensitive": False,
+    }
 
 
 settings = Settings()

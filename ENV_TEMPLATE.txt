@@ -20,3 +20,17 @@ OPENROUTER_API_KEY=sk-or-v1-a73a5290e97a29c025c7ca6c979cace49862dfa3fb0a8d7ea9cb
 # CORS
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]
 
+# Public URLs (social post image hosting + OAuth redirects)
+API_PUBLIC_URL=http://localhost:8000
+FRONTEND_URL=http://localhost:3000
+
+# Pinterest OAuth — optional server defaults (users enter their own App ID/secret in the UI)
+# PINTEREST_REDIRECT_URI=http://localhost:8000/api/social-accounts/pinterest/callback
+# If unset, redirect URI is derived from API_PUBLIC_URL + /api/social-accounts/pinterest/callback
+
+# X / Mastodon / Blogger OAuth redirect overrides (optional; derived from API_PUBLIC_URL if unset)
+# X_REDIRECT_URI=http://localhost:8000/api/social-accounts/x/callback
+# MASTODON_REDIRECT_URI=http://localhost:8000/api/social-accounts/mastodon/callback
+# BLOGGER_REDIRECT_URI=http://localhost:8000/api/social-accounts/blogger/callback
+# REDDIT_REDIRECT_URI=http://localhost:8000/api/social-accounts/reddit/callback
+

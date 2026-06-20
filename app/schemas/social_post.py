@@ -51,3 +51,41 @@ class SocialPostHistoryItemResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SocialPostPublishPlatformOptions(BaseModel):
+    pinterest: Optional[dict[str, Any]] = None
+    blogger: Optional[dict[str, Any]] = None
+    reddit: Optional[dict[str, Any]] = None
+
+
+class SocialPostPublishRequest(BaseModel):
+    platforms: List[str]
+    headline: str
+    description: Optional[str] = None
+    story_description: Optional[str] = None
+    source_url: Optional[str] = None
+    hashtags: Optional[List[str]] = None
+    image_base64: Optional[str] = None
+    platform_options: Optional[SocialPostPublishPlatformOptions] = None
+
+
+class SocialPostPublishResultItem(BaseModel):
+    platform: str
+    success: bool
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class SocialPostPublishResponse(BaseModel):
+    results: List[SocialPostPublishResultItem]
+
+
+class SocialPostImageUploadRequest(BaseModel):
+    image_base64: str
+
+
+class SocialPostImageUploadResponse(BaseModel):
+    url: str
+    filename: str

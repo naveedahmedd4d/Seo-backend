@@ -20,3 +20,5 @@ class User(Base):
     research_history = relationship("ResearchHistory", back_populates="user", cascade="all, delete-orphan")
     image_search_history = relationship("ImageSearchHistory", back_populates="user", cascade="all, delete-orphan")
     social_post_history = relationship("SocialPostHistory", back_populates="user", cascade="all, delete-orphan")
+    social_accounts = relationship("SocialAccount", back_populates="user", cascade="all, delete-orphan")
+    social_platform_apps = relationship("SocialPlatformApp", back_populates="user", cascade="all, delete-orphan")

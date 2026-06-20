@@ -74,6 +74,50 @@ def create_user(
     return user
 
 
+def create_oauth_state_token(
+    user: User,
+    platform: str,
+    *,
+    extra: Optional[dict] = None,
+) -> str:
+    """Short-lived JWT used as OAuth state parameter."""
+    payload: dict = {
+        "sub": user.email,
+        "typ": "oauth_state",
+        "oauth_platform": platform,
+    }
+    if extra:
+        payload["oauth_extra"] = extra
+    return create_access_token(
+        payload,
+        expires_delta=timedelta(minutes=10),
+    )
+
+
+def decode_oauth_state(state: str, platform: str) -> tuple[Optional[dict], Optional[dict]]:
+    """Return (user_email_payload, extra) if state is valid for platform."""
+    try:
+        payload = jwt.decode(state, settings.secret_key, algorithms=[settings.jwt_algorithm])
+        if payload.get("typ") != "oauth_state":
+            return None, None
+        if payload.get("oauth_platform") != platform:
+            return None, None
+        email: str = payload.get("sub")
+        if not email:
+            return None, None
+        extra = payload.get("oauth_extra")
+        return {"email": email}, extra if isinstance(extra, dict) else None
+    except JWTError:
+        return None, None
+
+
+def get_user_from_oauth_state(state: str, db: Session, platform: str) -> Optional[User]:
+    user_payload, _ = decode_oauth_state(state, platform)
+    if not user_payload:
+        return None
+    return get_user_by_email(db, user_payload["email"])
+
+
 def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
     """Get current user from JWT token"""
     try:
