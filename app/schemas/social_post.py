@@ -89,3 +89,34 @@ class SocialPostImageUploadRequest(BaseModel):
 class SocialPostImageUploadResponse(BaseModel):
     url: str
     filename: str
+
+
+class SocialPostFetchImageRequest(BaseModel):
+    url: str
+
+
+class SocialPostFetchImageResponse(BaseModel):
+    data_url: str
+    content_type: str
+
+
+class SocialPostTemplatePresetItem(BaseModel):
+    id: str
+    name: str
+    settings: dict[str, Any]
+    updatedAt: int
+
+
+class SocialPostTemplatePresetsStore(BaseModel):
+    version: int = 1
+    activePresetId: str
+    presets: List[SocialPostTemplatePresetItem]
+
+
+class SocialPostTemplatePresetsResponse(BaseModel):
+    store: Optional[SocialPostTemplatePresetsStore] = None
+    updated_at: Optional[str] = None
+
+
+class SocialPostTemplatePresetsSaveRequest(BaseModel):
+    store: SocialPostTemplatePresetsStore

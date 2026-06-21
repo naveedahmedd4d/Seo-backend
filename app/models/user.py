@@ -22,3 +22,9 @@ class User(Base):
     social_post_history = relationship("SocialPostHistory", back_populates="user", cascade="all, delete-orphan")
     social_accounts = relationship("SocialAccount", back_populates="user", cascade="all, delete-orphan")
     social_platform_apps = relationship("SocialPlatformApp", back_populates="user", cascade="all, delete-orphan")
+    social_post_template_prefs = relationship(
+        "SocialPostTemplatePrefs",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

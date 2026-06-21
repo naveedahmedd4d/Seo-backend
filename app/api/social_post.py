@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+import base64
 import httpx
+import ipaddress
+from urllib.parse import urlparse
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.social_post_history import SocialPostHistory
+from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 from app.services.news_research_service import (
     build_news_bundle,
     estimate_engagement_score,
@@ -37,9 +41,162 @@ from app.schemas.social_post import (
     SocialPostPublishResultItem,
     SocialPostImageUploadRequest,
     SocialPostImageUploadResponse,
+    SocialPostFetchImageRequest,
+    SocialPostFetchImageResponse,
+    SocialPostTemplatePresetsResponse,
+    SocialPostTemplatePresetsSaveRequest,
+    SocialPostTemplatePresetsStore,
 )
 
 router = APIRouter()
+
+MAX_FETCH_IMAGE_BYTES = 15 * 1024 * 1024
+_BLOCKED_IMAGE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _validate_remote_image_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        raise ValueError("URL is required")
+    parsed = urlparse(raw if "://" in raw else f"https://{raw}")
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http(s) image URLs are allowed")
+    host = (parsed.hostname or "").lower()
+    if not host or host in _BLOCKED_IMAGE_HOSTS or host.endswith(".local"):
+        raise ValueError("Image URL is not allowed")
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+            raise ValueError("Image URL is not allowed")
+    except ValueError as exc:
+        if "not allowed" in str(exc):
+            raise
+    return parsed.geturl()
+
+
+@router.post("/fetch-image", response_model=SocialPostFetchImageResponse)
+async def fetch_social_post_image(
+    request: SocialPostFetchImageRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Fetch a remote image server-side for CORS-safe PNG export in the browser."""
+    try:
+        image_url = _validate_remote_image_url(request.url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, verify=httpx_verify()) as client:
+            response = await client.get(
+                image_url,
+                headers={"User-Agent": "SEO-Automation/1.0", "Accept": "image/*"},
+            )
+        response.raise_for_status()
+        content_type = (response.headers.get("content-type") or "image/jpeg").split(";")[0].strip().lower()
+        if not content_type.startswith("image/"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="URL did not return an image",
+            )
+        body = response.content
+        if len(body) > MAX_FETCH_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Image is too large to export",
+            )
+        encoded = base64.b64encode(body).decode("ascii")
+        return SocialPostFetchImageResponse(
+            data_url=f"data:{content_type};base64,{encoded}",
+            content_type=content_type,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not fetch image: {exc}",
+        )
+
+
+def _validate_presets_store(store: SocialPostTemplatePresetsStore) -> SocialPostTemplatePresetsStore:
+    if store.version != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported template presets version",
+        )
+    if not store.presets:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one template preset is required",
+        )
+    preset_ids = {p.id for p in store.presets}
+    if store.activePresetId not in preset_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="activePresetId must match a preset id",
+        )
+    return store
+
+
+@router.get("/template-presets", response_model=SocialPostTemplatePresetsResponse)
+async def get_social_post_template_presets(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Get saved brand template presets for the current user."""
+    row = (
+        db.query(SocialPostTemplatePrefs)
+        .filter(SocialPostTemplatePrefs.user_id == current_user.id)
+        .first()
+    )
+    if not row:
+        return SocialPostTemplatePresetsResponse(store=None, updated_at=None)
+    try:
+        store = SocialPostTemplatePresetsStore.model_validate(row.store)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Stored template presets are invalid: {exc}",
+        )
+    return SocialPostTemplatePresetsResponse(
+        store=store,
+        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+    )
+
+
+@router.put("/template-presets", response_model=SocialPostTemplatePresetsResponse)
+async def save_social_post_template_presets(
+    request: SocialPostTemplatePresetsSaveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Save brand template presets for the current user (synced across devices)."""
+    store = _validate_presets_store(request.store)
+    payload = store.model_dump()
+
+    row = (
+        db.query(SocialPostTemplatePrefs)
+        .filter(SocialPostTemplatePrefs.user_id == current_user.id)
+        .first()
+    )
+    try:
+        if row:
+            row.store = payload
+        else:
+            row = SocialPostTemplatePrefs(user_id=current_user.id, store=payload)
+            db.add(row)
+        db.commit()
+        db.refresh(row)
+        return SocialPostTemplatePresetsResponse(
+            store=store,
+            updated_at=row.updated_at.isoformat() if row.updated_at else None,
+        )
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error saving template presets: {exc}",
+        )
 
 
 @router.post("/generate", response_model=SocialPostGenerateResponse)

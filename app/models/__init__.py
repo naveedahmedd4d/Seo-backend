@@ -9,6 +9,7 @@ from app.models.published_post import PublishedPost
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_account import SocialAccount
 from app.models.social_platform_app import SocialPlatformApp
+from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 
 __all__ = [
     "User",
@@ -25,5 +26,6 @@ __all__ = [
     "SocialPostHistory",
     "SocialAccount",
     "SocialPlatformApp",
+    "SocialPostTemplatePrefs",
 ]
 

@@ -2106,6 +2106,47 @@ def _fallback_celebrity_religion_summary(query: str, results: Dict[str, Any]) ->
     }
 
 
+def _fallback_celebrity_net_worth_summary(query: str, results: Dict[str, Any]) -> Dict[str, Any]:
+    from datetime import date
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_CATEGORY,
+        CELEBRITY_NET_WORTH_TEMPLATE_ID,
+        build_celebrity_net_worth_outline,
+        get_net_worth_section_slugs,
+        normalize_celebrity_name,
+    )
+
+    name = normalize_celebrity_name(query)
+    year = date.today().year
+    answer = (results.get("answer") or "").strip() if isinstance(results, dict) else ""
+    summary = (
+        answer[:500]
+        if answer
+        else f"Research-backed net worth outline for {name}. Lead with the headline net worth figure and income sources."
+    )
+    slugs = get_net_worth_section_slugs()
+    section_notes = {slug: [f"Cover {slug} using research about {name}'s finances."] * 3 for slug in slugs[:6]}
+    return {
+        "summary": summary,
+        "h1": f"{name} Net Worth {year}: Income, Endorsements & Assets",
+        "outline": build_celebrity_net_worth_outline(name),
+        "key_topics": [f"{name} net worth", f"{name} salary", f"{name} earnings"],
+        "subtopics": [],
+        "core_content_recommendations": [
+            f"Verify latest salary and endorsement figures for {name}",
+            "Break down income by career earnings, endorsements, and social media",
+            "Cite financial sources with markdown links",
+        ],
+        "seo_suggestions": [f'Use focus keyword "{name} net worth" in title and first paragraph'],
+        "topical_coverage": [],
+        "target_keywords": [f"{name} net worth", f"{name} salary", f"how much is {name} worth", name],
+        "section_notes": section_notes,
+        "category": CELEBRITY_CATEGORY,
+        "celebrity_content_type": "net_worth",
+        "outline_template": CELEBRITY_NET_WORTH_TEMPLATE_ID,
+    }
+
+
 async def generate_biography_news_seo_title(
     name: str,
     news_bundle: Any,
@@ -2673,6 +2714,155 @@ Return ONLY valid JSON."""
         return _fallback_celebrity_religion_summary(query, results)
 
 
+async def _generate_celebrity_net_worth_summary(
+    query: str,
+    results: Dict[str, Any],
+    topical_mapping: Optional[Dict[str, Any]] = None,
+    competitors: Optional[List[Dict[str, Any]]] = None,
+    opportunities: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Net worth celebrity summary: fixed template outline + LLM fills notes and metadata."""
+    import json
+    from datetime import date
+    from app.services.celebrity_outline_templates import (
+        CELEBRITY_CATEGORY,
+        CELEBRITY_NET_WORTH_TEMPLATE_ID,
+        build_celebrity_net_worth_outline,
+        get_net_worth_format_rules,
+        get_net_worth_quality_rules,
+        get_net_worth_section_slugs,
+        normalize_celebrity_name,
+    )
+    from app.services.research_context import format_research_context
+
+    name = normalize_celebrity_name(query)
+    year = date.today().year
+    outline = build_celebrity_net_worth_outline(name)
+    slugs = get_net_worth_section_slugs()
+    research_text = format_research_context(results) or ""
+
+    competitor_lines = []
+    for c in competitors or []:
+        if isinstance(c, dict) and (c.get("domain") or "").strip():
+            competitor_lines.append(f"- {c['domain']}")
+    opportunity_lines = []
+    for o in opportunities or []:
+        if isinstance(o, dict) and (o.get("keyword") or "").strip():
+            opportunity_lines.append(f"- {o['keyword']}")
+
+    topical_block = ""
+    if topical_mapping and isinstance(topical_mapping, dict):
+        auto_vals = [
+            (a.get("value") or "").strip()
+            for a in (topical_mapping.get("autocomplete_suggestions") or [])
+            if isinstance(a, dict) and (a.get("value") or "").strip()
+        ][:8]
+        related_vals = [
+            (r.get("query") or "").strip()
+            for r in (topical_mapping.get("related_queries") or [])
+            if isinstance(r, dict) and (r.get("query") or "").strip()
+        ][:8]
+        if auto_vals or related_vals:
+            topical_block = (
+                "Topical mapping:\n"
+                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
+                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
+            )
+
+    slug_list = ", ".join(slugs)
+    prompt = f"""You are an SEO strategist for a celebrity net worth article about "{name}".
+
+Research context:
+{research_text[:3000]}
+
+Competitors: {chr(10).join(competitor_lines) if competitor_lines else "(none)"}
+Opportunities: {chr(10).join(opportunity_lines) if opportunity_lines else "(none)"}
+{topical_block}
+
+The article outline headings are FIXED (already chosen). Section slugs: {slug_list}
+
+{get_net_worth_quality_rules(name)}
+
+{get_net_worth_format_rules()}
+
+Return ONLY a JSON object with these keys (no outline key — headings are fixed):
+- summary: string (2-4 sentences; MUST open with {name}'s net worth figure or range with as-of year {year}, then name primary income sources)
+- h1: string (SEO title MUST include "{name} Net Worth" and {year}, e.g. "{name} Net Worth {year}: How She Built Her $5M Fortune" — use research-backed figure when available)
+- section_notes: object mapping each slug listed above to an array of exactly 3-4 UNIQUE research bullets (specific figures, brands, salary, prize money — intro and income slugs are highest priority)
+- key_topics: array of 5-8 strings
+- subtopics: array of 5-10 strings
+- core_content_recommendations: array of 3-8 items (sources to verify, income angles to cover)
+- seo_suggestions: array of 5-8 strings
+- topical_coverage: array of 5-8 strings
+- target_keywords: array of 8-12 strings (include "{name} net worth", "{name} salary", "{name} earnings", "how much is {name} worth")
+
+Return ONLY valid JSON."""
+
+    try:
+        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        data = json.loads(_clean_json_response(result))
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object")
+
+        raw_notes = data.get("section_notes") or {}
+        section_notes: Dict[str, List[str]] = {}
+        if isinstance(raw_notes, dict):
+            for slug in slugs:
+                val = raw_notes.get(slug)
+                if isinstance(val, list):
+                    section_notes[slug] = [str(x).strip() for x in val if str(x).strip()][:4]
+
+        clusters = await extract_keyword_clusters(research_text, name)
+        merged_kw: List[str] = []
+        seen: set = set()
+        for kw in [
+            f"{name} net worth",
+            f"{name} salary",
+            f"how much is {name} worth",
+            clusters.get("primary"),
+            *(clusters.get("secondary") or []),
+            *(clusters.get("lsi") or []),
+            *(data.get("target_keywords") or []),
+        ]:
+            s = str(kw).strip() if kw else ""
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+
+        seo = [str(x).strip() for x in (data.get("seo_suggestions") or []) if str(x).strip()]
+        for q in (clusters.get("paa") or [])[:3]:
+            s = str(q).strip()
+            if s:
+                seo.append(f"Answer PAA: {s}")
+
+        topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+
+        fallback = _fallback_celebrity_net_worth_summary(query, results)
+        h1 = (data.get("h1") or "").strip() or fallback["h1"]
+        if "net worth" not in h1.lower():
+            h1 = fallback["h1"]
+
+        return {
+            "summary": (data.get("summary") or "").strip() or fallback["summary"],
+            "h1": h1,
+            "outline": outline,
+            "key_topics": [str(x).strip() for x in (data.get("key_topics") or []) if str(x).strip()],
+            "subtopics": [str(x).strip() for x in (data.get("subtopics") or []) if str(x).strip()],
+            "core_content_recommendations": [
+                str(x).strip() for x in (data.get("core_content_recommendations") or []) if str(x).strip()
+            ],
+            "seo_suggestions": seo,
+            "topical_coverage": topical,
+            "target_keywords": merged_kw[:15],
+            "section_notes": section_notes or None,
+            "category": CELEBRITY_CATEGORY,
+            "celebrity_content_type": "net_worth",
+            "outline_template": CELEBRITY_NET_WORTH_TEMPLATE_ID,
+        }
+    except (json.JSONDecodeError, Exception):
+        return _fallback_celebrity_net_worth_summary(query, results)
+
+
 async def generate_research_content_summary(
     query: str,
     results: Dict[str, Any],
@@ -2686,6 +2876,7 @@ async def generate_research_content_summary(
     import json
     from app.services.celebrity_outline_templates import (
         is_celebrity_biography_summary,
+        is_celebrity_net_worth_summary,
         is_celebrity_religious_summary,
     )
     from app.services.research_context import format_research_context
@@ -2697,6 +2888,11 @@ async def generate_research_content_summary(
 
     if is_celebrity_biography_summary(category, celebrity_content_type):
         return await _generate_celebrity_biography_summary(
+            query, results, topical_mapping, competitors, opportunities
+        )
+
+    if is_celebrity_net_worth_summary(category, celebrity_content_type):
+        return await _generate_celebrity_net_worth_summary(
             query, results, topical_mapping, competitors, opportunities
         )
 
