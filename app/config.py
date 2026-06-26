@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None
+    # Groq key when blog generation hits 429/TPD on primary key (optional; falls back to trending_fallback_groq_api_key)
+    blog_fallback_groq_api_key: Optional[str] = None
     # Apify API key (YouTube scraper, AI humanizer, etc.)
     apify_api_key: Optional[str] = None
     apify_humanizer_actor_id: str = "akash9078~ai-content-humanizer"

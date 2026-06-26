@@ -16,6 +16,12 @@ JWT_EXPIRATION=3600
 SERPAPI_KEY=a9b6d2de649be4fa85e93728d731534ec1f83e8db2495adce53a839015adf60a
 TAVILY_API_KEY=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
 OPENROUTER_API_KEY=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
+GROQ_API_KEY=your-groq-key
+# Fallback when SerpAPI returns 429 / rate limit
+# TRENDING_FALLBACK_GROQ_API_KEY=your-second-groq-key
+# Fallback when blog generation hits Groq 429/TPD (uses TRENDING_FALLBACK_GROQ_API_KEY if unset)
+# BLOG_FALLBACK_GROQ_API_KEY=your-second-groq-key
+# GROQ_BLOG_DELAY_SECONDS=4
 
 # CORS
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]

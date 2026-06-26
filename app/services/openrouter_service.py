@@ -50,6 +50,17 @@ def _parse_groq_429_retry_seconds(error_message: str) -> float:
     return _blog_delay_seconds() * 2
 
 
+def _get_blog_groq_api_keys() -> List[str]:
+    """Primary Groq key plus optional blog fallback (same model, different org/quota)."""
+    keys: List[str] = []
+    if settings.groq_api_key:
+        keys.append(settings.groq_api_key)
+    fallback = settings.blog_fallback_groq_api_key or settings.trending_fallback_groq_api_key
+    if fallback and fallback not in keys:
+        keys.append(fallback)
+    return keys
+
+
 async def _groq_chat_completion(
     messages: List[Dict[str, str]],
     model: str,
@@ -59,18 +70,19 @@ async def _groq_chat_completion(
     frequency_penalty: Optional[float] = None,
     presence_penalty: Optional[float] = None,
     timeout_seconds: float = 120.0,
+    *,
+    use_blog_fallback: bool = False,
 ) -> str:
     """Call Groq chat completions API with retries on 429."""
-    if not settings.groq_api_key:
+    api_keys = _get_blog_groq_api_keys() if use_blog_fallback else (
+        [settings.groq_api_key] if settings.groq_api_key else []
+    )
+    if not api_keys:
         raise ValueError("Groq API key not configured")
 
     await _rate_limit()
 
     url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.groq_api_key}",
-        "Content-Type": "application/json",
-    }
     payload: Dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -85,52 +97,66 @@ async def _groq_chat_completion(
         payload["presence_penalty"] = presence_penalty
 
     last_error: Optional[str] = None
-    for attempt in range(2):
-        try:
-            async with httpx.AsyncClient(
-                timeout=timeout_seconds,
-                verify=httpx_verify(),
-            ) as client:
-                response = await client.post(url, headers=headers, json=payload)
-                if response.status_code == 429:
-                    error_data = response.text
-                    try:
-                        error_json = response.json()
-                        error_msg = error_json.get("error", {}).get("message", error_data)
-                    except Exception:
-                        error_msg = error_data
-                    last_error = f"Groq API error 429: {error_msg}"
-                    wait_s = _parse_groq_429_retry_seconds(error_msg)
+    for key_index, api_key in enumerate(api_keys):
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=timeout_seconds,
+                    verify=httpx_verify(),
+                ) as client:
+                    response = await client.post(url, headers=headers, json=payload)
+                    if response.status_code == 429:
+                        error_data = response.text
+                        try:
+                            error_json = response.json()
+                            error_msg = error_json.get("error", {}).get("message", error_data)
+                        except Exception:
+                            error_msg = error_data
+                        last_error = f"Groq API error 429: {error_msg}"
+                        if key_index < len(api_keys) - 1:
+                            break
+                        wait_s = _parse_groq_429_retry_seconds(error_msg)
+                        await asyncio.sleep(wait_s)
+                        continue
+                    if response.status_code != 200:
+                        error_data = response.text
+                        try:
+                            error_json = response.json()
+                            error_msg = error_json.get("error", {}).get("message", error_data)
+                        except Exception:
+                            error_msg = error_data
+                        raise Exception(f"Groq API error {response.status_code}: {error_msg}")
+                    data = response.json()
+                    if "choices" in data and len(data["choices"]) > 0:
+                        msg = data["choices"][0].get("message") or {}
+                        content = msg.get("content")
+                        if content is None:
+                            raise Exception(
+                                "Groq returned no message content. Response data: "
+                                f"{data}"
+                            )
+                        return content
+                    raise Exception("No content generated in Groq response")
+            except Exception as e:
+                if attempt == 1:
+                    if key_index < len(api_keys) - 1 and "429" in str(e):
+                        last_error = str(e)
+                        break
+                    raise Exception(f"Groq API request failed: {str(e)}")
+                last_error = str(e)
+                if "429" in last_error:
+                    if key_index < len(api_keys) - 1:
+                        break
+                    wait_s = _blog_delay_seconds() * 2
                     await asyncio.sleep(wait_s)
                     continue
-                if response.status_code != 200:
-                    error_data = response.text
-                    try:
-                        error_json = response.json()
-                        error_msg = error_json.get("error", {}).get("message", error_data)
-                    except Exception:
-                        error_msg = error_data
-                    raise Exception(f"Groq API error {response.status_code}: {error_msg}")
-                data = response.json()
-                if "choices" in data and len(data["choices"]) > 0:
-                    msg = data["choices"][0].get("message") or {}
-                    content = msg.get("content")
-                    if content is None:
-                        raise Exception(
-                            "Groq returned no message content. Response data: "
-                            f"{data}"
-                        )
-                    return content
-                raise Exception("No content generated in Groq response")
-        except Exception as e:
-            if attempt == 1:
-                raise Exception(f"Groq API request failed: {str(e)}")
-            last_error = str(e)
-            if "429" in last_error:
-                wait_s = _blog_delay_seconds() * 2
-                await asyncio.sleep(wait_s)
-                continue
-            raise
+                raise
+        else:
+            continue
     raise Exception(last_error or "Groq API request failed")
 
 
@@ -630,7 +656,7 @@ async def generate_blog_content_with_groq(
     max_tokens: int = 2000,
     temperature: float = 0.7
 ) -> str:
-    """Generate blog content using Groq API with llama-3.3-70b model. Retries on 429."""
+    """Generate blog content using Groq API with llama-3.3-70b model. Retries on 429; uses fallback key if configured."""
     if not settings.groq_api_key:
         raise ValueError("Groq API key not configured")
     return await _groq_chat_completion(
@@ -639,6 +665,7 @@ async def generate_blog_content_with_groq(
         max_tokens=max_tokens,
         temperature=temperature,
         timeout_seconds=120.0,
+        use_blog_fallback=True,
     )
 
 
