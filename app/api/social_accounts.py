@@ -17,6 +17,12 @@ from app.schemas.social_account import (
     BloggerBlogsResponse,
     BlueskyConnectRequest,
     BlueskyConnectResponse,
+    FacebookPageItem,
+    FacebookPageUpdateRequest,
+    FacebookPagesResponse,
+    InstagramAccountItem,
+    InstagramAccountUpdateRequest,
+    InstagramAccountsResponse,
     MastodonConnectRequest,
     MastodonSetupResponse,
     OAuthConnectRequest,
@@ -48,7 +54,21 @@ from app.services.blogger_service import (
 )
 from app.services.bluesky_service import save_bluesky_account_from_credentials
 from app.services.devto_service import save_devto_account_from_api_key
-from app.services.hashnode_service import save_hashnode_account_from_token
+from app.services.facebook_service import (
+    build_authorization_url as build_facebook_authorization_url,
+    get_valid_facebook_page_context,
+    save_facebook_account_from_code,
+    set_default_page,
+)
+from app.services.instagram_service import (
+    build_authorization_url as build_instagram_authorization_url,
+    save_instagram_account_from_code,
+    set_default_instagram_account,
+)
+from app.services.linkedin_service import (
+    build_authorization_url as build_linkedin_authorization_url,
+    save_linkedin_account_from_code,
+)
 from app.services.mastodon_service import (
     build_authorization_url as build_mastodon_authorization_url,
     save_mastodon_account_from_code,
@@ -79,6 +99,12 @@ from app.services.social_platform_app_service import (
     delete_user_platform_app,
     get_blogger_app_credentials,
     get_blogger_redirect_uri,
+    get_facebook_app_credentials,
+    get_facebook_redirect_uri,
+    get_instagram_app_credentials,
+    get_instagram_redirect_uri,
+    get_linkedin_app_credentials,
+    get_linkedin_redirect_uri,
     get_mastodon_app_credentials,
     get_mastodon_redirect_uri,
     get_reddit_app_credentials,
@@ -90,6 +116,9 @@ from app.services.social_platform_app_service import (
     get_x_redirect_uri,
     upsert_user_platform_app,
     user_has_blogger_app,
+    user_has_facebook_app,
+    user_has_instagram_app,
+    user_has_linkedin_app,
     user_has_mastodon_app,
     user_has_pinterest_app,
     user_has_reddit_app,
@@ -811,6 +840,346 @@ async def reddit_set_default_subreddit(
         )
 
     updated = set_default_subreddit(db, account, str(match["name"]))
+    return _account_to_response(updated)
+
+
+# --- LinkedIn ---
+
+
+@router.get("/linkedin/setup", response_model=OAuthSetupResponse)
+async def linkedin_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_row = get_user_platform_app(db, current_user.id, "linkedin")
+    return OAuthSetupResponse(
+        redirect_uri=get_linkedin_redirect_uri(http_request),
+        has_app_credentials=user_has_linkedin_app(db, current_user.id),
+        client_id=app_row.client_id if app_row else None,
+        developer_portal_url="https://www.linkedin.com/developers/apps",
+    )
+
+
+@router.post("/linkedin/connect", response_model=SocialAccountConnectResponse)
+async def linkedin_connect(
+    request: OAuthConnectRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        upsert_user_platform_app(
+            db,
+            current_user.id,
+            "linkedin",
+            request.client_id,
+            request.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    redirect_uri = get_linkedin_redirect_uri(http_request)
+    credentials = get_linkedin_app_credentials(
+        db, current_user.id, redirect_uri=redirect_uri
+    )
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save LinkedIn app credentials",
+        )
+
+    state = create_oauth_state_token(current_user, "linkedin")
+    return SocialAccountConnectResponse(
+        authorization_url=build_linkedin_authorization_url(credentials, state)
+    )
+
+
+@router.get("/linkedin/callback")
+async def linkedin_callback(
+    http_request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    if error:
+        return _oauth_callback_redirect("linkedin", error=error)
+    if not code or not state:
+        return _oauth_callback_redirect("linkedin", error="missing_code")
+
+    user = get_user_from_oauth_state(state, db, "linkedin")
+    if not user:
+        return _oauth_callback_redirect("linkedin", error="invalid_state")
+
+    redirect_uri = get_linkedin_redirect_uri(http_request)
+    try:
+        await save_linkedin_account_from_code(
+            db, user.id, code, redirect_uri=redirect_uri
+        )
+    except Exception as exc:
+        return _oauth_callback_redirect("linkedin", error=str(exc))
+
+    return _oauth_callback_redirect("linkedin")
+
+
+# --- Facebook Pages ---
+
+
+@router.get("/facebook/setup", response_model=OAuthSetupResponse)
+async def facebook_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_row = get_user_platform_app(db, current_user.id, "facebook")
+    return OAuthSetupResponse(
+        redirect_uri=get_facebook_redirect_uri(http_request),
+        has_app_credentials=user_has_facebook_app(db, current_user.id),
+        client_id=app_row.client_id if app_row else None,
+        developer_portal_url="https://developers.facebook.com/apps/",
+    )
+
+
+@router.post("/facebook/connect", response_model=SocialAccountConnectResponse)
+async def facebook_connect(
+    request: OAuthConnectRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        upsert_user_platform_app(
+            db,
+            current_user.id,
+            "facebook",
+            request.client_id,
+            request.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    redirect_uri = get_facebook_redirect_uri(http_request)
+    credentials = get_facebook_app_credentials(
+        db, current_user.id, redirect_uri=redirect_uri
+    )
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save Facebook app credentials",
+        )
+
+    state = create_oauth_state_token(current_user, "facebook")
+    return SocialAccountConnectResponse(
+        authorization_url=build_facebook_authorization_url(credentials, state)
+    )
+
+
+@router.get("/facebook/callback")
+async def facebook_callback(
+    http_request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    if error:
+        return _oauth_callback_redirect("facebook", error=error)
+    if not code or not state:
+        return _oauth_callback_redirect("facebook", error="missing_code")
+
+    user = get_user_from_oauth_state(state, db, "facebook")
+    if not user:
+        return _oauth_callback_redirect("facebook", error="invalid_state")
+
+    redirect_uri = get_facebook_redirect_uri(http_request)
+    try:
+        await save_facebook_account_from_code(
+            db, user.id, code, redirect_uri=redirect_uri
+        )
+    except Exception as exc:
+        return _oauth_callback_redirect("facebook", error=str(exc))
+
+    return _oauth_callback_redirect("facebook")
+
+
+@router.get("/facebook/pages", response_model=FacebookPagesResponse)
+async def facebook_pages(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "facebook")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facebook not connected")
+
+    metadata = get_account_metadata(account)
+    pages_raw = metadata.get("pages") or []
+    pages = [
+        FacebookPageItem(id=str(p["id"]), name=str(p.get("name") or "Page"))
+        for p in pages_raw
+        if p.get("id")
+    ]
+    return FacebookPagesResponse(
+        pages=pages,
+        default_page_id=metadata.get("default_page_id"),
+    )
+
+
+@router.put("/facebook/page", response_model=SocialAccountResponse)
+async def facebook_set_default_page(
+    request: FacebookPageUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "facebook")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facebook not connected")
+
+    metadata = get_account_metadata(account)
+    pages_raw = metadata.get("pages") or []
+    match = next((p for p in pages_raw if str(p.get("id")) == request.page_id), None)
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Page not found")
+
+    updated = set_default_page(
+        db,
+        account,
+        request.page_id,
+        str(match.get("name") or "Page"),
+    )
+    return _account_to_response(updated)
+
+
+# --- Instagram ---
+
+
+@router.get("/instagram/setup", response_model=OAuthSetupResponse)
+async def instagram_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_row = get_user_platform_app(db, current_user.id, "instagram")
+    return OAuthSetupResponse(
+        redirect_uri=get_instagram_redirect_uri(http_request),
+        has_app_credentials=user_has_instagram_app(db, current_user.id),
+        client_id=app_row.client_id if app_row else None,
+        developer_portal_url="https://developers.facebook.com/apps/",
+    )
+
+
+@router.post("/instagram/connect", response_model=SocialAccountConnectResponse)
+async def instagram_connect(
+    request: OAuthConnectRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        upsert_user_platform_app(
+            db,
+            current_user.id,
+            "instagram",
+            request.client_id,
+            request.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    redirect_uri = get_instagram_redirect_uri(http_request)
+    credentials = get_instagram_app_credentials(
+        db, current_user.id, redirect_uri=redirect_uri
+    )
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save Instagram app credentials",
+        )
+
+    state = create_oauth_state_token(current_user, "instagram")
+    return SocialAccountConnectResponse(
+        authorization_url=build_instagram_authorization_url(credentials, state)
+    )
+
+
+@router.get("/instagram/callback")
+async def instagram_callback(
+    http_request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    if error:
+        return _oauth_callback_redirect("instagram", error=error)
+    if not code or not state:
+        return _oauth_callback_redirect("instagram", error="missing_code")
+
+    user = get_user_from_oauth_state(state, db, "instagram")
+    if not user:
+        return _oauth_callback_redirect("instagram", error="invalid_state")
+
+    redirect_uri = get_instagram_redirect_uri(http_request)
+    try:
+        await save_instagram_account_from_code(
+            db, user.id, code, redirect_uri=redirect_uri
+        )
+    except Exception as exc:
+        return _oauth_callback_redirect("instagram", error=str(exc))
+
+    return _oauth_callback_redirect("instagram")
+
+
+@router.get("/instagram/accounts", response_model=InstagramAccountsResponse)
+async def instagram_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "instagram")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instagram not connected")
+
+    metadata = get_account_metadata(account)
+    accounts_raw = metadata.get("instagram_accounts") or []
+    accounts = [
+        InstagramAccountItem(
+            id=str(a["id"]),
+            username=str(a.get("username") or a["id"]),
+        )
+        for a in accounts_raw
+        if a.get("id")
+    ]
+    return InstagramAccountsResponse(
+        accounts=accounts,
+        default_instagram_id=metadata.get("default_instagram_id"),
+    )
+
+
+@router.put("/instagram/account", response_model=SocialAccountResponse)
+async def instagram_set_default_account(
+    request: InstagramAccountUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "instagram")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instagram not connected")
+
+    metadata = get_account_metadata(account)
+    accounts_raw = metadata.get("instagram_accounts") or []
+    match = next(
+        (a for a in accounts_raw if str(a.get("id")) == request.instagram_id),
+        None,
+    )
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Instagram account not found")
+
+    updated = set_default_instagram_account(
+        db,
+        account,
+        request.instagram_id,
+        str(match.get("username") or request.instagram_id),
+    )
     return _account_to_response(updated)
 
 

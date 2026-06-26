@@ -55,6 +55,18 @@ def get_reddit_redirect_uri(request: Optional["Request"] = None) -> str:
     return get_platform_redirect_uri("reddit", request)
 
 
+def get_linkedin_redirect_uri(request: Optional["Request"] = None) -> str:
+    return get_platform_redirect_uri("linkedin", request)
+
+
+def get_facebook_redirect_uri(request: Optional["Request"] = None) -> str:
+    return get_platform_redirect_uri("facebook", request)
+
+
+def get_instagram_redirect_uri(request: Optional["Request"] = None) -> str:
+    return get_platform_redirect_uri("instagram", request)
+
+
 def _is_placeholder(value: Optional[str], placeholders: frozenset[str]) -> bool:
     if not value or not value.strip():
         return True
@@ -262,6 +274,54 @@ def get_reddit_app_credentials(
     )
 
 
+def get_linkedin_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    row = get_user_platform_app(db, user_id, "linkedin")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_linkedin_redirect_uri(),
+    )
+
+
+def get_facebook_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    row = get_user_platform_app(db, user_id, "facebook")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_facebook_redirect_uri(),
+    )
+
+
+def get_instagram_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    row = get_user_platform_app(db, user_id, "instagram")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_instagram_redirect_uri(),
+    )
+
+
 def user_has_pinterest_app(db: Session, user_id: int) -> bool:
     return get_pinterest_app_credentials(db, user_id) is not None
 
@@ -280,6 +340,18 @@ def user_has_blogger_app(db: Session, user_id: int) -> bool:
 
 def user_has_reddit_app(db: Session, user_id: int) -> bool:
     return get_reddit_app_credentials(db, user_id) is not None
+
+
+def user_has_linkedin_app(db: Session, user_id: int) -> bool:
+    return get_linkedin_app_credentials(db, user_id) is not None
+
+
+def user_has_facebook_app(db: Session, user_id: int) -> bool:
+    return get_facebook_app_credentials(db, user_id) is not None
+
+
+def user_has_instagram_app(db: Session, user_id: int) -> bool:
+    return get_instagram_app_credentials(db, user_id) is not None
 
 
 # Platforms that store credentials only on social_accounts (no social_platform_apps row)

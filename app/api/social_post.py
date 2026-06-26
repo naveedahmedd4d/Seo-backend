@@ -27,6 +27,9 @@ from app.services.devto_service import create_article as create_devto_article, g
 from app.services.hashnode_service import get_hashnode_token, publish_article as publish_hashnode_article
 from app.services.blogger_service import create_post as create_blogger_post, get_valid_blogger_access_token
 from app.services.reddit_service import get_valid_reddit_access_token, submit_link_post
+from app.services.linkedin_service import create_text_share, get_valid_linkedin_access_token
+from app.services.facebook_service import get_valid_facebook_page_context, publish_page_post
+from app.services.instagram_service import get_valid_instagram_context, publish_instagram_image_post
 from app.services.http_ssl import httpx_verify
 from app.services.social_account_service import get_account_metadata, get_user_social_account
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
@@ -488,6 +491,47 @@ async def publish_social_post(
                     ),
                 )
             )
+        elif platform == "linkedin":
+            results.append(
+                await _publish_to_linkedin(
+                    db,
+                    current_user.id,
+                    headline=request.headline,
+                    description=combined_description,
+                    source_url=request.source_url,
+                )
+            )
+        elif platform == "facebook":
+            results.append(
+                await _publish_to_facebook(
+                    db,
+                    current_user.id,
+                    headline=request.headline,
+                    description=combined_description,
+                    source_url=request.source_url,
+                    platform_options=(
+                        request.platform_options.facebook
+                        if request.platform_options and request.platform_options.facebook
+                        else {}
+                    ),
+                )
+            )
+        elif platform == "instagram":
+            results.append(
+                await _publish_to_instagram(
+                    db,
+                    current_user.id,
+                    headline=request.headline,
+                    description=combined_description,
+                    source_url=request.source_url,
+                    image_url=image_url,
+                    platform_options=(
+                        request.platform_options.instagram
+                        if request.platform_options and request.platform_options.instagram
+                        else {}
+                    ),
+                )
+            )
         else:
             results.append(
                 SocialPostPublishResultItem(
@@ -919,6 +963,166 @@ async def _publish_to_reddit(
     except Exception as exc:
         return SocialPostPublishResultItem(
             platform="reddit",
+            success=False,
+            error=str(exc),
+        )
+
+
+async def _publish_to_linkedin(
+    db: Session,
+    user_id: int,
+    *,
+    headline: str,
+    description: str | None,
+    source_url: str | None,
+) -> SocialPostPublishResultItem:
+    account = get_user_social_account(db, user_id, "linkedin")
+    if not account:
+        return SocialPostPublishResultItem(
+            platform="linkedin",
+            success=False,
+            error="LinkedIn account not connected",
+        )
+
+    text = _build_post_text(headline, description, None)
+    if source_url and source_url.strip():
+        text = f"{text}\n\n{source_url.strip()}" if text else source_url.strip()
+
+    try:
+        access_token, person_urn = await get_valid_linkedin_access_token(db, user_id)
+        result = await create_text_share(
+            access_token,
+            person_urn=person_urn,
+            text=text,
+            article_url=source_url,
+        )
+        post_id = result.get("id")
+        external_url = None
+        if post_id:
+            external_url = f"https://www.linkedin.com/feed/update/{post_id}/"
+        return SocialPostPublishResultItem(
+            platform="linkedin",
+            success=True,
+            external_id=str(post_id) if post_id else None,
+            external_url=external_url,
+        )
+    except Exception as exc:
+        return SocialPostPublishResultItem(
+            platform="linkedin",
+            success=False,
+            error=str(exc),
+        )
+
+
+async def _publish_to_facebook(
+    db: Session,
+    user_id: int,
+    *,
+    headline: str,
+    description: str | None,
+    source_url: str | None,
+    platform_options: dict,
+) -> SocialPostPublishResultItem:
+    account = get_user_social_account(db, user_id, "facebook")
+    if not account:
+        return SocialPostPublishResultItem(
+            platform="facebook",
+            success=False,
+            error="Facebook account not connected",
+        )
+
+    message = _build_post_text(headline, description, None)
+    link = source_url
+    if not link:
+        return SocialPostPublishResultItem(
+            platform="facebook",
+            success=False,
+            error="A source link is required for Facebook Page posts",
+        )
+
+    try:
+        page_id, _page_name, page_token = await get_valid_facebook_page_context(
+            db,
+            user_id,
+            page_id=platform_options.get("page_id"),
+        )
+        result = await publish_page_post(
+            page_token,
+            page_id=page_id,
+            message=message,
+            link=link,
+        )
+        post_id = result.get("id")
+        external_url = f"https://www.facebook.com/{post_id}" if post_id else None
+        return SocialPostPublishResultItem(
+            platform="facebook",
+            success=True,
+            external_id=str(post_id) if post_id else None,
+            external_url=external_url,
+        )
+    except Exception as exc:
+        return SocialPostPublishResultItem(
+            platform="facebook",
+            success=False,
+            error=str(exc),
+        )
+
+
+async def _publish_to_instagram(
+    db: Session,
+    user_id: int,
+    *,
+    headline: str,
+    description: str | None,
+    source_url: str | None,
+    image_url: str | None,
+    platform_options: dict,
+) -> SocialPostPublishResultItem:
+    account = get_user_social_account(db, user_id, "instagram")
+    if not account:
+        return SocialPostPublishResultItem(
+            platform="instagram",
+            success=False,
+            error="Instagram account not connected",
+        )
+
+    if not image_url:
+        return SocialPostPublishResultItem(
+            platform="instagram",
+            success=False,
+            error="Image is required for Instagram posts",
+        )
+
+    caption_parts = [headline.strip()]
+    if description and description.strip():
+        caption_parts.append(description.strip())
+    if source_url and source_url.strip():
+        caption_parts.append(source_url.strip())
+    caption = "\n\n".join(caption_parts)
+
+    try:
+        ig_id, username, page_token = await get_valid_instagram_context(
+            db,
+            user_id,
+            instagram_id=platform_options.get("instagram_id"),
+        )
+        result = await publish_instagram_image_post(
+            ig_id,
+            page_token,
+            image_url=image_url,
+            caption=caption,
+        )
+        media_id = result.get("id")
+        external_url = f"https://www.instagram.com/{username}/" if username else None
+        return SocialPostPublishResultItem(
+            platform="instagram",
+            success=True,
+            external_id=str(media_id) if media_id else None,
+            external_url=external_url,
+        )
+    except Exception as exc:
+        return SocialPostPublishResultItem(
+            platform="instagram",
             success=False,
             error=str(exc),
         )

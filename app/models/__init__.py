@@ -10,6 +10,21 @@ from app.models.social_post_history import SocialPostHistory
 from app.models.social_account import SocialAccount
 from app.models.social_platform_app import SocialPlatformApp
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
+from app.models.gsc_oauth_token import GscOAuthToken
+from app.models.gsc_property import GscProperty
+from app.models.gsc_page_metric import GscPageMetric
+from app.models.gsc_query_metric import GscQueryMetric
+from app.models.seo_action_item import SeoActionItem
+from app.models.authority_site import (
+    AuthoritySite,
+    AuthorityServiceCluster,
+    AuthorityBlogPost,
+    AuthorityLinkEdge,
+    AuthorityPublishedNode,
+    AuthorityNodeStatus,
+    AuthorityLinkType,
+    AuthorityLinkStatus,
+)
 
 __all__ = [
     "User",
@@ -27,5 +42,18 @@ __all__ = [
     "SocialAccount",
     "SocialPlatformApp",
     "SocialPostTemplatePrefs",
+    "GscOAuthToken",
+    "GscProperty",
+    "GscPageMetric",
+    "GscQueryMetric",
+    "SeoActionItem",
+    "AuthoritySite",
+    "AuthorityServiceCluster",
+    "AuthorityBlogPost",
+    "AuthorityLinkEdge",
+    "AuthorityPublishedNode",
+    "AuthorityNodeStatus",
+    "AuthorityLinkType",
+    "AuthorityLinkStatus",
 ]
 

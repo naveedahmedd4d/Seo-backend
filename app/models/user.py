@@ -28,3 +28,16 @@ class User(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    authority_sites = relationship(
+        "AuthoritySite",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    gsc_oauth_token = relationship(
+        "GscOAuthToken",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    gsc_properties = relationship("GscProperty", back_populates="user", cascade="all, delete-orphan")
+    seo_action_items = relationship("SeoActionItem", back_populates="user", cascade="all, delete-orphan")

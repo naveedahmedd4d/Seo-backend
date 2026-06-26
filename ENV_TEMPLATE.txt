@@ -33,4 +33,12 @@ FRONTEND_URL=http://localhost:3000
 # MASTODON_REDIRECT_URI=http://localhost:8000/api/social-accounts/mastodon/callback
 # BLOGGER_REDIRECT_URI=http://localhost:8000/api/social-accounts/blogger/callback
 # REDDIT_REDIRECT_URI=http://localhost:8000/api/social-accounts/reddit/callback
+# LINKEDIN_REDIRECT_URI=http://localhost:8000/api/social-accounts/linkedin/callback
+# FACEBOOK_REDIRECT_URI=http://localhost:8000/api/social-accounts/facebook/callback
+# INSTAGRAM_REDIRECT_URI=http://localhost:8000/api/social-accounts/instagram/callback
+
+# Google Search Console OAuth
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# GOOGLE_GSC_REDIRECT_URI=http://localhost:8000/api/search-console/oauth/callback
 

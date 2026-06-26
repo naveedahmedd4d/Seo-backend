@@ -330,6 +330,103 @@ def _rank_math_meta(
     return meta
 
 
+async def publish_page_to_wordpress(
+    site: WordPressSite,
+    title: str,
+    content: str,
+    status: str = "draft",
+    featured_image: Any = None,
+    content_is_html: bool = False,
+    focus_keyword: Optional[str] = None,
+    slug: Optional[str] = None,
+    seo_title: Optional[str] = None,
+    meta_description: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Publish content to WordPress as a Page (wp/v2/pages)."""
+    try:
+        url = site.url.rstrip("/")
+        api_url = f"{url}/wp-json/wp/v2/pages"
+        decrypted_key = decrypt_api_key(site.api_key)
+
+        if not content_is_html:
+            content = _markdown_to_html(content)
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            content, sideload_url_to_media_id = await _sideload_inline_images_in_html(site, client, content)
+
+            featured_media_id: Optional[int] = None
+            image_url = None
+            if featured_image and isinstance(featured_image, dict):
+                image_url = featured_image.get("url") or featured_image.get("original")
+            if image_url and isinstance(image_url, str) and image_url.strip():
+                iu = image_url.strip()
+                if iu in sideload_url_to_media_id:
+                    featured_media_id = sideload_url_to_media_id[iu]
+                else:
+                    fetched = await _fetch_image_from_url(iu)
+                    if fetched:
+                        image_bytes, content_type, filename = fetched
+                        up = await _upload_media_to_wordpress(
+                            site, client, image_bytes, content_type, filename
+                        )
+                        if up:
+                            featured_media_id = up[0]
+
+            page_payload: Dict[str, Any] = {
+                "title": title,
+                "content": content,
+                "status": status,
+            }
+            if featured_media_id is not None:
+                page_payload["featured_media"] = featured_media_id
+            if slug and str(slug).strip():
+                page_payload["slug"] = str(slug).strip()
+            meta = _rank_math_meta(focus_keyword, seo_title, meta_description)
+            if meta:
+                page_payload["meta"] = meta
+            response = await client.post(
+                api_url,
+                auth=(site.username, decrypted_key),
+                json=page_payload,
+            )
+
+        if response.status_code == 201:
+            page_data = response.json()
+            return {
+                "success": True,
+                "page_id": page_data.get("id"),
+                "link": page_data.get("link"),
+                "message": "Page published successfully",
+            }
+        return {
+            "success": False,
+            "message": f"Failed to publish page: {response.status_code} - {response.text}",
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Error publishing page: {str(e)}"}
+
+
+async def delete_page_from_wordpress(site: WordPressSite, wp_page_id: int) -> Dict[str, Any]:
+    """Delete a page from WordPress via REST API."""
+    try:
+        url = site.url.rstrip("/")
+        api_url = f"{url}/wp-json/wp/v2/pages/{wp_page_id}"
+        decrypted_key = decrypt_api_key(site.api_key)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.delete(
+                f"{api_url}?force=true",
+                auth=(site.username, decrypted_key),
+            )
+            if response.status_code in (200, 204):
+                return {"success": True, "message": "Page deleted from WordPress"}
+            return {
+                "success": False,
+                "message": f"Failed to delete page: {response.status_code} - {response.text}",
+            }
+    except Exception as e:
+        return {"success": False, "message": f"Error deleting page: {str(e)}"}
+
+
 async def publish_to_wordpress(
     site: WordPressSite,
     title: str,

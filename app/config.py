@@ -52,7 +52,15 @@ class Settings(BaseSettings):
     mastodon_redirect_uri: Optional[str] = None
     blogger_redirect_uri: Optional[str] = None
     reddit_redirect_uri: Optional[str] = None
+    linkedin_redirect_uri: Optional[str] = None
+    facebook_redirect_uri: Optional[str] = None
+    instagram_redirect_uri: Optional[str] = None
     reddit_user_agent: Optional[str] = None
+
+    # Google Search Console OAuth
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    google_gsc_redirect_uri: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),

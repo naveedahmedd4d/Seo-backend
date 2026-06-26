@@ -114,3 +114,31 @@ class RedditSubredditsResponse(BaseModel):
 
 class RedditSubredditUpdateRequest(BaseModel):
     subreddit: str
+
+
+class FacebookPageItem(BaseModel):
+    id: str
+    name: str
+
+
+class FacebookPagesResponse(BaseModel):
+    pages: List[FacebookPageItem]
+    default_page_id: Optional[str] = None
+
+
+class FacebookPageUpdateRequest(BaseModel):
+    page_id: str
+
+
+class InstagramAccountItem(BaseModel):
+    id: str
+    username: str
+
+
+class InstagramAccountsResponse(BaseModel):
+    accounts: List[InstagramAccountItem]
+    default_instagram_id: Optional[str] = None
+
+
+class InstagramAccountUpdateRequest(BaseModel):
+    instagram_id: str

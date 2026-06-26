@@ -170,6 +170,24 @@ def test_reddit_setup_returns_redirect_uri(client, auth_headers):
     assert "/api/social-accounts/reddit/callback" in response.json()["redirect_uri"]
 
 
+def test_linkedin_setup_returns_redirect_uri(client, auth_headers):
+    response = client.get("/api/social-accounts/linkedin/setup", headers=auth_headers)
+    assert response.status_code == 200
+    assert "/api/social-accounts/linkedin/callback" in response.json()["redirect_uri"]
+
+
+def test_facebook_setup_returns_redirect_uri(client, auth_headers):
+    response = client.get("/api/social-accounts/facebook/setup", headers=auth_headers)
+    assert response.status_code == 200
+    assert "/api/social-accounts/facebook/callback" in response.json()["redirect_uri"]
+
+
+def test_instagram_setup_returns_redirect_uri(client, auth_headers):
+    response = client.get("/api/social-accounts/instagram/setup", headers=auth_headers)
+    assert response.status_code == 200
+    assert "/api/social-accounts/instagram/callback" in response.json()["redirect_uri"]
+
+
 def test_reddit_connect_rejects_placeholder(client, auth_headers):
     response = client.post(
         "/api/social-accounts/reddit/connect",

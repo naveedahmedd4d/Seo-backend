@@ -80,6 +80,17 @@ def test_production_registry_has_expected_ids():
     assert "reddit" in ids
     assert "devto" in ids
     assert "pinterest" in ids
+    assert "linkedin" in ids
+    assert "facebook" in ids
+    assert "instagram" in ids
+
+
+def test_linkedin_facebook_instagram_are_active():
+    platforms = {p.id: p for p in get_social_platforms()}
+    for platform_id in ("linkedin", "facebook", "instagram"):
+        p = platforms[platform_id]
+        assert p.status == "active"
+        assert p.connect_enabled is True
 
 
 def test_registry_file_exists():

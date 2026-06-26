@@ -209,7 +209,7 @@ async def generate_news_headline(
 
 Below are 7 recent news articles. Write a headline in 2 to 4 lines:
 - Each line should be short and punchy (roughly 4–12 words per line).
-- Wrap exactly 1 to 3 short phrases in **double asterisks** for highlight blocks (e.g. **Tools that** reveal your hidden data). Each highlighted phrase must be 1–4 words.
+- Wrap exactly 2 to 3 short phrases in **double asterisks** for highlight blocks (e.g. **Tools that** reveal your hidden data). Each highlighted phrase must be 1–4 words.
 - Do not use any other markdown—only ** for highlights and newlines between lines.
 - Center-friendly rhythm: mix highlighted and non-highlighted words across lines.
 - Total length 100–220 characters. Accurate and not clickbait—must reflect the real story.

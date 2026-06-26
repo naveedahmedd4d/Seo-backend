@@ -57,6 +57,8 @@ class SocialPostPublishPlatformOptions(BaseModel):
     pinterest: Optional[dict[str, Any]] = None
     blogger: Optional[dict[str, Any]] = None
     reddit: Optional[dict[str, Any]] = None
+    facebook: Optional[dict[str, Any]] = None
+    instagram: Optional[dict[str, Any]] = None
 
 
 class SocialPostPublishRequest(BaseModel):

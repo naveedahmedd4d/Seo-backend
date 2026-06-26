@@ -32,6 +32,9 @@ def build_oauth_redirect_uri(platform: str, request: Optional[Request] = None) -
         "mastodon": settings.mastodon_redirect_uri,
         "blogger": settings.blogger_redirect_uri,
         "reddit": settings.reddit_redirect_uri,
+        "linkedin": settings.linkedin_redirect_uri,
+        "facebook": settings.facebook_redirect_uri,
+        "instagram": settings.instagram_redirect_uri,
     }
     override = env_map.get(platform)
     if override:

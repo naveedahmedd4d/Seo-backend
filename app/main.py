@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, wordpress, trending, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer
+from app.api import auth, wordpress, trending, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority
 from app.middleware import (
     http_exception_handler,
     validation_exception_handler,
@@ -49,6 +49,8 @@ app.include_router(social_post.router, prefix="/api/social-post", tags=["social-
 app.include_router(social_platforms.router, prefix="/api/social-platforms", tags=["social-platforms"])
 app.include_router(social_accounts.router, prefix="/api/social-accounts", tags=["social-accounts"])
 app.include_router(ai_humanizer.router, prefix="/api/ai-humanizer", tags=["ai-humanizer"])
+app.include_router(search_console.router, prefix="/api/search-console", tags=["search-console"])
+app.include_router(authority.router, prefix="/api/authority", tags=["authority"])
 
 
 @app.on_event("startup")
@@ -63,8 +65,14 @@ def create_tables_if_missing():
             conn.execute(text("SELECT 1"))
         inspector = inspect(engine)
         existing = set(inspector.get_table_names())
+        alembic_managed_prefixes = ("authority_",)
         for table in Base.metadata.sorted_tables:
             if table.name not in existing:
+                if table.name.startswith(alembic_managed_prefixes):
+                    logging.getLogger(__name__).info(
+                        "Skipping startup create for Alembic-managed table: %s", table.name
+                    )
+                    continue
                 table.create(engine)
                 logging.getLogger(__name__).info("Created missing table: %s", table.name)
     except Exception as e:
