@@ -2415,7 +2415,7 @@ async def _generate_celebrity_biography_summary(
         normalize_celebrity_name,
     )
     from app.services.news_research_service import build_news_bundle, format_news_bundle_for_llm
-    from app.services.research_context import format_research_context
+    from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
 
     name = normalize_celebrity_name(query)
     outline = build_celebrity_biography_outline(name)
@@ -2441,24 +2441,7 @@ async def _generate_celebrity_biography_summary(
         if isinstance(o, dict) and (o.get("keyword") or "").strip():
             opportunity_lines.append(f"- {o['keyword']}")
 
-    topical_block = ""
-    if topical_mapping and isinstance(topical_mapping, dict):
-        auto_vals = [
-            (a.get("value") or "").strip()
-            for a in (topical_mapping.get("autocomplete_suggestions") or [])
-            if isinstance(a, dict) and (a.get("value") or "").strip()
-        ][:8]
-        related_vals = [
-            (r.get("query") or "").strip()
-            for r in (topical_mapping.get("related_queries") or [])
-            if isinstance(r, dict) and (r.get("query") or "").strip()
-        ][:8]
-        if auto_vals or related_vals:
-            topical_block = (
-                "Topical mapping:\n"
-                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
-                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
-            )
+    topical_block = format_topical_mapping_block(topical_mapping)
 
     slug_list = ", ".join(slugs)
     from datetime import date as _bio_date
@@ -2553,6 +2536,8 @@ Return ONLY valid JSON."""
                 seo.append(f"Answer PAA: {s}")
 
         topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        topical = merge_topical_mapping_terms(topical, topical_mapping, limit=12)
+        merged_kw = merge_topical_mapping_terms(merged_kw, topical_mapping, limit=15)
         fallback = _fallback_celebrity_biography_summary(query, results, news_bundle)
 
         h1 = (data.get("h1") or "").strip()
@@ -2618,7 +2603,7 @@ async def _generate_celebrity_religion_summary(
         get_religion_section_slugs,
         normalize_celebrity_name,
     )
-    from app.services.research_context import format_research_context
+    from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
 
     name = normalize_celebrity_name(query)
     outline = build_celebrity_religion_outline(name)
@@ -2634,24 +2619,7 @@ async def _generate_celebrity_religion_summary(
         if isinstance(o, dict) and (o.get("keyword") or "").strip():
             opportunity_lines.append(f"- {o['keyword']}")
 
-    topical_block = ""
-    if topical_mapping and isinstance(topical_mapping, dict):
-        auto_vals = [
-            (a.get("value") or "").strip()
-            for a in (topical_mapping.get("autocomplete_suggestions") or [])
-            if isinstance(a, dict) and (a.get("value") or "").strip()
-        ][:8]
-        related_vals = [
-            (r.get("query") or "").strip()
-            for r in (topical_mapping.get("related_queries") or [])
-            if isinstance(r, dict) and (r.get("query") or "").strip()
-        ][:8]
-        if auto_vals or related_vals:
-            topical_block = (
-                "Topical mapping:\n"
-                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
-                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
-            )
+    topical_block = format_topical_mapping_block(topical_mapping)
 
     slug_list = ", ".join(slugs)
     prompt = f"""You are an SEO strategist for a celebrity religion article about "{name}".
@@ -2719,6 +2687,8 @@ Return ONLY valid JSON."""
                 seo.append(f"Answer PAA: {s}")
 
         topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        topical = merge_topical_mapping_terms(topical, topical_mapping, limit=12)
+        merged_kw = merge_topical_mapping_terms(merged_kw, topical_mapping, limit=15)
 
         return {
             "summary": (data.get("summary") or "").strip() or _fallback_celebrity_religion_summary(query, results)["summary"],
@@ -2760,7 +2730,7 @@ async def _generate_celebrity_net_worth_summary(
         get_net_worth_section_slugs,
         normalize_celebrity_name,
     )
-    from app.services.research_context import format_research_context
+    from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
 
     name = normalize_celebrity_name(query)
     year = date.today().year
@@ -2777,24 +2747,7 @@ async def _generate_celebrity_net_worth_summary(
         if isinstance(o, dict) and (o.get("keyword") or "").strip():
             opportunity_lines.append(f"- {o['keyword']}")
 
-    topical_block = ""
-    if topical_mapping and isinstance(topical_mapping, dict):
-        auto_vals = [
-            (a.get("value") or "").strip()
-            for a in (topical_mapping.get("autocomplete_suggestions") or [])
-            if isinstance(a, dict) and (a.get("value") or "").strip()
-        ][:8]
-        related_vals = [
-            (r.get("query") or "").strip()
-            for r in (topical_mapping.get("related_queries") or [])
-            if isinstance(r, dict) and (r.get("query") or "").strip()
-        ][:8]
-        if auto_vals or related_vals:
-            topical_block = (
-                "Topical mapping:\n"
-                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
-                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
-            )
+    topical_block = format_topical_mapping_block(topical_mapping)
 
     slug_list = ", ".join(slugs)
     prompt = f"""You are an SEO strategist for a celebrity net worth article about "{name}".
@@ -2863,6 +2816,8 @@ Return ONLY valid JSON."""
                 seo.append(f"Answer PAA: {s}")
 
         topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        topical = merge_topical_mapping_terms(topical, topical_mapping, limit=12)
+        merged_kw = merge_topical_mapping_terms(merged_kw, topical_mapping, limit=15)
 
         fallback = _fallback_celebrity_net_worth_summary(query, results)
         h1 = (data.get("h1") or "").strip() or fallback["h1"]
@@ -2906,7 +2861,7 @@ async def generate_research_content_summary(
         is_celebrity_net_worth_summary,
         is_celebrity_religious_summary,
     )
-    from app.services.research_context import format_research_context
+    from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
 
     if is_celebrity_religious_summary(category, celebrity_content_type):
         return await _generate_celebrity_religion_summary(
@@ -2939,26 +2894,7 @@ async def generate_research_content_summary(
         if kw:
             opportunity_lines.append(f"- {kw}")
 
-    topical_block = ""
-    if topical_mapping and isinstance(topical_mapping, dict):
-        auto = topical_mapping.get("autocomplete_suggestions") or []
-        related = topical_mapping.get("related_queries") or []
-        auto_vals = [
-            (a.get("value") or "").strip()
-            for a in auto
-            if isinstance(a, dict) and (a.get("value") or "").strip()
-        ][:8]
-        related_vals = [
-            (r.get("query") or "").strip()
-            for r in related
-            if isinstance(r, dict) and (r.get("query") or "").strip()
-        ][:8]
-        if auto_vals or related_vals:
-            topical_block = (
-                "Topical mapping:\n"
-                + (f"Autocomplete: {', '.join(auto_vals)}\n" if auto_vals else "")
-                + (f"Related queries: {', '.join(related_vals)}\n" if related_vals else "")
-            )
+    topical_block = format_topical_mapping_block(topical_mapping)
 
     prompt = f"""You are an SEO content strategist. Based on the research below for "{query}", produce a structured article plan.
 
@@ -3021,10 +2957,12 @@ Return ONLY valid JSON, no markdown fences."""
                 seo.append(f"Target long-tail: {s}")
 
         topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        topical = merge_topical_mapping_terms(topical, topical_mapping, limit=12)
         for lt in (clusters.get("long_tail") or []):
             s = str(lt).strip()
             if s and s not in topical:
                 topical.append(s)
+        merged_kw = merge_topical_mapping_terms(merged_kw, topical_mapping, limit=15)
 
         return {
             "summary": (data.get("summary") or "").strip() or _fallback_research_summary(query, results)["summary"],

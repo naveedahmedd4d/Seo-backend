@@ -85,6 +85,59 @@ async def test_generate_research_content_summary_valid_json():
 
 
 @pytest.mark.asyncio
+async def test_generate_research_content_summary_uses_topical_mapping():
+    mock_clusters = {
+        "primary": "jutta leerdam",
+        "secondary": [],
+        "lsi": [],
+        "paa": [],
+        "long_tail": [],
+    }
+    topical_mapping = {
+        "query": "jutta leerdam",
+        "autocomplete_suggestions": [{"value": "jutta leerdam height"}],
+        "related_queries": [{"query": "jutta leerdam olympics schedule"}],
+    }
+    with patch(
+        "app.services.openrouter_service.generate_blog_seo_content",
+        new_callable=AsyncMock,
+        return_value=json.dumps(VALID_LLM_JSON),
+    ), patch(
+        "app.services.openrouter_service.extract_keyword_clusters",
+        new_callable=AsyncMock,
+        return_value=mock_clusters,
+    ):
+        result = await generate_research_content_summary(
+            query="jutta leerdam",
+            results=SAMPLE_RESULTS,
+            topical_mapping=topical_mapping,
+        )
+    assert "jutta leerdam height" in result["target_keywords"]
+    assert "jutta leerdam olympics schedule" in result["topical_coverage"]
+
+
+def test_extract_topical_mapping_terms():
+    from app.services.research_context import (
+        extract_topical_mapping_terms,
+        format_topical_mapping_block,
+        merge_topical_mapping_terms,
+    )
+
+    payload = {
+        "query": "jutta leerdam",
+        "autocomplete_suggestions": [{"value": "jutta leerdam bikini"}],
+        "related_queries": [{"query": "jutta leerdam pants"}],
+    }
+    terms = extract_topical_mapping_terms(payload)
+    assert terms == ["jutta leerdam bikini", "jutta leerdam pants"]
+    block = format_topical_mapping_block(payload)
+    assert "Autocomplete: jutta leerdam bikini" in block
+    assert "Related queries: jutta leerdam pants" in block
+    merged = merge_topical_mapping_terms(["existing"], payload)
+    assert merged == ["existing", "jutta leerdam bikini", "jutta leerdam pants"]
+
+
+@pytest.mark.asyncio
 async def test_generate_research_content_summary_invalid_json_fallback():
     with patch(
         "app.services.openrouter_service.generate_blog_seo_content",
