@@ -253,4 +253,45 @@ def set_default_board(
     if board_name:
         metadata["default_board_name"] = board_name
     return update_social_account_metadata(db, account, metadata)
+
+
+def _board_id_from_metadata(
+    metadata: dict[str, Any],
+    platform_options: dict[str, Any],
+) -> str | None:
+    raw = platform_options.get("board_id") or metadata.get("default_board_id")
+    if raw is not None and str(raw).strip():
+        return str(raw).strip()
+    boards = metadata.get("boards")
+    if isinstance(boards, list):
+        for entry in boards:
+            if isinstance(entry, dict) and entry.get("id") is not None:
+                return str(entry["id"])
+    return None
+
+
+async def resolve_pinterest_board_id(
+    db: Session,
+    user_id: int,
+    account: SocialAccount,
+    platform_options: dict[str, Any] | None = None,
+) -> str | None:
+    """Resolve target board: explicit option → saved default → cached boards → live API fetch."""
+    platform_options = platform_options or {}
+    metadata = get_account_metadata(account)
+    board_id = _board_id_from_metadata(metadata, platform_options)
+    if board_id:
+        return board_id
+
+    access_token = await get_valid_pinterest_access_token(db, user_id)
+    boards_raw = await fetch_boards(access_token)
+    if not boards_raw:
+        return None
+    first = boards_raw[0]
+    bid = first.get("id")
+    if not bid:
+        return None
+    resolved = str(bid)
+    set_default_board(db, account, resolved, str(first.get("name") or "Board"))
+    return resolved
 

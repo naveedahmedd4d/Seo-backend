@@ -15,7 +15,11 @@ from app.services.http_ssl import httpx_verify
 from app.services.instagram_service import get_valid_instagram_context, publish_instagram_image_post
 from app.services.linkedin_service import create_text_share, get_valid_linkedin_access_token
 from app.services.mastodon_service import create_status, get_valid_mastodon_access_token, upload_media
-from app.services.pinterest_service import create_pin, get_valid_pinterest_access_token
+from app.services.pinterest_service import (
+    create_pin,
+    get_valid_pinterest_access_token,
+    resolve_pinterest_board_id,
+)
 from app.services.reddit_service import get_valid_reddit_access_token, submit_link_post
 from app.services.social_account_service import get_account_metadata, get_user_social_account
 from app.services.social_post_copy_service import PublishCopyContext, build_platform_copy
@@ -153,17 +157,22 @@ async def _publish_to_pinterest(
     if not image_url:
         return SocialPostPublishResultItem(platform="pinterest", success=False, error="Image is required for Pinterest pins")
 
-    metadata = get_account_metadata(account)
-    board_id = platform_options.get("board_id") or metadata.get("default_board_id")
+    try:
+        access_token = await get_valid_pinterest_access_token(db, user_id)
+        board_id = await resolve_pinterest_board_id(
+            db, user_id, account, platform_options
+        )
+    except Exception as exc:
+        return SocialPostPublishResultItem(platform="pinterest", success=False, error=str(exc))
+
     if not board_id:
         return SocialPostPublishResultItem(
             platform="pinterest",
             success=False,
-            error="No Pinterest board selected. Choose a default board in Social accounts.",
+            error="No Pinterest boards found on your account. Create a board on Pinterest first.",
         )
 
     try:
-        access_token = await get_valid_pinterest_access_token(db, user_id)
         pin = await create_pin(
             access_token,
             board_id=str(board_id),
