@@ -6,15 +6,17 @@ from app.services.social_post_copy_service import (
     build_x_text,
     build_linkedin_text,
     build_pinterest_description,
+    build_mastodon_text,
     build_facebook_message,
     build_reddit_title,
+    build_platform_copy,
     publish_context_from_history,
 )
 
 
 def _ctx(**kwargs) -> PublishCopyContext:
     defaults = {
-        "headline": "Breaking News Headline",
+        "headline": "Breaking **News** Headline",
         "short_description": "Short card blurb.",
         "story_caption": "Longer story caption for feeds.",
         "hashtags": ["news", "trending"],
@@ -24,11 +26,19 @@ def _ctx(**kwargs) -> PublishCopyContext:
     return PublishCopyContext(**defaults)
 
 
-def test_instagram_uses_story_and_hashtags():
+def test_instagram_image_card_uses_story_and_hashtags():
     caption = build_instagram_caption(_ctx())
     assert "Longer story caption" in caption
     assert "#news" in caption
     assert "#trending" in caption
+    assert "Breaking" not in caption
+    assert "example.com" not in caption
+
+
+def test_instagram_falls_back_to_short_description():
+    caption = build_instagram_caption(_ctx(story_caption=None))
+    assert "Short card blurb." in caption
+    assert "#news" in caption
 
 
 def test_instagram_truncates_at_2200():
@@ -37,25 +47,20 @@ def test_instagram_truncates_at_2200():
     assert len(caption) <= 2200
 
 
-def test_x_respects_280_char_limit():
-    text = build_x_text(
-        _ctx(
-            headline="H" * 200,
-            short_description="D" * 200,
-            hashtags=["tag"] * 20,
-            source_url="https://example.com/long-path",
-        )
-    )
+def test_x_image_card_story_and_hashtags_respects_280_char_limit():
+    text = build_x_text(_ctx(hashtags=["tag"] * 50, story_caption="S" * 300))
     assert len(text) <= 280
+    assert "Breaking" not in text
+    assert "example.com" not in text
 
 
-def test_x_includes_headline_and_hashtags():
+def test_x_includes_story_and_hashtags():
     text = build_x_text(_ctx())
-    assert "Breaking News Headline" in text
+    assert "Longer story caption" in text
     assert "#news" in text
 
 
-def test_linkedin_story_without_duplicate_url_in_text():
+def test_linkedin_story_without_url_in_text():
     text = build_linkedin_text(_ctx())
     assert "Longer story caption" in text
     assert "example.com" not in text
@@ -67,14 +72,28 @@ def test_pinterest_description_story_plus_tags():
     assert "#news" in desc
 
 
+def test_mastodon_story_and_hashtags_no_source_url():
+    text = build_mastodon_text(_ctx())
+    assert "Longer story caption" in text
+    assert "#news" in text
+    assert "example.com" not in text
+    assert "Breaking" not in text
+
+
+def test_pinterest_title_strips_highlight_markup():
+    copy = build_platform_copy("pinterest", _ctx())
+    assert copy["title"] == "Breaking News Headline"
+    assert "Longer story caption" in (copy.get("description") or "")
+
+
 def test_facebook_message_headline_and_story():
     msg = build_facebook_message(_ctx())
-    assert "Breaking News Headline" in msg
+    assert "Breaking **News** Headline" in msg
     assert "Longer story caption" in msg
 
 
 def test_reddit_title_is_headline():
-    assert build_reddit_title(_ctx()) == "Breaking News Headline"
+    assert build_reddit_title(_ctx()) == "Breaking **News** Headline"
 
 
 class _FakeHistory:
@@ -88,5 +107,6 @@ class _FakeHistory:
 def test_publish_context_from_history():
     ctx = publish_context_from_history(_FakeHistory())
     assert ctx.headline == "Headline"
+    assert ctx.story_caption == "Story"
     assert ctx.source_url == "https://news.test/item"
     assert ctx.hashtags == ["a", "b"]

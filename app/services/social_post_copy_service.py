@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -37,79 +38,59 @@ def _truncate(text: str, max_len: int, *, suffix: str = "…") -> str:
     return text[: max_len - len(suffix)] + suffix
 
 
-def build_instagram_caption(ctx: PublishCopyContext) -> str:
-    """Story caption (fallback: short description) + blank line + hashtags; append source URL if room."""
-    body = (ctx.story_caption or ctx.short_description or ctx.headline or "").strip()
-    tags = _hashtag_line(ctx.hashtags)
+def _strip_highlight_markup(text: str) -> str:
+    """Remove Pro 1 `**phrase**` markers; headline text lives on the image card."""
+    return re.sub(r"\*\*([^*]+)\*\*", r"\1", (text or "").strip())
+
+
+def _story_body(ctx: PublishCopyContext) -> str:
+    """Story caption from Post Insights; fallback to short description."""
+    return (ctx.story_caption or ctx.short_description or "").strip()
+
+
+def _build_image_card_caption(ctx: PublishCopyContext, *, max_len: int | None = None) -> str:
+    """Image-card posts: story caption + hashtags (headline and article link are on/in the PNG)."""
     parts: list[str] = []
+    body = _story_body(ctx)
     if body:
         parts.append(body)
+    tags = _hashtag_line(ctx.hashtags)
     if tags:
         parts.append(tags)
     caption = "\n\n".join(parts)
+    if max_len is not None:
+        return _truncate(caption, max_len)
+    return caption
 
-    source = (ctx.source_url or "").strip()
-    if source:
-        candidate = f"{caption}\n\n{source}" if caption else source
-        if len(candidate) <= INSTAGRAM_MAX:
-            caption = candidate
-        elif len(caption) + len(source) + 2 <= INSTAGRAM_MAX:
-            caption = f"{caption}\n\n{source}"
 
-    return _truncate(caption, INSTAGRAM_MAX)
+def build_instagram_caption(ctx: PublishCopyContext) -> str:
+    """Story caption + hashtags; headline is rendered on the uploaded image."""
+    return _build_image_card_caption(ctx, max_len=INSTAGRAM_MAX)
 
 
 def build_x_text(ctx: PublishCopyContext) -> str:
-    """Headline + short desc; hashtags inline; respect 280 chars."""
-    parts: list[str] = []
-    headline = (ctx.headline or "").strip()
-    if headline:
-        parts.append(headline)
-    short = (ctx.short_description or "").strip()
-    if short:
-        parts.append(short)
-    tags = _hashtag_line(ctx.hashtags)
-    if tags:
-        parts.append(tags)
-    source = (ctx.source_url or "").strip()
-    if source:
-        parts.append(source)
-    text = "\n\n".join(parts)
-    return _truncate(text, X_MAX)
+    """Story caption + hashtags when posting with the image card; respect 280 chars."""
+    return _build_image_card_caption(ctx, max_len=X_MAX)
 
 
 def build_linkedin_text(ctx: PublishCopyContext) -> str:
     """Story + hashtags; article link handled separately by LinkedIn share API."""
-    parts: list[str] = []
-    story = (ctx.story_caption or ctx.short_description or ctx.headline or "").strip()
-    if story:
-        parts.append(story)
-    tags = _hashtag_line(ctx.hashtags)
-    if tags:
-        parts.append(tags)
-    return "\n\n".join(parts)
+    return _build_image_card_caption(ctx)
 
 
 def build_pinterest_description(ctx: PublishCopyContext) -> str:
-    """Description = story + hashtags."""
-    parts: list[str] = []
-    story = (ctx.story_caption or ctx.short_description or "").strip()
-    if story:
-        parts.append(story)
-    tags = _hashtag_line(ctx.hashtags)
-    if tags:
-        parts.append(tags)
-    return "\n\n".join(parts)
+    """Story caption + hashtags; headline is on the pin image."""
+    return _build_image_card_caption(ctx)
 
 
 def build_mastodon_text(ctx: PublishCopyContext) -> str:
-    """Headline + story + hashtags + URL."""
-    return _build_long_form_post(ctx)
+    """Story caption + hashtags when posting with the image card."""
+    return _build_image_card_caption(ctx)
 
 
 def build_bluesky_text(ctx: PublishCopyContext) -> str:
-    """Headline + story + hashtags + URL."""
-    return _build_long_form_post(ctx)
+    """Story caption + hashtags when posting with the image card."""
+    return _build_image_card_caption(ctx)
 
 
 def build_facebook_message(ctx: PublishCopyContext) -> str:
@@ -158,15 +139,21 @@ def build_platform_copy(platform: str, ctx: PublishCopyContext) -> dict[str, str
     """Return platform-specific copy fields used by publishers."""
     platform = platform.lower()
     if platform == "instagram":
-        return {"caption": build_instagram_caption(ctx), "title": ctx.headline}
+        return {
+            "caption": build_instagram_caption(ctx),
+            "title": _strip_highlight_markup(ctx.headline),
+        }
     if platform == "x":
         return {"text": build_x_text(ctx)}
     if platform == "linkedin":
         return {"text": build_linkedin_text(ctx)}
     if platform == "pinterest":
-        return {"title": ctx.headline, "description": build_pinterest_description(ctx)}
+        return {
+            "title": _strip_highlight_markup(ctx.headline),
+            "description": build_pinterest_description(ctx),
+        }
     if platform in ("mastodon", "bluesky"):
-        return {"text": _build_long_form_post(ctx)}
+        return {"text": _build_image_card_caption(ctx)}
     if platform == "facebook":
         return {"message": build_facebook_message(ctx)}
     if platform == "reddit":

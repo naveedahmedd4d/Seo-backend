@@ -48,7 +48,7 @@ async def publish_to_platform(
             user_id,
             title=str(copy.get("title") or ctx.headline),
             description=copy.get("description"),
-            source_url=ctx.source_url,
+            source_url=None,
             image_url=image_url,
             platform_options=platform_options,
         )
