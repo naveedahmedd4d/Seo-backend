@@ -9,39 +9,34 @@ from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.social_post_history import SocialPostHistory
+from app.models.social_post_publication import SocialPostPublication
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 from app.services.news_research_service import (
     build_news_bundle,
     estimate_engagement_score,
     suggested_platforms_for_headline,
 )
-from app.services.pinterest_service import create_pin, get_valid_pinterest_access_token
-from app.services.x_service import create_tweet, get_valid_x_access_token
-from app.services.mastodon_service import (
-    create_status,
-    get_valid_mastodon_access_token,
-    upload_media,
-)
-from app.services.bluesky_service import create_post, get_valid_bluesky_session, upload_blob
-from app.services.devto_service import create_article as create_devto_article, get_devto_api_key
-from app.services.hashnode_service import get_hashnode_token, publish_article as publish_hashnode_article
-from app.services.blogger_service import create_post as create_blogger_post, get_valid_blogger_access_token
-from app.services.reddit_service import get_valid_reddit_access_token, submit_link_post
-from app.services.linkedin_service import create_text_share, get_valid_linkedin_access_token
-from app.services.facebook_service import get_valid_facebook_page_context, publish_page_post
-from app.services.instagram_service import get_valid_instagram_context, publish_instagram_image_post
 from app.services.http_ssl import httpx_verify
-from app.services.social_account_service import get_account_metadata, get_user_social_account
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
+from app.services.social_post_publish_service import (
+    HistoryNotFoundError,
+    MediaRequiredError,
+    ensure_media_saved,
+    load_history_post,
+    publish_history_post,
+)
 from app.schemas.social_post import (
     SocialPostGenerateRequest,
     SocialPostGenerateResponse,
     NewsResultItem,
     SocialPostHistorySaveRequest,
     SocialPostHistoryItemResponse,
+    SocialPostHistoryDetailResponse,
+    SocialPostHistoryPublishRequest,
+    SocialPostHistoryMediaRequest,
+    SocialPostPublicationResponse,
     SocialPostPublishRequest,
     SocialPostPublishResponse,
-    SocialPostPublishResultItem,
     SocialPostImageUploadRequest,
     SocialPostImageUploadResponse,
     SocialPostFetchImageRequest,
@@ -55,6 +50,51 @@ router = APIRouter()
 
 MAX_FETCH_IMAGE_BYTES = 15 * 1024 * 1024
 _BLOCKED_IMAGE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _history_item_response(
+    record: SocialPostHistory,
+    publications: list[SocialPostPublication] | None = None,
+) -> SocialPostHistoryItemResponse:
+    pubs = publications if publications is not None else list(getattr(record, "publications", []) or [])
+    platforms_published = sorted({p.platform for p in pubs if p.status == "success"})
+    media_filename = getattr(record, "media_filename", None)
+    return SocialPostHistoryItemResponse(
+        id=record.id,
+        query=record.query,
+        headline=record.headline,
+        description=getattr(record, "description", None),
+        story_description=getattr(record, "story_description", None),
+        hashtags=getattr(record, "hashtags", None),
+        settings_snapshot=record.settings_snapshot,
+        news_results=record.news_results,
+        media_filename=media_filename,
+        media_url=public_image_url(media_filename) if media_filename else None,
+        publish_status=getattr(record, "publish_status", None) or "draft",
+        published_at=record.published_at.isoformat() if getattr(record, "published_at", None) else None,
+        platforms_published=platforms_published or None,
+        created_at=record.created_at.isoformat() if record.created_at else "",
+        updated_at=record.updated_at.isoformat() if getattr(record, "updated_at", None) else None,
+    )
+
+
+def _history_detail_response(record: SocialPostHistory) -> SocialPostHistoryDetailResponse:
+    base = _history_item_response(record)
+    pubs = list(getattr(record, "publications", []) or [])
+    return SocialPostHistoryDetailResponse(
+        **base.model_dump(),
+        publications=[
+            SocialPostPublicationResponse(
+                platform=p.platform,
+                status=p.status,
+                external_id=p.external_id,
+                external_url=p.external_url,
+                error=p.error,
+                published_at=p.published_at.isoformat() if p.published_at else None,
+            )
+            for p in pubs
+        ],
+    )
 
 
 def _validate_remote_image_url(url: str) -> str:
@@ -276,18 +316,18 @@ async def get_social_post_history(
             .limit(limit)
             .all()
         )
-        return [
-            SocialPostHistoryItemResponse(
-                id=r.id,
-                query=r.query,
-                headline=r.headline,
-                description=getattr(r, "description", None),
-                story_description=getattr(r, "story_description", None),
-                hashtags=getattr(r, "hashtags", None),
-                settings_snapshot=r.settings_snapshot,
-                news_results=r.news_results,
-                created_at=r.created_at.isoformat() if r.created_at else "",
+        history_ids = [r.id for r in rows]
+        pubs_by_history: dict[int, list[SocialPostPublication]] = {}
+        if history_ids:
+            pub_rows = (
+                db.query(SocialPostPublication)
+                .filter(SocialPostPublication.history_id.in_(history_ids))
+                .all()
             )
+            for pub in pub_rows:
+                pubs_by_history.setdefault(pub.history_id, []).append(pub)
+        return [
+            _history_item_response(r, publications=pubs_by_history.get(r.id, []))
             for r in rows
         ]
     except Exception as e:
@@ -318,22 +358,94 @@ async def save_social_post_to_history(
         db.add(record)
         db.commit()
         db.refresh(record)
-        return SocialPostHistoryItemResponse(
-            id=record.id,
-            query=record.query,
-            headline=record.headline,
-            description=getattr(record, "description", None),
-            story_description=getattr(record, "story_description", None),
-            hashtags=getattr(record, "hashtags", None),
-            settings_snapshot=record.settings_snapshot,
-            news_results=record.news_results,
-            created_at=record.created_at.isoformat() if record.created_at else "",
-        )
+        return _history_item_response(record)
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error saving social post to history: {str(e)}",
+        )
+
+
+@router.get("/history/{history_id}", response_model=SocialPostHistoryDetailResponse)
+async def get_social_post_history_item(
+    history_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        history = load_history_post(db, current_user.id, history_id)
+        pubs = (
+            db.query(SocialPostPublication)
+            .filter(SocialPostPublication.history_id == history_id)
+            .all()
+        )
+        history.publications = pubs
+        return _history_detail_response(history)
+    except HistoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching social post history item: {str(e)}",
+        )
+
+
+@router.post("/history/{history_id}/media", response_model=SocialPostImageUploadResponse)
+async def save_social_post_history_media(
+    history_id: int,
+    request: SocialPostHistoryMediaRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        history = load_history_post(db, current_user.id, history_id)
+        filename, url = ensure_media_saved(db, history, request.image_base64)
+        return SocialPostImageUploadResponse(filename=filename, url=url)
+    except HistoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error saving media: {str(e)}",
+        )
+
+
+@router.post("/history/{history_id}/publish", response_model=SocialPostPublishResponse)
+async def publish_social_post_from_history(
+    history_id: int,
+    request: SocialPostHistoryPublishRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not request.platforms:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one platform")
+    try:
+        results, history, media_url = await publish_history_post(
+            db,
+            current_user.id,
+            history_id,
+            request.platforms,
+            image_base64=request.image_base64,
+            platform_options=request.platform_options,
+        )
+        return SocialPostPublishResponse(
+            results=results,
+            history_status=history.publish_status,
+            media_url=media_url,
+        )
+    except HistoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
+    except MediaRequiredError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error publishing social post: {str(e)}",
         )
 
 
@@ -367,762 +479,13 @@ async def get_social_post_media(filename: str):
     return FileResponse(path, media_type="image/png")
 
 
-@router.post("/publish", response_model=SocialPostPublishResponse)
-async def publish_social_post(
+@router.post("/publish", response_model=SocialPostPublishResponse, deprecated=True)
+async def publish_social_post_legacy(
     request: SocialPostPublishRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
 ):
-    if not request.platforms:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one platform")
-
-    image_url = None
-    if request.image_base64:
-        try:
-            filename = save_png_base64(request.image_base64)
-            image_url = public_image_url(filename)
-        except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    description_parts = [request.description or "", request.story_description or ""]
-    if request.hashtags:
-        description_parts.append(" ".join(request.hashtags))
-    combined_description = "\n\n".join(p for p in description_parts if p.strip()) or None
-
-    results: list[SocialPostPublishResultItem] = []
-
-    for platform in request.platforms:
-        if platform == "pinterest":
-            results.append(
-                await _publish_to_pinterest(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    image_url=image_url,
-                    platform_options=(
-                        request.platform_options.pinterest
-                        if request.platform_options and request.platform_options.pinterest
-                        else {}
-                    ),
-                )
-            )
-        elif platform == "x":
-            results.append(
-                await _publish_to_x(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                )
-            )
-        elif platform == "mastodon":
-            results.append(
-                await _publish_to_mastodon(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    image_url=image_url,
-                )
-            )
-        elif platform == "bluesky":
-            results.append(
-                await _publish_to_bluesky(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    image_url=image_url,
-                )
-            )
-        elif platform == "devto":
-            results.append(
-                await _publish_to_devto(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                )
-            )
-        elif platform == "hashnode":
-            results.append(
-                await _publish_to_hashnode(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                )
-            )
-        elif platform == "blogger":
-            results.append(
-                await _publish_to_blogger(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    platform_options=(
-                        request.platform_options.blogger
-                        if request.platform_options and request.platform_options.blogger
-                        else {}
-                    ),
-                )
-            )
-        elif platform == "reddit":
-            results.append(
-                await _publish_to_reddit(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    image_url=image_url,
-                    platform_options=(
-                        request.platform_options.reddit
-                        if request.platform_options and request.platform_options.reddit
-                        else {}
-                    ),
-                )
-            )
-        elif platform == "linkedin":
-            results.append(
-                await _publish_to_linkedin(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                )
-            )
-        elif platform == "facebook":
-            results.append(
-                await _publish_to_facebook(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    platform_options=(
-                        request.platform_options.facebook
-                        if request.platform_options and request.platform_options.facebook
-                        else {}
-                    ),
-                )
-            )
-        elif platform == "instagram":
-            results.append(
-                await _publish_to_instagram(
-                    db,
-                    current_user.id,
-                    headline=request.headline,
-                    description=combined_description,
-                    source_url=request.source_url,
-                    image_url=image_url,
-                    platform_options=(
-                        request.platform_options.instagram
-                        if request.platform_options and request.platform_options.instagram
-                        else {}
-                    ),
-                )
-            )
-        else:
-            results.append(
-                SocialPostPublishResultItem(
-                    platform=platform,
-                    success=False,
-                    error="Platform publishing is not implemented yet",
-                )
-            )
-
-    return SocialPostPublishResponse(results=results)
-
-
-async def _publish_to_pinterest(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    image_url: str | None,
-    platform_options: dict,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "pinterest")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="pinterest",
-            success=False,
-            error="Pinterest account not connected",
-        )
-
-    if not image_url:
-        return SocialPostPublishResultItem(
-            platform="pinterest",
-            success=False,
-            error="Image is required for Pinterest pins",
-        )
-
-    metadata = get_account_metadata(account)
-    board_id = platform_options.get("board_id") or metadata.get("default_board_id")
-    if not board_id:
-        return SocialPostPublishResultItem(
-            platform="pinterest",
-            success=False,
-            error="No Pinterest board selected. Choose a default board in Social accounts.",
-        )
-
-    try:
-        access_token = await get_valid_pinterest_access_token(db, user_id)
-        pin = await create_pin(
-            access_token,
-            board_id=str(board_id),
-            title=headline,
-            description=description,
-            link=source_url,
-            image_url=image_url,
-        )
-        pin_id = pin.get("id")
-        return SocialPostPublishResultItem(
-            platform="pinterest",
-            success=True,
-            external_id=str(pin_id) if pin_id else None,
-            external_url=f"https://www.pinterest.com/pin/{pin_id}/" if pin_id else None,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="pinterest",
-            success=False,
-            error=str(exc),
-        )
-
-
-def _build_post_text(headline: str, description: str | None, source_url: str | None) -> str:
-    parts = [headline.strip()]
-    if description and description.strip():
-        parts.append(description.strip())
-    if source_url and source_url.strip():
-        parts.append(source_url.strip())
-    return "\n\n".join(parts)
-
-
-async def _download_image_bytes(image_url: str) -> bytes:
-    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        response = await client.get(image_url)
-    response.raise_for_status()
-    return response.content
-
-
-async def _publish_to_x(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "x")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="x",
-            success=False,
-            error="X account not connected",
-        )
-
-    text = _build_post_text(headline, description, source_url)
-    try:
-        access_token = await get_valid_x_access_token(db, user_id)
-        tweet = await create_tweet(access_token, text)
-        tweet_id = tweet.get("id")
-        metadata = get_account_metadata(account)
-        username = metadata.get("username")
-        external_url = (
-            f"https://x.com/{username}/status/{tweet_id}"
-            if username and tweet_id
-            else (f"https://x.com/i/web/status/{tweet_id}" if tweet_id else None)
-        )
-        return SocialPostPublishResultItem(
-            platform="x",
-            success=True,
-            external_id=str(tweet_id) if tweet_id else None,
-            external_url=external_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="x",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_mastodon(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    image_url: str | None,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "mastodon")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="mastodon",
-            success=False,
-            error="Mastodon account not connected",
-        )
-
-    status_text = _build_post_text(headline, description, source_url)
-    try:
-        access_token, instance_url = await get_valid_mastodon_access_token(db, user_id)
-        media_ids: list[str] = []
-        if image_url:
-            image_bytes = await _download_image_bytes(image_url)
-            media_ids.append(
-                await upload_media(instance_url, access_token, image_bytes)
-            )
-        status = await create_status(
-            instance_url,
-            access_token,
-            status=status_text,
-            media_ids=media_ids or None,
-        )
-        status_id = status.get("id")
-        return SocialPostPublishResultItem(
-            platform="mastodon",
-            success=True,
-            external_id=str(status_id) if status_id else None,
-            external_url=status.get("url"),
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="mastodon",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_bluesky(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    image_url: str | None,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "bluesky")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="bluesky",
-            success=False,
-            error="Bluesky account not connected",
-        )
-
-    text = _build_post_text(headline, description, source_url)
-    try:
-        access_jwt, did = await get_valid_bluesky_session(db, user_id)
-        embed = None
-        if image_url:
-            image_bytes = await _download_image_bytes(image_url)
-            blob = await upload_blob(access_jwt, image_bytes)
-            if blob:
-                embed = {
-                    "$type": "app.bsky.embed.images",
-                    "images": [
-                        {
-                            "alt": headline[:1000],
-                            "image": blob,
-                        }
-                    ],
-                }
-        result = await create_post(
-            access_jwt,
-            did=did,
-            text=text,
-            embed=embed,
-        )
-        uri = result.get("uri")
-        handle = get_account_metadata(account).get("handle")
-        external_url = None
-        if uri and handle:
-            rkey = uri.rsplit("/", 1)[-1]
-            external_url = f"https://bsky.app/profile/{handle}/post/{rkey}"
-        return SocialPostPublishResultItem(
-            platform="bluesky",
-            success=True,
-            external_id=uri,
-            external_url=external_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="bluesky",
-            success=False,
-            error=str(exc),
-        )
-
-
-def _build_article_markdown(
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> str:
-    parts = [f"# {headline.strip()}"]
-    if description and description.strip():
-        parts.append(description.strip())
-    if source_url and source_url.strip():
-        parts.append(f"[Read more]({source_url.strip()})")
-    return "\n\n".join(parts)
-
-
-def _build_article_html(
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> str:
-    html_parts = [f"<h1>{headline.strip()}</h1>"]
-    if description and description.strip():
-        for paragraph in description.strip().split("\n\n"):
-            html_parts.append(f"<p>{paragraph.strip()}</p>")
-    if source_url and source_url.strip():
-        html_parts.append(f'<p><a href="{source_url.strip()}">Read more</a></p>')
-    return "\n".join(html_parts)
-
-
-async def _publish_to_devto(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> SocialPostPublishResultItem:
-    try:
-        api_key = get_devto_api_key(db, user_id)
-        article = await create_devto_article(
-            api_key,
-            title=headline,
-            body_markdown=_build_article_markdown(headline, description, source_url),
-        )
-        article_id = article.get("id")
-        article_url = article.get("url")
-        return SocialPostPublishResultItem(
-            platform="devto",
-            success=True,
-            external_id=str(article_id) if article_id else None,
-            external_url=article_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="devto",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_hashnode(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> SocialPostPublishResultItem:
-    try:
-        token = get_hashnode_token(db, user_id)
-        post = await publish_hashnode_article(
-            token,
-            title=headline,
-            content_markdown=_build_article_markdown(headline, description, source_url),
-        )
-        return SocialPostPublishResultItem(
-            platform="hashnode",
-            success=True,
-            external_id=str(post.get("id")) if post.get("id") else None,
-            external_url=post.get("url"),
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="hashnode",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_blogger(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    platform_options: dict,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "blogger")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="blogger",
-            success=False,
-            error="Blogger account not connected",
-        )
-
-    metadata = get_account_metadata(account)
-    blog_id = platform_options.get("blog_id") or metadata.get("default_blog_id")
-    if not blog_id:
-        return SocialPostPublishResultItem(
-            platform="blogger",
-            success=False,
-            error="No Blogger blog selected. Choose a default blog in Social accounts.",
-        )
-
-    try:
-        access_token = await get_valid_blogger_access_token(db, user_id)
-        post = await create_blogger_post(
-            access_token,
-            blog_id=str(blog_id),
-            title=headline,
-            content=_build_article_html(headline, description, source_url),
-        )
-        post_id = post.get("id")
-        return SocialPostPublishResultItem(
-            platform="blogger",
-            success=True,
-            external_id=str(post_id) if post_id else None,
-            external_url=post.get("url"),
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="blogger",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_reddit(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    image_url: str | None,
-    platform_options: dict,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "reddit")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="reddit",
-            success=False,
-            error="Reddit account not connected",
-        )
-
-    metadata = get_account_metadata(account)
-    subreddit = platform_options.get("subreddit") or metadata.get("default_subreddit")
-    if not subreddit:
-        return SocialPostPublishResultItem(
-            platform="reddit",
-            success=False,
-            error="No subreddit selected. Choose a default subreddit in Social accounts.",
-        )
-
-    post_url = source_url or image_url
-    if not post_url:
-        return SocialPostPublishResultItem(
-            platform="reddit",
-            success=False,
-            error="A source link or image URL is required for Reddit link posts",
-        )
-
-    try:
-        access_token, credentials, username = await get_valid_reddit_access_token(db, user_id)
-        result = await submit_link_post(
-            access_token,
-            credentials,
-            subreddit=str(subreddit),
-            title=headline,
-            url=post_url,
-            username=username or None,
-        )
-        json_data = result.get("json", {}).get("data", {})
-        post_id = json_data.get("id") or json_data.get("name")
-        post_url_result = json_data.get("url")
-        if not post_url_result and post_id:
-            post_url_result = f"https://www.reddit.com/comments/{post_id.removeprefix('t3_')}/"
-        return SocialPostPublishResultItem(
-            platform="reddit",
-            success=True,
-            external_id=str(post_id) if post_id else None,
-            external_url=post_url_result,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="reddit",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_linkedin(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "linkedin")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="linkedin",
-            success=False,
-            error="LinkedIn account not connected",
-        )
-
-    text = _build_post_text(headline, description, None)
-    if source_url and source_url.strip():
-        text = f"{text}\n\n{source_url.strip()}" if text else source_url.strip()
-
-    try:
-        access_token, person_urn = await get_valid_linkedin_access_token(db, user_id)
-        result = await create_text_share(
-            access_token,
-            person_urn=person_urn,
-            text=text,
-            article_url=source_url,
-        )
-        post_id = result.get("id")
-        external_url = None
-        if post_id:
-            external_url = f"https://www.linkedin.com/feed/update/{post_id}/"
-        return SocialPostPublishResultItem(
-            platform="linkedin",
-            success=True,
-            external_id=str(post_id) if post_id else None,
-            external_url=external_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="linkedin",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_facebook(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    platform_options: dict,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "facebook")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="facebook",
-            success=False,
-            error="Facebook account not connected",
-        )
-
-    message = _build_post_text(headline, description, None)
-    link = source_url
-    if not link:
-        return SocialPostPublishResultItem(
-            platform="facebook",
-            success=False,
-            error="A source link is required for Facebook Page posts",
-        )
-
-    try:
-        page_id, _page_name, page_token = await get_valid_facebook_page_context(
-            db,
-            user_id,
-            page_id=platform_options.get("page_id"),
-        )
-        result = await publish_page_post(
-            page_token,
-            page_id=page_id,
-            message=message,
-            link=link,
-        )
-        post_id = result.get("id")
-        external_url = f"https://www.facebook.com/{post_id}" if post_id else None
-        return SocialPostPublishResultItem(
-            platform="facebook",
-            success=True,
-            external_id=str(post_id) if post_id else None,
-            external_url=external_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="facebook",
-            success=False,
-            error=str(exc),
-        )
-
-
-async def _publish_to_instagram(
-    db: Session,
-    user_id: int,
-    *,
-    headline: str,
-    description: str | None,
-    source_url: str | None,
-    image_url: str | None,
-    platform_options: dict,
-) -> SocialPostPublishResultItem:
-    account = get_user_social_account(db, user_id, "instagram")
-    if not account:
-        return SocialPostPublishResultItem(
-            platform="instagram",
-            success=False,
-            error="Instagram account not connected",
-        )
-
-    if not image_url:
-        return SocialPostPublishResultItem(
-            platform="instagram",
-            success=False,
-            error="Image is required for Instagram posts",
-        )
-
-    caption_parts = [headline.strip()]
-    if description and description.strip():
-        caption_parts.append(description.strip())
-    if source_url and source_url.strip():
-        caption_parts.append(source_url.strip())
-    caption = "\n\n".join(caption_parts)
-
-    try:
-        ig_id, username, page_token = await get_valid_instagram_context(
-            db,
-            user_id,
-            instagram_id=platform_options.get("instagram_id"),
-        )
-        result = await publish_instagram_image_post(
-            ig_id,
-            page_token,
-            image_url=image_url,
-            caption=caption,
-        )
-        media_id = result.get("id")
-        external_url = f"https://www.instagram.com/{username}/" if username else None
-        return SocialPostPublishResultItem(
-            platform="instagram",
-            success=True,
-            external_id=str(media_id) if media_id else None,
-            external_url=external_url,
-        )
-    except Exception as exc:
-        return SocialPostPublishResultItem(
-            platform="instagram",
-            success=False,
-            error=str(exc),
-        )
+    """Deprecated: save to history and use POST /history/{history_id}/publish."""
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Use POST /api/social-post/history/{history_id}/publish instead. Save the post to history first.",
+    )

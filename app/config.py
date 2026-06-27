@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     instagram_redirect_uri: Optional[str] = None
     reddit_user_agent: Optional[str] = None
 
+    # Optional server-wide social app creds (unused — users enter per-account creds in UI).
+    # Declared so placeholder values in .env do not break startup.
+    linkedin_client_id: Optional[str] = None
+    linkedin_client_secret: Optional[str] = None
+    meta_app_id: Optional[str] = None
+    meta_app_secret: Optional[str] = None
+
     # Google Search Console OAuth
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
@@ -67,6 +74,7 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": str(_ENV_FILE),
         "case_sensitive": False,
+        "extra": "ignore",
     }
 
 

@@ -25,7 +25,8 @@ X_AUTH_URL = "https://twitter.com/i/oauth2/authorize"
 X_TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
 X_API_BASE = "https://api.twitter.com/2"
 
-X_SCOPES = "tweet.read tweet.write users.read offline.access"
+X_SCOPES = "tweet.read tweet.write users.read offline.access media.write"
+X_MEDIA_UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json"
 
 
 def build_authorization_url(
@@ -119,12 +120,38 @@ async def fetch_user_profile(access_token: str) -> dict[str, Any]:
     return response.json().get("data") or {}
 
 
-async def create_tweet(access_token: str, text: str) -> dict[str, Any]:
+async def upload_media(access_token: str, image_bytes: bytes, media_type: str = "image/png") -> str:
+    """Upload image via Twitter v1.1 simple upload; returns media_id_string."""
+    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
+        response = await client.post(
+            X_MEDIA_UPLOAD_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            files={"media": ("image.png", image_bytes, media_type)},
+        )
+    if response.status_code >= 400:
+        logger.error("X media upload failed: %s", response.text)
+        response.raise_for_status()
+    payload = response.json()
+    media_id = payload.get("media_id_string") or payload.get("media_id")
+    if not media_id:
+        raise ValueError("X media upload did not return media_id")
+    return str(media_id)
+
+
+async def create_tweet(
+    access_token: str,
+    text: str,
+    *,
+    media_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    body: dict[str, Any] = {"text": text[:280]}
+    if media_ids:
+        body["media"] = {"media_ids": media_ids}
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
         response = await client.post(
             f"{X_API_BASE}/tweets",
             headers={"Authorization": f"Bearer {access_token}"},
-            json={"text": text[:280]},
+            json=body,
         )
     if response.status_code >= 400:
         logger.error("X tweet failed: %s", response.text)

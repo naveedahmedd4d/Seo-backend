@@ -111,9 +111,10 @@ Examples: AI news, weather today, election results, sports scores."""
         existing = db.query(TrendingKeywords).filter(
             TrendingKeywords.keyword == keyword,
             TrendingKeywords.fetched_at >= cutoff_time,
+            TrendingKeywords.source == "trending",
         ).first()
         if not existing:
-            db.add(TrendingKeywords(keyword=keyword, data=keyword_data))
+            db.add(TrendingKeywords(keyword=keyword, data=keyword_data, source="trending"))
     db.commit()
     return get_trending_keywords_from_db(db, hours)
 
@@ -208,14 +209,16 @@ async def fetch_trending_keywords(
                     # Check if this keyword already exists in the time window
                     existing = db.query(TrendingKeywords).filter(
                         TrendingKeywords.keyword == keyword,
-                        TrendingKeywords.fetched_at >= cutoff_time
+                        TrendingKeywords.fetched_at >= cutoff_time,
+                        TrendingKeywords.source == "trending",
                     ).first()
                     
                     # Only add if it doesn't exist in the current window
                     if not existing:
                         trending = TrendingKeywords(
                             keyword=keyword,
-                            data=keyword_data
+                            data=keyword_data,
+                            source="trending",
                         )
                         db.add(trending)
             
@@ -429,7 +432,8 @@ def get_trending_keywords_from_db(
     """Get trending keywords from database cache, optionally filtered by category"""
     cutoff_time = datetime.utcnow() - timedelta(hours=hours)
     query = db.query(TrendingKeywords).filter(
-        TrendingKeywords.fetched_at >= cutoff_time
+        TrendingKeywords.fetched_at >= cutoff_time,
+        TrendingKeywords.source == "trending",
     )
     
     # Filter by category if provided
@@ -444,7 +448,9 @@ def get_trending_keywords_from_db(
         "data": k.data,
         "category": k.category,
         "fetched_at": k.fetched_at.isoformat() if k.fetched_at else None,
-        "blog_workflow_id": k.blog_workflow_id,
+        "bio_blog_workflow_id": k.bio_blog_workflow_id if k.bio_blog_workflow_id is not None else k.blog_workflow_id,
+        "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
+        "source": k.source,
     } for k in keywords]
 
 
@@ -600,7 +606,12 @@ def get_used_trending_keywords_from_db(
 ) -> List[Dict[str, Any]]:
     """Get all trending keywords that have a blog generated (no time limit)."""
     query = db.query(TrendingKeywords).filter(
-        TrendingKeywords.blog_workflow_id.isnot(None)
+        (
+            (TrendingKeywords.bio_blog_workflow_id.isnot(None))
+            | (TrendingKeywords.net_worth_blog_workflow_id.isnot(None))
+            | (TrendingKeywords.blog_workflow_id.isnot(None))
+        ),
+        TrendingKeywords.source == "trending",
     )
     if category:
         query = query.filter(TrendingKeywords.category == category)
@@ -611,6 +622,8 @@ def get_used_trending_keywords_from_db(
         "data": k.data,
         "category": k.category,
         "fetched_at": k.fetched_at.isoformat() if k.fetched_at else None,
-        "blog_workflow_id": k.blog_workflow_id,
+        "bio_blog_workflow_id": k.bio_blog_workflow_id if k.bio_blog_workflow_id is not None else k.blog_workflow_id,
+        "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
+        "source": k.source,
     } for k in keywords]
 

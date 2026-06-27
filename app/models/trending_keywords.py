@@ -12,4 +12,7 @@ class TrendingKeywords(Base):
     fetched_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     category = Column(String, nullable=True, index=True)
     blog_workflow_id = Column(Integer, nullable=True, index=True)
+    bio_blog_workflow_id = Column(Integer, nullable=True, index=True)
+    net_worth_blog_workflow_id = Column(Integer, nullable=True, index=True)
+    source = Column(String, nullable=False, server_default="trending", index=True)
 

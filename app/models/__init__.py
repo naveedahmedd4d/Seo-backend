@@ -7,6 +7,7 @@ from app.models.trending_keywords import TrendingKeywords
 from app.models.image_search_history import ImageSearchHistory
 from app.models.published_post import PublishedPost
 from app.models.social_post_history import SocialPostHistory
+from app.models.social_post_publication import SocialPostPublication
 from app.models.social_account import SocialAccount
 from app.models.social_platform_app import SocialPlatformApp
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
@@ -39,6 +40,7 @@ __all__ = [
     "ImageSearchHistory",
     "PublishedPost",
     "SocialPostHistory",
+    "SocialPostPublication",
     "SocialAccount",
     "SocialPlatformApp",
     "SocialPostTemplatePrefs",

@@ -1,6 +1,6 @@
 """add GSC search console tables
 
-Revision ID: n1o2p3q4r5s6
+Revision ID: o2p3q4r5s6t7
 Revises: m0n1o2p3q4r5
 Create Date: 2026-06-22
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 
-revision = "n1o2p3q4r5s6"
+revision = "o2p3q4r5s6t7"
 down_revision = "m0n1o2p3q4r5"
 branch_labels = None
 depends_on = None

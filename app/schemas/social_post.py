@@ -47,10 +47,39 @@ class SocialPostHistoryItemResponse(BaseModel):
     hashtags: Optional[List[str]] = None
     settings_snapshot: Optional[dict[str, Any]] = None
     news_results: Optional[List[dict[str, Any]]] = None
+    media_filename: Optional[str] = None
+    media_url: Optional[str] = None
+    publish_status: Optional[str] = "draft"
+    published_at: Optional[str] = None
+    platforms_published: Optional[List[str]] = None
     created_at: str
+    updated_at: Optional[str] = None
 
     class Config:
         from_attributes = True
+
+
+class SocialPostPublicationResponse(BaseModel):
+    platform: str
+    status: str
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error: Optional[str] = None
+    published_at: Optional[str] = None
+
+
+class SocialPostHistoryDetailResponse(SocialPostHistoryItemResponse):
+    publications: List[SocialPostPublicationResponse] = []
+
+
+class SocialPostHistoryPublishRequest(BaseModel):
+    platforms: List[str]
+    image_base64: Optional[str] = None
+    platform_options: Optional["SocialPostPublishPlatformOptions"] = None
+
+
+class SocialPostHistoryMediaRequest(BaseModel):
+    image_base64: str
 
 
 class SocialPostPublishPlatformOptions(BaseModel):
@@ -82,6 +111,8 @@ class SocialPostPublishResultItem(BaseModel):
 
 class SocialPostPublishResponse(BaseModel):
     results: List[SocialPostPublishResultItem]
+    history_status: Optional[str] = None
+    media_url: Optional[str] = None
 
 
 class SocialPostImageUploadRequest(BaseModel):

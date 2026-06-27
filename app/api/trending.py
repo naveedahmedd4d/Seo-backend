@@ -10,16 +10,41 @@ from app.services.serpapi_service import (
     get_trending_keywords_from_db,
     get_used_trending_keywords_from_db,
 )
+from app.services.manual_keyword_service import (
+    create_manual_keywords,
+    get_manual_keywords_from_db,
+    SOURCE_MANUAL,
+    SOURCE_TRENDING,
+)
 from app.services.openrouter_service import categorize_keyword
 from app.schemas.trending import (
     TrendingKeywordsResponse,
     TrendingKeywordResponse,
+    AddManualKeywordsRequest,
     SetBlogWorkflowRequest,
 )
-from app.workflows.trending_workflow import create_trending_workflow
-import asyncio
 
 router = APIRouter()
+
+
+def _build_keyword_dict(k: dict) -> dict:
+    keyword_data = k.get("data", {}) if isinstance(k.get("data"), dict) else {}
+    keyword_response = TrendingKeywordResponse(
+        keyword=k.get("keyword", ""),
+        value=keyword_data.get("value") if isinstance(keyword_data, dict) else k.get("value"),
+        timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else k.get("timestamp"),
+        fetched_at=k.get("fetched_at"),
+        category=k.get("category"),
+        bio_blog_workflow_id=k.get("bio_blog_workflow_id"),
+        net_worth_blog_workflow_id=k.get("net_worth_blog_workflow_id"),
+        source=k.get("source"),
+    )
+    keyword_dict = keyword_response.model_dump()
+    keyword_dict["id"] = k.get("id")
+    keyword_dict["bio_blog_workflow_id"] = k.get("bio_blog_workflow_id")
+    keyword_dict["net_worth_blog_workflow_id"] = k.get("net_worth_blog_workflow_id")
+    keyword_dict["source"] = k.get("source")
+    return keyword_dict
 
 
 @router.get("/keywords", response_model=TrendingKeywordsResponse)
@@ -28,72 +53,41 @@ async def get_trending_keywords(
     hours: int = 4,
     category: Optional[str] = None,
     completed_only: bool = False,
+    source: str = SOURCE_TRENDING,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get trending keywords (last 4 hours by default), optionally filtered by category.
-    If completed_only=true, returns all keywords that have a blog generated (no time limit)."""
+    """Get trending or manual keywords, optionally filtered by category."""
+    if source not in (SOURCE_TRENDING, SOURCE_MANUAL):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="source must be 'trending' or 'manual'",
+        )
     try:
+        if source == SOURCE_MANUAL:
+            cached_data = get_manual_keywords_from_db(db, completed_only, category)
+            keywords = [_build_keyword_dict(k) for k in cached_data]
+            return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
+
         if completed_only:
-            # Return all keywords that have a blog (permanent list, no time filter)
             cached_data = get_used_trending_keywords_from_db(db, category)
-            keywords = []
-            for k in cached_data:
-                keyword_data = k.get("data", {}) if isinstance(k.get("data"), dict) else {}
-                keyword_response = TrendingKeywordResponse(
-                    keyword=k.get("keyword", ""),
-                    value=keyword_data.get("value") if isinstance(keyword_data, dict) else None,
-                    timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else None,
-                    fetched_at=k.get("fetched_at"),
-                    category=k.get("category"),
-                    blog_workflow_id=k.get("blog_workflow_id"),
-                )
-                keyword_dict = keyword_response.model_dump()
-                keyword_dict["id"] = k.get("id")
-                keyword_dict["blog_workflow_id"] = k.get("blog_workflow_id")
-                keywords.append(keyword_dict)
+            keywords = [_build_keyword_dict(k) for k in cached_data]
             return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
 
         if refresh:
-            # Fetch fresh data from SerpAPI
             keywords_data = await fetch_trending_keywords(db, hours)
-            # Get the IDs from database after fetching
             cached_data = get_trending_keywords_from_db(db, hours, category)
             keyword_id_map = {k.get("keyword"): k.get("id") for k in cached_data if k.get("keyword")}
-            
+
             keywords = []
             for k in keywords_data:
-                keyword_response = TrendingKeywordResponse(
-                    keyword=k.get("keyword", ""),
-                    value=k.get("value"),
-                    timestamp=k.get("timestamp"),
-                    category=k.get("category"),
-                    blog_workflow_id=k.get("blog_workflow_id"),
-                )
-                keyword_dict = keyword_response.model_dump()
+                keyword_dict = _build_keyword_dict(k)
                 keyword_dict["id"] = keyword_id_map.get(k.get("keyword", ""))
-                keyword_dict["blog_workflow_id"] = k.get("blog_workflow_id")
                 keywords.append(keyword_dict)
         else:
-            # Get from database cache
             cached_data = get_trending_keywords_from_db(db, hours, category)
-            keywords = []
-            for k in cached_data:
-                keyword_data = k.get("data", {}) if isinstance(k.get("data"), dict) else {}
-                # Create response with ID and blog_workflow_id
-                keyword_response = TrendingKeywordResponse(
-                    keyword=k.get("keyword", ""),
-                    value=keyword_data.get("value") if isinstance(keyword_data, dict) else None,
-                    timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else None,
-                    fetched_at=k.get("fetched_at"),
-                    category=k.get("category"),
-                    blog_workflow_id=k.get("blog_workflow_id"),
-                )
-                keyword_dict = keyword_response.model_dump()
-                keyword_dict["id"] = k.get("id")
-                keyword_dict["blog_workflow_id"] = k.get("blog_workflow_id")
-                keywords.append(keyword_dict)
-        
+            keywords = [_build_keyword_dict(k) for k in cached_data]
+
         return TrendingKeywordsResponse(
             keywords=keywords,
             count=len(keywords)
@@ -105,6 +99,31 @@ async def get_trending_keywords(
         )
 
 
+@router.post("/keywords/manual", response_model=TrendingKeywordsResponse)
+async def add_manual_keywords(
+    body: AddManualKeywordsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add one or more manual keywords (one per list item)."""
+    try:
+        created, added, skipped = create_manual_keywords(db, body.keywords, body.category)
+        if added == 0 and skipped > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="All keywords already exist in manual list",
+            )
+        keywords = [_build_keyword_dict(k) for k in created]
+        return TrendingKeywordsResponse(keywords=keywords, count=added)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error adding manual keywords: {str(e)}",
+        )
+
+
 @router.post("/keywords/fetch")
 async def fetch_keywords(
     hours: int = 4,
@@ -113,26 +132,8 @@ async def fetch_keywords(
 ):
     """Fetch trending keywords from SerpAPI and return from database (last N hours)"""
     try:
-        # Fetch from SerpAPI and store in database, then return from database
-        # This ensures we get accurate "last N hours" data from stored records
         keywords_data = await fetch_trending_keywords(db, hours)
-        
-        # Convert database results to response format
-        keywords = []
-        for k in keywords_data:
-            keyword_data = k.get("data", {}) if isinstance(k.get("data"), dict) else {}
-            keyword_response = TrendingKeywordResponse(
-                keyword=k.get("keyword", ""),
-                value=keyword_data.get("value") if isinstance(keyword_data, dict) else None,
-                timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else k.get("fetched_at"),
-                category=k.get("category"),
-                blog_workflow_id=k.get("blog_workflow_id"),
-            )
-            keyword_dict = keyword_response.model_dump()
-            keyword_dict["id"] = k.get("id")
-            keyword_dict["blog_workflow_id"] = k.get("blog_workflow_id")
-            keywords.append(keyword_dict)
-        
+        keywords = [_build_keyword_dict(k) for k in keywords_data]
         return TrendingKeywordsResponse(
             keywords=keywords,
             count=len(keywords)
@@ -160,13 +161,17 @@ async def set_keyword_blog_workflow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Keyword not found",
         )
-    keyword.blog_workflow_id = body.workflow_id
+    if body.content_type == "biography":
+        keyword.bio_blog_workflow_id = body.workflow_id
+    else:
+        keyword.net_worth_blog_workflow_id = body.workflow_id
     db.commit()
     db.refresh(keyword)
     return {
         "message": "Blog workflow linked to keyword",
         "keyword_id": keyword_id,
         "workflow_id": body.workflow_id,
+        "content_type": body.content_type,
     }
 
 
@@ -202,18 +207,18 @@ async def categorize_keywords(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Categorize all keywords (or uncategorized keywords) using LLM"""
+    """Categorize trending keywords (not manual) using LLM"""
     try:
-        # Fetch keywords to categorize
         if recategorize:
-            # Get all keywords
-            keywords = db.query(TrendingKeywords).all()
-        else:
-            # Get only uncategorized keywords
             keywords = db.query(TrendingKeywords).filter(
-                TrendingKeywords.category.is_(None)
+                TrendingKeywords.source == SOURCE_TRENDING
             ).all()
-        
+        else:
+            keywords = db.query(TrendingKeywords).filter(
+                TrendingKeywords.category.is_(None),
+                TrendingKeywords.source == SOURCE_TRENDING,
+            ).all()
+
         if not keywords:
             return {
                 "message": "No keywords to categorize",
@@ -221,15 +226,14 @@ async def categorize_keywords(
                 "categorized": 0,
                 "failed": 0
             }
-        
-        # Process keywords in batches
-        batch_size = 15  # Process 15 keywords at a time
+
+        batch_size = 15
         categorized_count = 0
         failed_count = 0
-        
+
         for i in range(0, len(keywords), batch_size):
             batch = keywords[i:i + batch_size]
-            
+
             for keyword_obj in batch:
                 try:
                     category = await categorize_keyword(keyword_obj.keyword)
@@ -244,28 +248,25 @@ async def categorize_keywords(
                     print(f"Error categorizing keyword '{keyword_obj.keyword}': {str(e)}")
                     print(f"Full traceback: {error_details}")
                     failed_count += 1
-            
-            # Commit after each batch
+
             db.commit()
-        
-        # Return categorized keywords
+
         categorized_keywords = []
         for k in keywords:
             if k.category:
                 keyword_data = k.data if isinstance(k.data, dict) else {}
-                keyword_response = TrendingKeywordResponse(
-                    keyword=k.keyword,
-                    value=keyword_data.get("value") if isinstance(keyword_data, dict) else None,
-                    timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else None,
-                    fetched_at=k.fetched_at.isoformat() if k.fetched_at else None,
-                    category=k.category,
-                    blog_workflow_id=k.blog_workflow_id,
-                )
-                keyword_dict = keyword_response.model_dump()
-                keyword_dict["id"] = k.id
-                keyword_dict["blog_workflow_id"] = k.blog_workflow_id
+                keyword_dict = _build_keyword_dict({
+                    "id": k.id,
+                    "keyword": k.keyword,
+                    "data": keyword_data,
+                    "fetched_at": k.fetched_at.isoformat() if k.fetched_at else None,
+                    "category": k.category,
+                    "bio_blog_workflow_id": k.bio_blog_workflow_id,
+                    "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
+                    "source": k.source,
+                })
                 categorized_keywords.append(keyword_dict)
-        
+
         return {
             "message": f"Categorized {categorized_count} keywords successfully",
             "total": len(keywords),
