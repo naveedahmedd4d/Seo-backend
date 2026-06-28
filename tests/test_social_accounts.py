@@ -199,7 +199,7 @@ def test_reddit_connect_rejects_placeholder(client, auth_headers):
 
 def test_social_media_storage_roundtrip(monkeypatch):
     monkeypatch.setattr(
-        "app.services.social_media_storage.settings.api_public_url",
+        "app.config.settings.api_public_url",
         "http://localhost:8000",
     )
     # Minimal valid PNG header + IHDR chunk padding

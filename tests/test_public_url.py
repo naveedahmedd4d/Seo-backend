@@ -3,6 +3,7 @@
 from starlette.requests import Request
 
 from app.services.public_url import build_oauth_redirect_uri, resolve_public_base_url
+from app.services.social_media_storage import public_image_url
 
 
 def _make_request(
@@ -50,3 +51,20 @@ def test_build_oauth_redirect_uri_uses_request_domain():
     )
     uri = build_oauth_redirect_uri("blogger", request)
     assert uri == "https://api.myapp.io/api/social-accounts/blogger/callback"
+
+
+def test_public_image_url_uses_request_host():
+    request = _make_request(
+        forwarded_proto="https",
+        forwarded_host="seo-backend-xgzu.onrender.com",
+    )
+    url = public_image_url("abc123.png", request)
+    assert url == "https://seo-backend-xgzu.onrender.com/api/social-post/media/abc123.png"
+
+
+def test_public_image_url_falls_back_to_settings_without_request(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "api_public_url", "https://api.test")
+    url = public_image_url("file.png")
+    assert url == "https://api.test/api/social-post/media/file.png"

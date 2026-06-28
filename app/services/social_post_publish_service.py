@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from fastapi import Request
 from sqlalchemy.orm import Session
 
 from app.models.social_post_history import SocialPostHistory
@@ -39,12 +40,14 @@ def ensure_media_saved(
     db: Session,
     history: SocialPostHistory,
     image_base64: Optional[str] = None,
+    *,
+    request: Optional[Request] = None,
 ) -> tuple[str, str]:
     """Ensure PNG exists on disk; return (filename, public_url)."""
     if history.media_filename:
         try:
             resolve_media_path(history.media_filename)
-            url = public_image_url(history.media_filename)
+            url = public_image_url(history.media_filename, request)
             if history.publish_status == "draft":
                 history.publish_status = "media_ready"
                 db.commit()
@@ -60,12 +63,18 @@ def ensure_media_saved(
     history.publish_status = "media_ready"
     db.commit()
     db.refresh(history)
-    return filename, public_image_url(filename)
+    return filename, public_image_url(filename, request)
 
 
-def build_publish_context(history: SocialPostHistory) -> dict[str, Any]:
+def build_publish_context(
+    history: SocialPostHistory,
+    *,
+    request: Optional[Request] = None,
+) -> dict[str, Any]:
     ctx = publish_context_from_history(history)
-    image_url = public_image_url(history.media_filename) if history.media_filename else None
+    image_url = (
+        public_image_url(history.media_filename, request) if history.media_filename else None
+    )
     return {
         "copy_context": ctx,
         "source_url": ctx.source_url,
@@ -97,8 +106,9 @@ async def publish_to_platforms(
     platforms: list[str],
     *,
     platform_options: Optional[SocialPostPublishPlatformOptions] = None,
+    request: Optional[Request] = None,
 ) -> list[SocialPostPublishResultItem]:
-    context = build_publish_context(history)
+    context = build_publish_context(history, request=request)
     ctx = context["copy_context"]
     image_url = context["image_url"]
     image_bytes: bytes | None = None
@@ -200,12 +210,13 @@ async def publish_history_post(
     *,
     image_base64: Optional[str] = None,
     platform_options: Optional[SocialPostPublishPlatformOptions] = None,
+    request: Optional[Request] = None,
 ) -> tuple[list[SocialPostPublishResultItem], SocialPostHistory, str | None]:
     history = load_history_post(db, user_id, history_id)
     history.publish_status = "publishing"
     db.commit()
 
-    filename, media_url = ensure_media_saved(db, history, image_base64)
+    filename, media_url = ensure_media_saved(db, history, image_base64, request=request)
     db.refresh(history)
 
     results = await publish_to_platforms(
@@ -214,6 +225,7 @@ async def publish_history_post(
         history,
         platforms,
         platform_options=platform_options,
+        request=request,
     )
     record_publications(db, user_id, history_id, results)
     status = finalize_history_status(db, history, results)

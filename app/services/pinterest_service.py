@@ -28,7 +28,10 @@ PINTEREST_AUTH_URL = "https://www.pinterest.com/oauth/"
 PINTEREST_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token"
 PINTEREST_API_BASE = "https://api.pinterest.com/v5"
 
-PINTEREST_SCOPES = "boards:read,pins:read,pins:write,user_accounts:read"
+PINTEREST_SCOPES = (
+    "boards:read,boards:read_secret,boards:write,"
+    "pins:read,pins:write,user_accounts:read"
+)
 
 
 def build_authorization_url(credentials: PinterestAppCredentials, state: str) -> str:
@@ -129,15 +132,42 @@ async def fetch_user_account(access_token: str) -> dict[str, Any]:
     return await _api_request("GET", "/user_account", access_token)
 
 
-async def fetch_boards(access_token: str, page_size: int = 25) -> list[dict[str, Any]]:
-    payload = await _api_request(
-        "GET",
-        "/boards",
-        access_token,
-        params={"page_size": page_size},
-    )
-    items = payload.get("items")
-    return items if isinstance(items, list) else []
+async def fetch_boards(
+    access_token: str,
+    page_size: int = 25,
+    *,
+    create_if_empty: bool = False,
+) -> list[dict[str, Any]]:
+    """List boards (public + secret). Optionally create a default public board."""
+    items: list[dict[str, Any]] = []
+    bookmark: str | None = None
+    while True:
+        params: dict[str, Any] = {"page_size": page_size, "privacy": "PUBLIC_AND_SECRET"}
+        if bookmark:
+            params["bookmark"] = bookmark
+        payload = await _api_request("GET", "/boards", access_token, params=params)
+        page_items = payload.get("items")
+        if isinstance(page_items, list):
+            items.extend(page_items)
+        bookmark = payload.get("bookmark")
+        if not bookmark:
+            break
+
+    if items or not create_if_empty:
+        return items
+
+    try:
+        created = await _api_request(
+            "POST",
+            "/boards",
+            access_token,
+            json_body={"name": "Social Posts", "privacy": "PUBLIC"},
+        )
+        if created.get("id"):
+            return [created]
+    except Exception as exc:
+        logger.warning("Pinterest create default board failed: %s", exc)
+    return []
 
 
 async def create_pin(
@@ -182,7 +212,7 @@ async def save_pinterest_account_from_code(
 
     profile = await fetch_user_account(access_token)
     username = profile.get("username") or profile.get("id") or "Pinterest"
-    boards = await fetch_boards(access_token)
+    boards = await fetch_boards(access_token, create_if_empty=True)
     default_board = boards[0] if boards else None
 
     metadata: dict[str, Any] = {
@@ -284,7 +314,7 @@ async def resolve_pinterest_board_id(
         return board_id
 
     access_token = await get_valid_pinterest_access_token(db, user_id)
-    boards_raw = await fetch_boards(access_token)
+    boards_raw = await fetch_boards(access_token, create_if_empty=True)
     if not boards_raw:
         return None
     first = boards_raw[0]
@@ -294,4 +324,4 @@ async def resolve_pinterest_board_id(
     resolved = str(bid)
     set_default_board(db, account, resolved, str(first.get("name") or "Board"))
     return resolved
-
+

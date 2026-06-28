@@ -61,6 +61,8 @@ pip install -r requirements.txt
 | `TAVILY_API_KEY` | Tavily key |
 | `GROQ_API_KEY` | Groq key |
 | `APIFY_API_KEY` | Apify key (humanizer, etc.) |
+| `API_PUBLIC_URL` | Optional fallback when request host headers are unavailable (e.g. background jobs). Social post `media_url` is derived from the incoming request (`Host` / `X-Forwarded-*`) when possible. |
+| `FRONTEND_URL` | `https://launchtrendai.vercel.app` — OAuth callback redirects |
 
 See `ENV_TEMPLATE.txt` for the full list.
 

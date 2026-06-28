@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 import base64
@@ -55,6 +55,8 @@ _BLOCKED_IMAGE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
 def _history_item_response(
     record: SocialPostHistory,
     publications: list[SocialPostPublication] | None = None,
+    *,
+    http_request: Request | None = None,
 ) -> SocialPostHistoryItemResponse:
     pubs = publications if publications is not None else list(getattr(record, "publications", []) or [])
     platforms_published = sorted({p.platform for p in pubs if p.status == "success"})
@@ -69,7 +71,7 @@ def _history_item_response(
         settings_snapshot=record.settings_snapshot,
         news_results=record.news_results,
         media_filename=media_filename,
-        media_url=public_image_url(media_filename) if media_filename else None,
+        media_url=public_image_url(media_filename, http_request) if media_filename else None,
         publish_status=getattr(record, "publish_status", None) or "draft",
         published_at=record.published_at.isoformat() if getattr(record, "published_at", None) else None,
         platforms_published=platforms_published or None,
@@ -78,8 +80,12 @@ def _history_item_response(
     )
 
 
-def _history_detail_response(record: SocialPostHistory) -> SocialPostHistoryDetailResponse:
-    base = _history_item_response(record)
+def _history_detail_response(
+    record: SocialPostHistory,
+    *,
+    http_request: Request | None = None,
+) -> SocialPostHistoryDetailResponse:
+    base = _history_item_response(record, http_request=http_request)
     pubs = list(getattr(record, "publications", []) or [])
     return SocialPostHistoryDetailResponse(
         **base.model_dump(),
@@ -303,6 +309,7 @@ async def generate_social_post(
 
 @router.get("/history", response_model=list[SocialPostHistoryItemResponse])
 async def get_social_post_history(
+    http_request: Request,
     limit: int = 50,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -327,7 +334,7 @@ async def get_social_post_history(
             for pub in pub_rows:
                 pubs_by_history.setdefault(pub.history_id, []).append(pub)
         return [
-            _history_item_response(r, publications=pubs_by_history.get(r.id, []))
+            _history_item_response(r, publications=pubs_by_history.get(r.id, []), http_request=http_request)
             for r in rows
         ]
     except Exception as e:
@@ -340,6 +347,7 @@ async def get_social_post_history(
 @router.post("/history", response_model=SocialPostHistoryItemResponse)
 async def save_social_post_to_history(
     request: SocialPostHistorySaveRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -358,7 +366,7 @@ async def save_social_post_to_history(
         db.add(record)
         db.commit()
         db.refresh(record)
-        return _history_item_response(record)
+        return _history_item_response(record, http_request=http_request)
     except Exception as e:
         db.rollback()
         raise HTTPException(
@@ -370,6 +378,7 @@ async def save_social_post_to_history(
 @router.get("/history/{history_id}", response_model=SocialPostHistoryDetailResponse)
 async def get_social_post_history_item(
     history_id: int,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -381,7 +390,7 @@ async def get_social_post_history_item(
             .all()
         )
         history.publications = pubs
-        return _history_detail_response(history)
+        return _history_detail_response(history, http_request=http_request)
     except HistoryNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
     except Exception as e:
@@ -395,12 +404,13 @@ async def get_social_post_history_item(
 async def save_social_post_history_media(
     history_id: int,
     request: SocialPostHistoryMediaRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     try:
         history = load_history_post(db, current_user.id, history_id)
-        filename, url = ensure_media_saved(db, history, request.image_base64)
+        filename, url = ensure_media_saved(db, history, request.image_base64, request=http_request)
         return SocialPostImageUploadResponse(filename=filename, url=url)
     except HistoryNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
@@ -417,6 +427,7 @@ async def save_social_post_history_media(
 async def publish_social_post_from_history(
     history_id: int,
     request: SocialPostHistoryPublishRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -430,6 +441,7 @@ async def publish_social_post_from_history(
             request.platforms,
             image_base64=request.image_base64,
             platform_options=request.platform_options,
+            request=http_request,
         )
         return SocialPostPublishResponse(
             results=results,
@@ -452,13 +464,14 @@ async def publish_social_post_from_history(
 @router.post("/upload-image", response_model=SocialPostImageUploadResponse)
 async def upload_social_post_image(
     request: SocialPostImageUploadRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
 ):
     try:
         filename = save_png_base64(request.image_base64)
         return SocialPostImageUploadResponse(
             filename=filename,
-            url=public_image_url(filename),
+            url=public_image_url(filename, http_request),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

@@ -2,8 +2,11 @@ import base64
 import re
 import uuid
 from pathlib import Path
+from typing import Optional
 
-from app.config import settings
+from fastapi import Request
+
+from app.services.public_url import resolve_public_base_url
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads" / "social"
 
@@ -24,8 +27,8 @@ def save_png_base64(image_base64: str) -> str:
     return filename
 
 
-def public_image_url(filename: str) -> str:
-    base = settings.api_public_url.rstrip("/")
+def public_image_url(filename: str, request: Optional[Request] = None) -> str:
+    base = resolve_public_base_url(request)
     safe_name = re.sub(r"[^a-zA-Z0-9._-]", "", filename)
     return f"{base}/api/social-post/media/{safe_name}"
 
