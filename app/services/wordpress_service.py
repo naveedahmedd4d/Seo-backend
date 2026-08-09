@@ -7,6 +7,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 from app.models.wordpress_site import WordPressSite
 from app.config import settings
+from app.services.http_ssl import httpx_verify
 import base64
 import hashlib
 import logging
@@ -119,7 +120,7 @@ async def test_wordpress_connection(url: str, username: str, api_key: str) -> Di
         # WordPress REST API endpoint for testing
         test_url = f"{url}/wp-json/wp/v2/users/me"
         
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=10.0) as client:
             response = await client.get(
                 test_url,
                 auth=(username, api_key),
@@ -152,7 +153,7 @@ async def test_wordpress_connection(url: str, username: str, api_key: str) -> Di
 async def _fetch_image_from_url(image_url: str) -> Optional[Tuple[bytes, str, str]]:
     """Fetch image from URL. Returns (bytes, content_type, filename) or None on failure."""
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(
                 image_url,
                 headers={"User-Agent": "SEO-Automation/1.0"},
@@ -351,7 +352,7 @@ async def publish_page_to_wordpress(
         if not content_is_html:
             content = _markdown_to_html(content)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=120.0) as client:
             content, sideload_url_to_media_id = await _sideload_inline_images_in_html(site, client, content)
 
             featured_media_id: Optional[int] = None
@@ -412,7 +413,7 @@ async def delete_page_from_wordpress(site: WordPressSite, wp_page_id: int) -> Di
         url = site.url.rstrip("/")
         api_url = f"{url}/wp-json/wp/v2/pages/{wp_page_id}"
         decrypted_key = decrypt_api_key(site.api_key)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=30.0) as client:
             response = await client.delete(
                 f"{api_url}?force=true",
                 auth=(site.username, decrypted_key),
@@ -438,6 +439,7 @@ async def publish_to_wordpress(
     slug: Optional[str] = None,
     seo_title: Optional[str] = None,
     meta_description: Optional[str] = None,
+    category_ids: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
     """Publish content to WordPress. featured_image is optional; if provided (dict with 'url'),
     the image is fetched, uploaded to the media library, and set as the post's featured image.
@@ -451,7 +453,7 @@ async def publish_to_wordpress(
         if not content_is_html:
             content = _markdown_to_html(content)
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=120.0) as client:
             content, sideload_url_to_media_id = await _sideload_inline_images_in_html(site, client, content)
 
             featured_media_id: Optional[int] = None
@@ -481,6 +483,8 @@ async def publish_to_wordpress(
                 post_payload["featured_media"] = featured_media_id
             if slug and str(slug).strip():
                 post_payload["slug"] = str(slug).strip()
+            if category_ids:
+                post_payload["categories"] = category_ids
             meta = _rank_math_meta(focus_keyword, seo_title, meta_description)
             if meta:
                 post_payload["meta"] = meta
@@ -516,7 +520,7 @@ async def delete_post_from_wordpress(site: WordPressSite, wp_post_id: int) -> Di
         url = site.url.rstrip("/")
         api_url = f"{url}/wp-json/wp/v2/posts/{wp_post_id}"
         decrypted_key = decrypt_api_key(site.api_key)
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=30.0) as client:
             response = await client.delete(
                 f"{api_url}?force=true",
                 auth=(site.username, decrypted_key),
@@ -593,4 +597,170 @@ def delete_wordpress_site(db: Session, site: WordPressSite) -> None:
     """Delete WordPress site"""
     db.delete(site)
     db.commit()
+
+
+def normalize_url_for_gsc(url: str, site_url: str) -> str:
+    """Normalize a WordPress link to match GSC property URL style."""
+    from urllib.parse import urlparse, urlunparse
+
+    parsed = urlparse(url.strip())
+    if not parsed.scheme or not parsed.netloc:
+        return url.strip()
+
+    site_parsed = urlparse(site_url if "://" in site_url else f"https://{site_url}")
+    use_trailing_slash = site_url.rstrip("/").endswith("/") or (
+        site_url.startswith("http") and site_url.endswith("/")
+    )
+
+    path = parsed.path or "/"
+    if use_trailing_slash and not path.endswith("/"):
+        path = f"{path}/"
+    elif not use_trailing_slash and path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", parsed.query, ""))
+
+
+async def _fetch_wp_content_page(
+    client: httpx.AsyncClient,
+    site: WordPressSite,
+    endpoint: str,
+    page: int,
+) -> tuple[list[dict], int]:
+    """Fetch one page of published posts or pages from WordPress REST API."""
+    base_url = site.url.rstrip("/")
+    api_url = f"{base_url}/wp-json/wp/v2/{endpoint}"
+    decrypted_key = decrypt_api_key(site.api_key)
+    response = await client.get(
+        api_url,
+        params={"status": "publish", "per_page": 100, "page": page, "_fields": "id,link,title,modified_gmt,type"},
+        auth=(site.username, decrypted_key),
+    )
+    if response.status_code == 400:
+        return [], 0
+    response.raise_for_status()
+    total_pages = int(response.headers.get("X-WP-TotalPages", "1") or "1")
+    items = []
+    for row in response.json():
+        link = row.get("link")
+        if not link:
+            continue
+        title = row.get("title") or {}
+        if isinstance(title, dict):
+            title = title.get("rendered") or ""
+        items.append({
+            "url": link,
+            "wp_post_id": row.get("id"),
+            "wp_post_type": endpoint.rstrip("s") if endpoint.endswith("s") else endpoint,
+            "title": title,
+            "modified_gmt": row.get("modified_gmt"),
+        })
+    return items, total_pages
+
+
+async def list_published_content(site: WordPressSite, site_url: str) -> list[dict]:
+    """List all published WordPress posts and pages with normalized URLs."""
+    all_items: list[dict] = []
+    seen_urls: set[str] = set()
+
+    async with httpx.AsyncClient(verify=httpx_verify(), timeout=60.0) as client:
+        for endpoint in ("posts", "pages"):
+            page = 1
+            total_pages = 1
+            while page <= total_pages:
+                batch, total_pages = await _fetch_wp_content_page(client, site, endpoint, page)
+                for item in batch:
+                    normalized = normalize_url_for_gsc(item["url"], site_url)
+                    if normalized in seen_urls:
+                        continue
+                    seen_urls.add(normalized)
+                    all_items.append({**item, "url": normalized})
+                page += 1
+
+    return all_items
+
+
+def _wp_rest_endpoint(post_type: str) -> str:
+    return "pages" if post_type == "page" else "posts"
+
+
+async def get_wp_post(site: WordPressSite, wp_post_id: int, post_type: str = "post") -> Dict[str, Any]:
+    """Fetch a WordPress post or page via REST API."""
+    endpoint = _wp_rest_endpoint(post_type)
+    url = site.url.rstrip("/")
+    api_url = f"{url}/wp-json/wp/v2/{endpoint}/{wp_post_id}"
+    decrypted_key = decrypt_api_key(site.api_key)
+    async with httpx.AsyncClient(verify=httpx_verify(), timeout=60.0) as client:
+        response = await client.get(
+            api_url,
+            auth=(site.username, decrypted_key),
+            params={"context": "edit"},
+        )
+    if response.status_code >= 400:
+        return {"success": False, "message": response.text, "status_code": response.status_code}
+    data = response.json()
+    meta = data.get("meta") or {}
+    title = data.get("title") or {}
+    content = data.get("content") or {}
+    return {
+        "success": True,
+        "id": data.get("id"),
+        "status": data.get("status"),
+        "link": data.get("link"),
+        "title": title.get("raw") or title.get("rendered") or "",
+        "content": content.get("raw") or content.get("rendered") or "",
+        "meta": meta,
+    }
+
+
+async def update_wp_post(
+    site: WordPressSite,
+    wp_post_id: int,
+    post_type: str,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Update a WordPress post or page via REST API."""
+    endpoint = _wp_rest_endpoint(post_type)
+    url = site.url.rstrip("/")
+    api_url = f"{url}/wp-json/wp/v2/{endpoint}/{wp_post_id}"
+    decrypted_key = decrypt_api_key(site.api_key)
+    async with httpx.AsyncClient(verify=httpx_verify(), timeout=120.0) as client:
+        response = await client.post(
+            api_url,
+            auth=(site.username, decrypted_key),
+            json=payload,
+        )
+    if response.status_code >= 400:
+        return {"success": False, "message": response.text, "status_code": response.status_code}
+    data = response.json()
+    return {"success": True, "id": data.get("id"), "link": data.get("link"), "status": data.get("status")}
+
+
+async def fetch_wp_sitemap_url(site: WordPressSite) -> Optional[str]:
+    """Discover the primary sitemap URL for a WordPress site."""
+    base = site.url.rstrip("/")
+    candidates = [
+        f"{base}/sitemap_index.xml",
+        f"{base}/wp-sitemap.xml",
+        f"{base}/sitemap.xml",
+    ]
+
+    try:
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=15.0, follow_redirects=True) as client:
+            robots_resp = await client.get(f"{base}/robots.txt")
+            if robots_resp.status_code == 200:
+                for line in robots_resp.text.splitlines():
+                    if line.lower().startswith("sitemap:"):
+                        sitemap = line.split(":", 1)[1].strip()
+                        if sitemap:
+                            return sitemap
+
+            for candidate in candidates:
+                resp = await client.head(candidate)
+                if resp.status_code in (200, 301, 302):
+                    return candidate
+    except Exception as exc:
+        logger.warning("Failed to discover sitemap for %s: %s", base, exc)
+
+    return candidates[0]
 

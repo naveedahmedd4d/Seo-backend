@@ -16,6 +16,8 @@ from app.models.gsc_property import GscProperty
 from app.models.gsc_page_metric import GscPageMetric
 from app.models.gsc_query_metric import GscQueryMetric
 from app.models.seo_action_item import SeoActionItem
+from app.models.gsc_index_audit_run import GscIndexAuditRun
+from app.models.gsc_url_inspection import GscUrlInspection
 from app.models.authority_site import (
     AuthoritySite,
     AuthorityServiceCluster,
@@ -26,6 +28,8 @@ from app.models.authority_site import (
     AuthorityLinkType,
     AuthorityLinkStatus,
 )
+from app.models.user_llm_settings import UserLlmSettings
+from app.models.keyword_site_coverage import KeywordSiteCoverage
 
 __all__ = [
     "User",
@@ -49,6 +53,8 @@ __all__ = [
     "GscPageMetric",
     "GscQueryMetric",
     "SeoActionItem",
+    "GscIndexAuditRun",
+    "GscUrlInspection",
     "AuthoritySite",
     "AuthorityServiceCluster",
     "AuthorityBlogPost",
@@ -57,5 +63,7 @@ __all__ = [
     "AuthorityNodeStatus",
     "AuthorityLinkType",
     "AuthorityLinkStatus",
+    "UserLlmSettings",
+    "KeywordSiteCoverage",
 ]
 

@@ -28,10 +28,18 @@ from app.services.openrouter_service import (
     generate_tree_faqs_queries_batch,
     select_featured_image,
     sanitize_religion_body,
+    set_llm_context,
+    reset_llm_context,
 )
+from app.services.llm_settings_service import resolve_llm_credentials
 from app.services.serpapi_service import search_images as serpapi_search_images
 from app.services.trivly_service import research_keywords, find_youtube_interview, search_youtube_interviews
 from app.services.wordpress_service import publish_to_wordpress, get_wordpress_site, delete_post_from_wordpress
+from app.services.wordpress_category_service import (
+    resolve_wp_category_ids_for_app_category,
+    resolve_wp_category_ids_for_cluster_keyword,
+    PILLAR_CONTENT_WP_CATEGORY,
+)
 from app.services.blog_consistency import (
     validate_facts_across_articles,
     apply_canonical_net_worth,
@@ -39,6 +47,12 @@ from app.services.blog_consistency import (
     sanitize_filmography_table,
     sanitize_net_worth_body,
     sanitize_blog_body,
+    append_site_cta_markdown,
+    append_site_cta_html,
+)
+from app.services.blog_image_service import (
+    apply_auto_images_to_workflow,
+    apply_auto_images_batch,
 )
 from app.schemas.blog import (
     BlogGenerateRequest,
@@ -53,10 +67,17 @@ from app.schemas.blog import (
     BlogUnpublishResponse,
     PublishedPostItem,
     WorkflowPublishStatus,
+    BlogAutoImagesRequest,
+    BlogAutoImagesResponse,
+    BlogAutoImagesBatchRequest,
+    BlogAutoImagesBatchResponse,
+    BlogAutoImagesBatchResultItem,
+    BlogAutoImagesSectionImage,
 )
 from app.models.workflow_state import WorkflowState
 from app.models.published_post import PublishedPost
 from app.models.image_search_history import ImageSearchHistory
+from app.models.trending_keywords import TrendingKeywords
 from app.config import settings
 import logging
 
@@ -67,6 +88,43 @@ from app.services.research_context import (
     RESEARCH_CONTEXT_MAX_LENGTH,
     format_research_context,
 )
+
+
+def _keyword_row_for_workflow(db: Session, workflow_id: int) -> Optional[TrendingKeywords]:
+    """Look up trending/manual/cluster keyword linked to a blog workflow."""
+    return (
+        db.query(TrendingKeywords)
+        .filter(
+            (TrendingKeywords.bio_blog_workflow_id == workflow_id)
+            | (TrendingKeywords.net_worth_blog_workflow_id == workflow_id)
+            | (TrendingKeywords.blog_workflow_id == workflow_id)
+        )
+        .first()
+    )
+
+
+def _keyword_category_for_workflow(db: Session, workflow_id: int) -> Optional[str]:
+    """Look up trending/manual keyword category linked to a blog workflow."""
+    row = _keyword_row_for_workflow(db, workflow_id)
+    if not row:
+        return None
+    if row.source == "cluster" and row.parent_id is None:
+        return PILLAR_CONTENT_WP_CATEGORY
+    return row.category if row.category else None
+
+
+async def _resolve_publish_category_ids(
+    db: Session,
+    site,
+    workflow_id: int,
+    source_category: Optional[str],
+) -> list:
+    """Prefer cluster keyword rules; otherwise map app/source category."""
+    row = _keyword_row_for_workflow(db, workflow_id)
+    if row is not None and row.source == "cluster":
+        return await resolve_wp_category_ids_for_cluster_keyword(site, row)
+    category = source_category or (row.category if row and row.category else None)
+    return await resolve_wp_category_ids_for_app_category(site, category)
 
 
 def flat_tree_child_slug(parent_slug: str, intent: str) -> str:
@@ -475,6 +533,7 @@ async def _run_celebrity_single_article(
         body_content = sanitize_religion_body(body_content)
     body_content = _sanitize_conclusion_and_sources(body_content)
     body_content = rewrite_legacy_person_tree_paths(body_content)
+    body_content = append_site_cta_markdown(body_content)
 
     try:
         focus_keyword = await resolve_celebrity_display_name(topic, research_context)
@@ -529,10 +588,27 @@ async def run_blog_workflow(
     news_context: Optional[str] = None,
 ):
     """Run the blog generation workflow with SEO-optimized content"""
+    llm_token = None
     try:
-        # Step 0: Research via Tavily (if enabled and configured)
+        workflow_prefetch = get_workflow_state(db, workflow_id, user_id)
+        model_override = None
+        if workflow_prefetch and isinstance(workflow_prefetch.state_data, dict):
+            model_override = workflow_prefetch.state_data.get("model")
+        try:
+            creds = resolve_llm_credentials(db, user_id, model_override=model_override)
+            llm_token = set_llm_context(creds)
+        except ValueError as e:
+            if workflow_prefetch:
+                workflow_prefetch.status = WorkflowStatus.FAILED
+                workflow_prefetch.error_message = str(e)
+                db.commit()
+            return
+
+        # Step 0: Research via Tavily (if enabled and user has a key)
         research_context: Optional[str] = None
-        if include_research and settings.tavily_api_key:
+        from app.services.llm_settings_service import resolve_api_key_optional
+        has_tavily = bool(resolve_api_key_optional(db, user_id, "tavily"))
+        if include_research and has_tavily:
             try:
                 query = topic
                 if description and description.strip():
@@ -545,7 +621,7 @@ async def run_blog_workflow(
                 research_context = None
 
         # Step 0b: Research enrichment - if LLM says context insufficient, run extra Tavily queries (one round only)
-        if include_research and research_context and settings.tavily_api_key:
+        if include_research and research_context and has_tavily:
             try:
                 sufficient, extra_queries = await assess_research_sufficiency(topic, research_context, category)
                 if not sufficient and extra_queries:
@@ -564,7 +640,7 @@ async def run_blog_workflow(
         if (
             include_research
             and research_context
-            and settings.tavily_api_key
+            and has_tavily
             and category == "Celebrities & Public Figures"
         ):
             from datetime import date as _date
@@ -599,7 +675,9 @@ async def run_blog_workflow(
             batch = await generate_single_blog_batch(topic, description, keywords, category, research_context)
             title = batch["title"]
             meta_description = batch["meta_description"]
-            body_content = sanitize_blog_body(batch["body_content"] or "")
+            body_content = append_site_cta_markdown(
+                sanitize_blog_body(batch["body_content"] or "")
+            )
             faqs = batch["faqs"]
             related_queries = batch["related_queries"]
             # Rank Math: focus keyword and slug for URL
@@ -793,10 +871,10 @@ async def run_blog_workflow(
         if include_religion:
             c1_body = _sanitize_conclusion_and_sources(c1_body)
         c2_body = _sanitize_conclusion_and_sources(c2_body)
-        parent_body = rewrite_legacy_person_tree_paths(parent_body)
+        parent_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(parent_body))
         if include_religion:
-            c1_body = rewrite_legacy_person_tree_paths(c1_body)
-        c2_body = rewrite_legacy_person_tree_paths(c2_body)
+            c1_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(c1_body))
+        c2_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(c2_body))
 
         breadcrumb_parent = [
             {"name": "Celebrities", "url": "/category/celebrities"},
@@ -902,6 +980,9 @@ async def run_blog_workflow(
             workflow_state.status = WorkflowStatus.FAILED
             workflow_state.error_message = str(e)
             db.commit()
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 @router.get("/youtube-interviews")
@@ -966,6 +1047,7 @@ async def generate_blog(
                 **({"suggested_title": request.suggested_title} if request.suggested_title else {}),
                 **({"suggested_meta_description": request.suggested_meta_description} if request.suggested_meta_description else {}),
                 **({"news_context": request.news_context} if request.news_context else {}),
+                **({"model": request.model} if request.model else {}),
             }
         )
         db.add(workflow_state)
@@ -1030,6 +1112,7 @@ async def list_blog_workflows(
                 created_at=w.created_at.isoformat(),
                 topic=state.get("topic"),
                 title=state.get("title"),
+                category=state.get("category"),
                 is_tree=state.get("is_tree"),
                 religion_skipped=state.get("religion_skipped"),
             )
@@ -1265,7 +1348,11 @@ async def suggest_featured_image(
     # 2) If no results from DB, call SerpAPI and save to history
     if not images_data:
         try:
-            images_data = await serpapi_search_images(keyword, 100)
+            from app.services.llm_settings_service import resolve_api_key
+            serp_key = resolve_api_key(db, current_user, "serpapi")
+            images_data = await serpapi_search_images(keyword, 100, api_key=serp_key)
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
         except Exception as e:
             logger.warning("Image search failed for suggest-featured: %s", e)
             raise HTTPException(
@@ -1307,6 +1394,92 @@ async def suggest_featured_image(
         "source": chosen.get("source") or "",
         "alt": alt,
     }
+
+
+@router.post("/workflows/{workflow_id}/auto-images", response_model=BlogAutoImagesResponse)
+async def auto_images_workflow(
+    workflow_id: int,
+    request: BlogAutoImagesRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Auto-select featured + section images for one completed workflow."""
+    workflow_state = get_workflow_state(db, workflow_id, current_user.id)
+    if not workflow_state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if workflow_state.status != WorkflowStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only auto-add images for completed workflows",
+        )
+    used_urls: set = set()
+    try:
+        result = await apply_auto_images_to_workflow(
+            db,
+            workflow_state,
+            current_user.id,
+            request.content_type,
+            used_urls,
+            blog_key=request.blog_key or "parent",
+            exclude_urls=request.exclude_urls,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.warning("auto-images failed for workflow %s: %s", workflow_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Auto-images failed: {str(e)}",
+        )
+    return BlogAutoImagesResponse(
+        workflow_id=result["workflow_id"],
+        content_type=result["content_type"],
+        featured_image=result.get("featured_image"),
+        section_images=[
+            BlogAutoImagesSectionImage(**s) for s in result.get("section_images", [])
+        ],
+        used_urls=result.get("used_urls", []),
+        warnings=result.get("warnings", []),
+    )
+
+
+@router.post("/auto-images-batch", response_model=BlogAutoImagesBatchResponse)
+async def auto_images_batch(
+    request: BlogAutoImagesBatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Auto-add images to multiple workflows with shared URL deduplication (bio + net worth)."""
+    if not request.items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="items required")
+    items = [
+        {"workflow_id": item.workflow_id, "content_type": item.content_type}
+        for item in request.items
+    ]
+    batch = await apply_auto_images_batch(db, current_user.id, items)
+    results = []
+    for r in batch.get("results", []):
+        if r.get("error") and "workflow_id" not in r:
+            continue
+        results.append(
+            BlogAutoImagesBatchResultItem(
+                workflow_id=r.get("workflow_id", 0),
+                content_type=r.get("content_type", ""),
+                featured_image=r.get("featured_image"),
+                section_images=[
+                    BlogAutoImagesSectionImage(**s)
+                    for s in r.get("section_images", [])
+                    if isinstance(s, dict) and "section" in s
+                ],
+                used_urls=r.get("used_urls", []),
+                warnings=r.get("warnings", []),
+                error=r.get("error"),
+            )
+        )
+    return BlogAutoImagesBatchResponse(
+        results=results,
+        used_urls=batch.get("used_urls", []),
+    )
 
 
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1378,6 +1551,19 @@ async def publish_blog(
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Already published (WP Post #{existing.wp_post_id})",
+            )
+
+        source_category = request.source_category or _keyword_category_for_workflow(
+            db, request.workflow_id
+        )
+        wp_category_ids = await _resolve_publish_category_ids(
+            db, site, request.workflow_id, request.source_category
+        )
+        if source_category and not wp_category_ids:
+            logger.warning(
+                "No WordPress category resolved for app category %r (workflow %s)",
+                source_category,
+                request.workflow_id,
             )
 
         # Get content from workflow state (tree: parent or child by blog_key)
@@ -1479,7 +1665,10 @@ async def publish_blog(
         if use_html:
             # Single HTML pipeline: frontend sent body as HTML (same as preview); append FAQs, related queries, related articles, schema
             import html as html_module
-            content = rewrite_legacy_person_tree_paths(request.body_content_html.strip())
+            content = append_site_cta_html(
+                rewrite_legacy_person_tree_paths(request.body_content_html.strip()),
+                href=base_url or "/",
+            )
             faqs_queries_html = _render_faqs_and_queries_html(faqs, related_queries)
             if faqs_queries_html:
                 content = content + "\n\n" + faqs_queries_html
@@ -1496,11 +1685,15 @@ async def publish_blog(
             result = await publish_to_wordpress(
                 site, title, content, request.status, featured_image=featured_image_for_publish, content_is_html=True,
                 focus_keyword=publish_focus_keyword, slug=publish_slug,
-                seo_title=publish_seo_title, meta_description=publish_meta_description
+                seo_title=publish_seo_title, meta_description=publish_meta_description,
+                category_ids=wp_category_ids or None,
             )
         else:
             # Fallback: get content from state, append FAQs, related queries, related articles, schema as markdown
-            content = rewrite_legacy_person_tree_paths(content or "")
+            content = append_site_cta_markdown(
+                rewrite_legacy_person_tree_paths(content or ""),
+                href="/",
+            )
             faqs_queries_md = _render_faqs_and_queries_markdown(faqs, related_queries)
             if faqs_queries_md:
                 content = content + faqs_queries_md
@@ -1518,7 +1711,8 @@ async def publish_blog(
             result = await publish_to_wordpress(
                 site, title, content, request.status, featured_image=featured_image_for_publish, content_is_html=False,
                 focus_keyword=publish_focus_keyword, slug=publish_slug,
-                seo_title=publish_seo_title, meta_description=publish_meta_description
+                seo_title=publish_seo_title, meta_description=publish_meta_description,
+                category_ids=wp_category_ids or None,
             )
 
         if result.get("success"):

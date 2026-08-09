@@ -8,6 +8,68 @@ from typing import Dict, Any, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+CITATION_POLICY_PROMPT = """CITATION POLICY (required):
+- Do NOT embed external hyperlinks in the article body (no markdown links to third-party http/https URLs).
+- When attribution is needed, mention the source in plain text only (e.g. "according to Wikipedia" or "Wikipedia reports that…").
+- Use Wikipedia as the only named external source when a citation is required.
+- Do not cite Forbes, Celebrity Net Worth, or other outlets by brand name unless unavoidable; prefer Wikipedia for biographical and factual claims.
+- The Last Updated / Sources footer must be plain text only — never markdown links in that line."""
+
+
+def last_updated_sources_block(date_str: str) -> str:
+    """Standard Last Updated footer with Wikipedia as the sole external source."""
+    return f"> **Last Updated:** {date_str} | **Sources:** Wikipedia"
+
+
+_SITE_CTA_PHRASE = "for more insights, explore our"
+
+
+def has_site_cta(text: str) -> bool:
+    """True when the standard internal-link CTA is already present."""
+    return bool(text and _SITE_CTA_PHRASE in text.lower())
+
+
+def _normalize_cta_href(href: str) -> str:
+    h = (href or "/").strip() or "/"
+    if h.startswith("http://") or h.startswith("https://") or h.startswith("/"):
+        return h
+    return f"/{h.lstrip('/')}"
+
+
+def append_site_cta_markdown(body: str, href: str = "/") -> str:
+    """Append internal-link CTA using markdown (relative href survives body sanitization)."""
+    if has_site_cta(body):
+        return body or ""
+    link_href = _normalize_cta_href(href)
+    line = f"\n\nFor more insights, explore our [website]({link_href}).\n"
+    return (body or "").rstrip() + line
+
+
+def append_site_cta_html(content: str, href: str = "/") -> str:
+    """Append internal-link CTA as HTML (for WordPress HTML publish pipeline)."""
+    if has_site_cta(content):
+        return content or ""
+    import html as html_module
+
+    link_href = _normalize_cta_href(href)
+    escaped_href = html_module.escape(link_href, quote=True)
+    line = f'\n\n<p>For more insights, explore our <a href="{escaped_href}">website</a>.</p>'
+    return (content or "").rstrip() + line
+
+
+_EXTERNAL_MD_LINK_PATTERN = re.compile(
+    r"\[([^\]]+)\]\((https?://[^)]+)\)",
+    re.IGNORECASE,
+)
+
+
+def strip_external_markdown_links(body: str) -> str:
+    """Remove external markdown hyperlinks, keeping anchor text."""
+    if not body or not body.strip():
+        return body
+    return _EXTERNAL_MD_LINK_PATTERN.sub(r"\1", body)
+
+
 # Patterns for money (e.g. $140 million, $150M, 140 million dollars)
 MONEY_PATTERN = re.compile(
     r"\$?\s*(\d+(?:\.\d+)?)\s*(?:million|million\s*dollars?|M(?:\s*USD)?|billion|B)\b",
@@ -294,8 +356,11 @@ def strip_companion_article_links(body: str) -> str:
 
 
 def sanitize_blog_body(body: str) -> str:
-    """Strip TOC blocks and companion-article internal links from stored body markdown."""
-    return strip_companion_article_links(strip_table_of_contents(body))
+    """Strip TOC blocks, companion-article links, and external hyperlinks from stored body markdown."""
+    text = strip_table_of_contents(body)
+    text = strip_companion_article_links(text)
+    text = strip_external_markdown_links(text)
+    return text
 
 
 def sanitize_filmography_table(body: str, topic: str) -> str:

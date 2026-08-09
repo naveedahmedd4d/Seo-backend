@@ -56,16 +56,14 @@ def _parse_dataset_items(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
-async def humanize_text_apify(text: str) -> str:
+async def humanize_text_apify(text: str, *, api_key: Optional[str] = None) -> str:
     """
     Run Apify Content Humanizer synchronously and return humanized text.
-
-    Requires APIFY_API_KEY in environment / .env.
     """
-    token = settings.apify_api_key
+    token = (api_key or settings.apify_api_key or "").strip()
     if not token:
         raise ValueError(
-            "Apify API key not configured. Set APIFY_API_KEY in your .env file."
+            "Add your Apify API key in Settings"
         )
 
     content = str(text).strip()

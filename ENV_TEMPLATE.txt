@@ -12,8 +12,13 @@ JWT_EXPIRATION=3600
 
 # Use a long random value in production (required for secure JWT sessions).
 
+# Only this account may use server .env API keys as platform defaults.
+PLATFORM_OWNER_EMAIL=hkaim1st@gmail.com
+
 # External APIs
-SERPAPI_KEY=a9b6d2de649be4fa85e93728d731534ec1f83e8db2495adce53a839015adf60a
+SERPAPI_KEY=
+# Mangools KWFinder API (keyword difficulty) — free token from mangools.com/api-token
+MANGOOLS_API_TOKEN=
 TAVILY_API_KEY=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
 OPENROUTER_API_KEY=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
 GROQ_API_KEY=your-groq-key
@@ -47,4 +52,14 @@ FRONTEND_URL=http://localhost:3000
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
 # GOOGLE_GSC_REDIRECT_URI=http://localhost:8000/api/search-console/oauth/callback
+
+# Upload-Post — publishes Instagram / Facebook / Pinterest / X via https://docs.upload-post.com/
+# Connect social accounts in the Upload-Post dashboard (Manage Users), not via native OAuth here.
+UPLOAD_POST_API_KEY=
+UPLOAD_POST_USER=trendifypress
+# UPLOAD_POST_BASE_URL=https://api.upload-post.com
+# Required when posting to Pinterest if the publish request does not include board_id
+# UPLOAD_POST_PINTEREST_BOARD_ID=
+# Optional; Upload-Post auto-selects when exactly one Facebook Page is connected
+# UPLOAD_POST_FACEBOOK_PAGE_ID=
 

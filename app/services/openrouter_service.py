@@ -1,10 +1,15 @@
 import httpx
 import asyncio
 import re
-from typing import Optional, Dict, Any, List, Tuple
+from contextvars import ContextVar
+from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
 from app.config import settings
 from app.services.http_ssl import httpx_verify
+from app.services.blog_consistency import CITATION_POLICY_PROMPT, last_updated_sources_block
 import time
+
+if TYPE_CHECKING:
+    from app.services.llm_settings_service import LlmCredentials
 
 # Simple rate limiting - reduced interval for faster processing
 _last_request_time = 0
@@ -13,6 +18,22 @@ _min_request_interval = 0.1  # Reduced from 0.5 to 0.1 seconds for faster proces
 # Default Groq model for general completions (all former OpenRouter traffic uses Groq)
 BLOG_GENERATION_MODEL_GROQ = "llama-3.3-70b-versatile"
 KEYWORD_CATEGORIZATION_MODEL_GROQ = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+# Per-request LLM credentials (set at blog/authority workflow entry)
+LLM_CONTEXT: ContextVar[Optional["LlmCredentials"]] = ContextVar("llm_context", default=None)
+
+
+def set_llm_context(creds: Optional["LlmCredentials"]):
+    """Set request-scoped LLM credentials. Returns a token for reset_llm_context."""
+    return LLM_CONTEXT.set(creds)
+
+
+def reset_llm_context(token) -> None:
+    LLM_CONTEXT.reset(token)
+
+
+def get_llm_context() -> Optional["LlmCredentials"]:
+    return LLM_CONTEXT.get()
 
 
 async def _rate_limit():
@@ -72,11 +93,15 @@ async def _groq_chat_completion(
     timeout_seconds: float = 120.0,
     *,
     use_blog_fallback: bool = False,
+    api_key_override: Optional[str] = None,
 ) -> str:
     """Call Groq chat completions API with retries on 429."""
-    api_keys = _get_blog_groq_api_keys() if use_blog_fallback else (
-        [settings.groq_api_key] if settings.groq_api_key else []
-    )
+    if api_key_override:
+        api_keys = [api_key_override]
+    else:
+        api_keys = _get_blog_groq_api_keys() if use_blog_fallback else (
+            [settings.groq_api_key] if settings.groq_api_key else []
+        )
     if not api_keys:
         raise ValueError("Groq API key not configured")
 
@@ -171,17 +196,38 @@ async def generate_content(
     presence_penalty: Optional[float] = None,
     timeout_seconds: float = 60.0,
 ) -> str:
-    """Generate content using Groq (OpenAI-compatible chat completions)."""
-    if not settings.groq_api_key:
-        raise ValueError("Groq API key not configured")
-
+    """Generate content using Groq/OpenRouter. Prefers LLM_CONTEXT when set."""
     resolved_model = model or BLOG_GENERATION_MODEL_GROQ
     messages: List[Dict[str, str]] = []
     if system:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    ctx = get_llm_context()
     try:
+        if ctx is not None:
+            if ctx.provider == "openrouter":
+                return await _openrouter_chat_completion(
+                    messages=messages,
+                    model=model or ctx.model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout_seconds=max(timeout_seconds, 120.0),
+                    api_key_override=ctx.api_key,
+                )
+            return await _groq_chat_completion(
+                messages=messages,
+                model=model or ctx.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                frequency_penalty=frequency_penalty,
+                presence_penalty=presence_penalty,
+                timeout_seconds=timeout_seconds,
+                api_key_override=ctx.api_key,
+            )
+        if not settings.groq_api_key:
+            raise ValueError("Add your Groq API key in Settings")
         return await _groq_chat_completion(
             messages=messages,
             model=resolved_model,
@@ -269,7 +315,7 @@ Output only the 2-line headline. No quotes, no explanation. Use a real newline b
         raise ValueError(
             "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
         )
-    result = await generate_blog_seo_content(
+    result = await generate_content(
         prompt,
         max_tokens=max_tokens,
         temperature=0.75
@@ -382,7 +428,7 @@ Headline: {headline_clean}
 
 Output only the description text."""
 
-    result = await generate_blog_seo_content(
+    result = await generate_content(
         prompt,
         max_tokens=120,
         temperature=0.5,
@@ -442,7 +488,7 @@ Headline: {headline_clean}
 
 Output only the description text."""
 
-    result = await generate_blog_seo_content(
+    result = await generate_content(
         prompt,
         max_tokens=220,
         temperature=0.65,
@@ -511,7 +557,7 @@ Headline: {headline_clean}
 {news_block}{query_line}
 """
 
-    result = await generate_blog_seo_content(
+    result = await generate_content(
         prompt,
         max_tokens=220,
         temperature=0.55,
@@ -651,14 +697,86 @@ Return only the title, nothing else."""
 # NEW SEO Blog Generation Functions
 # ============================================
 
+async def _openrouter_chat_completion(
+    messages: List[Dict[str, str]],
+    model: str,
+    max_tokens: int = 2000,
+    temperature: float = 0.7,
+    timeout_seconds: float = 180.0,
+    *,
+    api_key_override: Optional[str] = None,
+) -> str:
+    """Call OpenRouter chat completions API (used exclusively for blog generation)."""
+    api_key = api_key_override or settings.openrouter_api_key
+    if not api_key:
+        raise ValueError("OpenRouter API key not configured")
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    async with httpx.AsyncClient(timeout=timeout_seconds, verify=httpx_verify()) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            try:
+                error_msg = response.json().get("error", {}).get("message", response.text)
+            except Exception:
+                error_msg = response.text
+            raise Exception(f"OpenRouter API error {response.status_code}: {error_msg}")
+        data = response.json()
+        if "choices" in data and data["choices"]:
+            msg = data["choices"][0].get("message") or {}
+            content = msg.get("content")
+            if content is None:
+                raise Exception(f"OpenRouter returned no message content. Response: {data}")
+            return content
+        raise Exception("No content generated in OpenRouter response")
+
+
 async def generate_blog_content_with_groq(
     prompt: str,
     max_tokens: int = 2000,
     temperature: float = 0.7
 ) -> str:
-    """Generate blog content using Groq API with llama-3.3-70b model. Retries on 429; uses fallback key if configured."""
+    """Generate blog content. Uses LLM_CONTEXT when set; else OpenRouter then Groq platform keys."""
+    ctx = get_llm_context()
+    if ctx is not None:
+        if ctx.provider == "openrouter":
+            return await _openrouter_chat_completion(
+                messages=[{"role": "user", "content": prompt}],
+                model=ctx.model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout_seconds=180.0,
+                api_key_override=ctx.api_key,
+            )
+        return await _groq_chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=ctx.model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=120.0,
+            use_blog_fallback=False,
+            api_key_override=ctx.api_key,
+        )
+
+    if settings.openrouter_api_key:
+        model = getattr(settings, "blog_openrouter_model", "anthropic/claude-opus-4-7")
+        return await _openrouter_chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=180.0,
+        )
     if not settings.groq_api_key:
-        raise ValueError("Groq API key not configured")
+        raise ValueError("No LLM API key configured for blog generation. Set OPENROUTER_API_KEY or GROQ_API_KEY.")
     return await _groq_chat_completion(
         messages=[{"role": "user", "content": prompt}],
         model=BLOG_GENERATION_MODEL_GROQ,
@@ -674,12 +792,10 @@ async def generate_blog_seo_content(
     max_tokens: int = 2000,
     temperature: float = 0.7
 ) -> str:
-    """
-    Generate blog content using Groq with llama-3.3-70b model.
-    """
-    if not settings.groq_api_key:
-        raise ValueError("Groq API key not configured")
-    
+    """Generate blog content — routes via LLM_CONTEXT or platform OpenRouter/Groq."""
+    ctx = get_llm_context()
+    if ctx is None and not settings.openrouter_api_key and not settings.groq_api_key:
+        raise ValueError("No LLM API key configured for blog generation. Set OPENROUTER_API_KEY or GROQ_API_KEY.")
     return await generate_blog_content_with_groq(prompt, max_tokens, temperature)
 
 
@@ -942,10 +1058,12 @@ STRUCTURE (use these exact H2 headings in order):
 
 ## Conclusion (150-200 words)
 - Summarize career journey and key achievements; current projects or future outlook; inspiring, forward-looking close
+- When you include the Last Updated block, use it exactly as given (e.g. "> **Last Updated:** [date] | **Sources:** Wikipedia"). Do not add markdown hyperlinks anywhere in the article.
 - Do not put image placeholders (![...](image-url)) in the Conclusion. Do not put them in the Last Updated / Sources line.
-- When you include the Last Updated block, use it exactly as given (e.g. "> **Last Updated:** [date] | **Sources:** Celebrity Net Worth, Forbes"). Do not add links with "blank" or placeholder URLs; for source names use plain text or real URLs only (e.g. [Celebrity Net Worth](https://www.celebritynetworth.com/), [Forbes](https://www.forbes.com/)).
 
-Format in clean markdown. Do not include the article title. {"Start with the news hook opening paragraph (no heading), then continue with Introduction." if has_news_hook else "Start with the introduction."} Cite sources as markdown links where relevant (use real URLs only, never "blank"). Use the Focus Keyword in at least 2 of the H2 section headings (e.g. "Early Life of [Name]", "[Name]'s Career Overview")."""
+{CITATION_POLICY_PROMPT}
+
+Format in clean markdown. Do not include the article title. {"Start with the news hook opening paragraph (no heading), then continue with Introduction." if has_news_hook else "Start with the introduction."} Use the Focus Keyword in at least 2 of the H2 section headings (e.g. "Early Life of [Name]", "[Name]'s Career Overview")."""
 
 
 def sanitize_religion_body(body: str) -> str:
@@ -1016,7 +1134,7 @@ Rank Math SEO (required):
 - Do NOT add markdown images unless Research context includes a real https URL for that image (never example.com or placeholders).
 - Do not add in-body links to sibling overview, net worth, or religion articles.
 - Include [YOUTUBE_EMBED: interview title] in the spotlight section only when research supports a real interview.
-- Last Updated: only cite sources you actually linked in the article body.
+- Last Updated: use plain text only; mention Wikipedia in Sources if cited in the article body.
 
 {get_religion_quality_rules(name)}
 
@@ -1024,7 +1142,9 @@ Rank Math SEO (required):
 
 {get_religion_format_rules()}
 
-Format in clean markdown. Do not include the article title (it will be added separately). Start with ## Introduction. Use citations as markdown links with real URLs from research only. Total length approximately 1,500 words (1,400-1,600 maximum)."""
+{CITATION_POLICY_PROMPT}
+
+Format in clean markdown. Do not include the article title (it will be added separately). Start with ## Introduction. Total length approximately 1,500 words (1,400-1,600 maximum)."""
 
 
 async def generate_blog_body(
@@ -1055,10 +1175,9 @@ async def generate_blog_body(
         intent_block = f"\n\nContent intent (follow this focus):\n{CONTENT_INTENT_PROMPTS[content_intent]}"
     from datetime import date
     _last_updated = date.today().strftime("%B %d, %Y")
-    _last_updated_block = f'> **Last Updated:** {_last_updated} | **Sources:** Celebrity Net Worth, Forbes'
+    _last_updated_block = last_updated_sources_block(_last_updated)
     _last_updated_block_nw = (
-        f'> **Last Updated:** {_last_updated} | **Citations:** Name only sources you actually cite in the article body (with markdown links). '
-        f'Do **not** list "Celebrity Net Worth" or "Forbes" in this line unless the article includes a real link to a page **about this person**.'
+        f'> **Last Updated:** {_last_updated} | **Sources:** Wikipedia'
     )
     eeat_block = ""
     if content_intent == "net_worth":
@@ -1071,16 +1190,16 @@ async def generate_blog_body(
 
 E-E-A-T and accuracy (YMYL financial content):
 - **Banned:** religion, faith, spirituality, church, prayer, religious identity, or any non-financial personal belief content. Keep this article strictly about money, compensation, assets, and career-related finance.
-- **Source hierarchy:** For **U.S. Members of Congress / federal officeholders**, prioritize **[House or Senate financial disclosures](https://disclosures-clerk.house.gov/)**, **[OpenSecrets](https://www.opensecrets.org/)**, or **LegiStorm**-style summaries — name the **reporting year or filing period**. Third-party net worth trackers (e.g. Quiver) may be used only if labeled **approximate** with an **as-of date**.
-- For **entertainers and general celebrities**, cite the **named** outlet or database with a **real URL**. Do **not** cite "Celebrity Net Worth" or "Forbes" as generic brands without a link to a **dedicated** profile for this person.
-- Cite every factual money claim with a **markdown link** where possible — never source names alone.
+- **Sources:** Do NOT embed external hyperlinks. Mention Wikipedia in plain text when attribution is needed for financial or biographical facts.
 - Include this disclaimer verbatim once: "Net worth estimates are based on publicly available information and may vary."
 - Give **one** headline net worth figure (or a **narrow range** from official disclosures) and state the **as-of date**, **reporting year**, or **methodology** (e.g. midpoint of disclosure ranges).
 - **Do not** put **annual salary** in the same "% of net worth" table as asset buckets without explanation. Use either:
   - **Wealth table:** | Category | Estimated amount or range | % of estimated net worth | where rows are **asset/debt components** and percentages refer to **estimated total wealth** (sum 100%); **or**
   - A **separate** small table or paragraph for **annual income** (salary, fees) labeled clearly as **per year**, not as a percentage of net worth unless you show the math.
 - Include this block verbatim near the top (after the opening paragraph): {_last_updated_block_nw}
-{sibling_line}"""
+{sibling_line}
+
+{CITATION_POLICY_PROMPT}"""
     elif content_intent == "religion":
         eeat_block = _build_religion_article_prompt(
             topic, description_text, keywords_text, category_style, research_block,
@@ -1135,8 +1254,9 @@ Format the table in standard markdown:
 
 Format the content in clean markdown. Do not include the title (it will be added separately).
 Start directly with the introduction paragraph.
-Citations: use markdown links for any source (e.g. [according to Celebrity Net Worth](https://www.celebritynetworth.com/)) not plain text.
-When the topic is time-sensitive or factual, include: > **Last Updated:** {_last_updated} | **Sources:** [relevant source names]."""
+
+{CITATION_POLICY_PROMPT}
+When the topic is time-sensitive or factual, include: {_last_updated_block}"""
 
     return await generate_blog_seo_content(prompt, max_tokens=4000, temperature=0.7)
 
@@ -1370,11 +1490,8 @@ async def generate_tree_bodies_batch(
     research_block = f"\n\nResearch context (use for all three):\n{research_context}" if research_context else ""
     from datetime import date
     _lu = date.today().strftime("%B %d, %Y")
-    _lu_block = f"> **Last Updated:** {_lu} | **Sources:** Celebrity Net Worth, Forbes"
-    _lu_block_nw = (
-        f"> **Last Updated:** {_lu} | **Citations:** Only sources actually linked in the body. "
-        f'Do **not** list "Celebrity Net Worth" or "Forbes" unless linked to a page about this person.'
-    )
+    _lu_block = last_updated_sources_block(_lu)
+    _lu_block_nw = f"> **Last Updated:** {_lu} | **Sources:** Wikipedia"
     _yt_note = f' In "First Media Appearance" put exactly [YOUTUBE_EMBED: {youtube_url}] on its own line (no raw HTML/iframe), then 1-2 paragraphs on the interview.' if youtube_url else ' In "First Media Appearance" write that no suitable interview video was found and add 1-2 paragraphs on early media significance.'
     prompt = f"""Write THREE distinct blog post bodies for the celebrity "{topic}". All in one response, separated by exact markers.
 
@@ -1382,7 +1499,7 @@ Shared: Topic "{topic}", Keywords: {keywords_text}, Category: {category}.{resear
 
 Writing style: {category_style}
 
-Cite sources as markdown links only (e.g. [Celebrity Net Worth](https://www.celebritynetworth.com/)) — never plain text.
+{CITATION_POLICY_PROMPT}
 
 Output format — use these exact section headers (each body is 400-700 words, markdown with ## and ###):
 
@@ -1395,7 +1512,7 @@ Output format — use these exact section headers (each body is 400-700 words, m
 ...full markdown body...
 
 ---CHILD_1_BODY---
-(Article 3: NET WORTH. No religion/faith/church content. For U.S. politicians prioritize disclosure-based sources (OpenSecrets, House Clerk) with reporting year. Wealth table: | Category | Estimated amount or range | % of estimated net worth | (rows = asset components; sum 100%%); put **annual salary** in a separate line or table, not as a fake %% of net worth. Include disclaimer and: {_lu_block_nw})
+(Article 3: NET WORTH. No religion/faith/church content. Mention Wikipedia in plain text when attribution is needed. Wealth table: | Category | Estimated amount or range | % of estimated net worth | (rows = asset components; sum 100%%); put **annual salary** in a separate line or table, not as a fake %% of net worth. Include disclaimer and: {_lu_block_nw})
 ...full markdown body...
 
 Return ONLY the three sections with the exact markers ---PARENT_BODY---, ---CHILD_0_BODY---, ---CHILD_1_BODY--- and content. No other preamble."""
@@ -2121,7 +2238,7 @@ def _fallback_celebrity_religion_summary(query: str, results: Dict[str, Any]) ->
         "core_content_recommendations": [
             f"Verify latest interviews about {name}'s beliefs",
             "Add [YOUTUBE_EMBED: interview] if a recent interview exists",
-            "Cite primary sources with markdown links",
+            "Mention Wikipedia in plain text when attribution is needed",
         ],
         "seo_suggestions": [f'Use focus keyword "{name} religion" in title and first paragraph'],
         "topical_coverage": [],
@@ -2162,7 +2279,7 @@ def _fallback_celebrity_net_worth_summary(query: str, results: Dict[str, Any]) -
         "core_content_recommendations": [
             f"Verify latest salary and endorsement figures for {name}",
             "Break down income by career earnings, endorsements, and social media",
-            "Cite financial sources with markdown links",
+            "Mention Wikipedia in plain text when attribution is needed",
         ],
         "seo_suggestions": [f'Use focus keyword "{name} net worth" in title and first paragraph'],
         "topical_coverage": [],
@@ -2235,7 +2352,7 @@ Bad example: Jorge Mateo hits 4th homer — Fans praise his power surge
 Return ONLY the title."""
 
     try:
-        result = await generate_blog_seo_content(prompt, max_tokens=120, temperature=0.5)
+        result = await generate_content(prompt, max_tokens=120, temperature=0.5)
         title = (result or "").strip().strip('"').strip("'")
         return ensure_biography_seo_title(title, name, year)
     except Exception:
@@ -2384,7 +2501,7 @@ def _fallback_celebrity_biography_summary(
         "core_content_recommendations": [
             f"Verify career dates and awards for {name}",
             "Add [YOUTUBE_EMBED: interview] in First Media Appearance if available",
-            "Cite news and biography sources with markdown links",
+            "Mention Wikipedia in plain text when attribution is needed",
         ],
         "seo_suggestions": [f'Use focus keyword "{name}" in title and first paragraph'],
         "topical_coverage": [],
@@ -2499,7 +2616,7 @@ Return ONLY a JSON object with these keys (no outline key — headings are fixed
 Return ONLY valid JSON."""
 
     try:
-        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        result = await generate_content(prompt, max_tokens=1400, temperature=0.4, timeout_seconds=120.0)
         data = json.loads(_clean_json_response(result))
         if not isinstance(data, dict):
             raise ValueError("Expected JSON object")
@@ -2651,7 +2768,7 @@ Return ONLY a JSON object with these keys (no outline key — headings are fixed
 Return ONLY valid JSON."""
 
     try:
-        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        result = await generate_content(prompt, max_tokens=1400, temperature=0.4, timeout_seconds=120.0)
         data = json.loads(_clean_json_response(result))
         if not isinstance(data, dict):
             raise ValueError("Expected JSON object")
@@ -2779,7 +2896,7 @@ Return ONLY a JSON object with these keys (no outline key — headings are fixed
 Return ONLY valid JSON."""
 
     try:
-        result = await generate_blog_seo_content(prompt, max_tokens=1400, temperature=0.4)
+        result = await generate_content(prompt, max_tokens=1400, temperature=0.4, timeout_seconds=120.0)
         data = json.loads(_clean_json_response(result))
         if not isinstance(data, dict):
             raise ValueError("Expected JSON object")
@@ -2924,7 +3041,7 @@ Use level 2 for main sections and level 3 for subsections. Do not use level 1 in
 Return ONLY valid JSON, no markdown fences."""
 
     try:
-        result = await generate_blog_seo_content(prompt, max_tokens=1200, temperature=0.4)
+        result = await generate_content(prompt, max_tokens=1200, temperature=0.4, timeout_seconds=120.0)
         data = json.loads(_clean_json_response(result))
         if not isinstance(data, dict):
             raise ValueError("Expected JSON object")

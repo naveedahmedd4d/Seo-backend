@@ -23,6 +23,11 @@ class SeoActionItem(Base):
     linked_workflow_id = Column(Integer, ForeignKey("workflow_states.id", ondelete="SET NULL"), nullable=True)
     snoozed_until = Column(DateTime(timezone=True), nullable=True)
     user_verified_at = Column(DateTime(timezone=True), nullable=True)
+    fix_status = Column(String(32), nullable=True)
+    fix_result = Column(JSON, nullable=True)
+    indexing_status = Column(String(32), nullable=True)
+    gsc_inspect_url = Column(Text, nullable=True)
+    fixed_at = Column(DateTime(timezone=True), nullable=True)
     detected_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

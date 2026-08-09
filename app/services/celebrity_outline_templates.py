@@ -38,7 +38,7 @@ RELIGION_QUALITY_RULES = """ANSWER & FACTS (critical — reader must get a direc
 RESEARCH & TONE:
 - Use the Research context block as primary source. Prefer direct quotes, interview references, birthplace/upbringing facts, and named projects.
 - BANNED without a named source in the same section: standalone sentences like "may be," "might," "potentially," "could be" about {name}'s beliefs.
-- Allowed uncertainty: "No public statement confirms X; however, Y is widely reported in [Source](url)."
+- Allowed uncertainty: "No public statement confirms X; however, Y is widely reported on Wikipedia."
 - Every bullet in every section must be UNIQUE — never repeat the same idea or sentence across sections (no copy-paste bullets).
 
 CELEBRITY-SPECIFIC SECTIONS:
@@ -48,7 +48,7 @@ CELEBRITY-SPECIFIC SECTIONS:
 MEDIA & CITATIONS:
 - Do NOT include markdown images unless Research context provides a real https URL for that image. Never use example.com, placeholder, or image-url.
 - Do NOT add a Table of Contents.
-- Cite sources as markdown links [Outlet](https://real-url) from research. Last Updated line: list ONLY outlets you actually linked in the article — never generic "Celebrity Net Worth, Forbes" without links."""
+- Do NOT embed external hyperlinks. When attribution is needed, mention Wikipedia in plain text only. Last Updated line: use "Sources: Wikipedia" (plain text, no links)."""
 
 
 def get_religion_quality_rules(name: str = "the celebrity") -> str:
@@ -588,7 +588,7 @@ STRUCTURE & TONE:
 - Early Life & Background: brief only (100–150 words max).
 - Personal Life: high-traffic hook (partner, family); optional partner net worth comparison if relevant.
 - BANNED: religion, faith, spirituality, church, prayer, or non-financial belief content.
-- Cite sources as markdown links [Outlet](https://real-url) from research only.
+- Do NOT embed external hyperlinks; mention Wikipedia in plain text when attribution is needed.
 - Include disclaimer once: "Net worth estimates are based on publicly available information and may vary."
 
 FAQ:

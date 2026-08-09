@@ -28,6 +28,7 @@ URGENCY = {
     "content_decay": 2.5,
     "keyword_gap": 1.2,
     "cannibalization": 1.4,
+    "not_indexed": 2.2,
 }
 
 FIXABILITY = {
@@ -37,6 +38,7 @@ FIXABILITY = {
     "content_decay": 0.4,
     "keyword_gap": 0.7,
     "cannibalization": 0.5,
+    "not_indexed": 0.6,
 }
 
 
@@ -116,6 +118,9 @@ def _suggestion(action_type: str, snapshot: dict[str, Any]) -> str:
             f"Multiple pages compete for \"{query}\": {', '.join(pages[:3])}. "
             "Consolidate content, differentiate intent, or strengthen internal linking."
         )
+    if action_type == "not_indexed":
+        coverage = snapshot.get("coverage_state") or "Not indexed"
+        return f"Page is not in Google's index ({coverage}). Review diagnosis and apply recommended fixes."
     return "Review and optimize this page for better search performance."
 
 
@@ -518,7 +523,7 @@ def build_overview(db: Session, user_id: int, property_id: int) -> dict[str, Any
         .all()
     )
     issue_breakdown = {row[0]: row[1] for row in breakdown_rows}
-    for key in ("low_ctr", "striking_distance", "content_decay", "zero_clicks", "cannibalization", "keyword_gap"):
+    for key in ("low_ctr", "striking_distance", "content_decay", "zero_clicks", "cannibalization", "keyword_gap", "not_indexed"):
         issue_breakdown.setdefault(key, 0)
 
     open_count = (

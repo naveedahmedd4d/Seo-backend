@@ -19,11 +19,14 @@ class Settings(BaseSettings):
     
     # External APIs
     serpapi_key: Optional[str] = None
+    mangools_api_token: Optional[str] = None
     tavily_api_key: Optional[str] = None
-    # Legacy: no longer used; all LLM calls go through Groq. Kept so existing .env files load cleanly.
+    # OpenRouter: used exclusively for blog generation when configured.
     openrouter_api_key: Optional[str] = None
     openrouter_model: str = "stepfun/step-3.5-flash:free"
     openrouter_humanize_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Model used for blog generation via OpenRouter (only active when openrouter_api_key is set).
+    blog_openrouter_model: str = "openai/gpt-4o-mini"
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None
@@ -36,6 +39,9 @@ class Settings(BaseSettings):
     groq_blog_delay_seconds: float = 4.0
     # TLS verify for outbound httpx (Groq, Tavily, SerpAPI, etc.). Uses OS trust store via truststore, then certifi. Set false only for local dev.
     groq_ssl_verify: bool = True
+
+    # Only this email may use server .env API keys as platform defaults.
+    platform_owner_email: str = "hkaim1st@gmail.com"
     
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
@@ -70,6 +76,13 @@ class Settings(BaseSettings):
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
     google_gsc_redirect_uri: Optional[str] = None
+
+    # Upload-Post (unified social publishing for IG / Facebook / Pinterest / X)
+    upload_post_api_key: Optional[str] = None
+    upload_post_user: str = "trendifypress"
+    upload_post_base_url: str = "https://api.upload-post.com"
+    upload_post_pinterest_board_id: Optional[str] = None
+    upload_post_facebook_page_id: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),

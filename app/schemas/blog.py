@@ -27,6 +27,7 @@ class BlogGenerateRequest(BaseModel):
     suggested_title: Optional[str] = None  # Pre-set SEO title (e.g. news-hook from research)
     suggested_meta_description: Optional[str] = None
     news_context: Optional[str] = None  # Pre-formatted news sources block for citations
+    model: Optional[str] = None  # Allowlisted model id override for this run (or "default")
 
     @field_validator("celebrity_content_type")
     @classmethod
@@ -79,6 +80,7 @@ class BlogWorkflowListItem(BaseModel):
     created_at: str
     topic: Optional[str] = None
     title: Optional[str] = None
+    category: Optional[str] = None
     is_tree: Optional[bool] = None
     religion_skipped: Optional[bool] = None  # celebrity tree: only parent + net worth
 
@@ -93,6 +95,7 @@ class BlogPublishRequest(BaseModel):
     status: str = "draft"
     blog_key: Optional[str] = None  # "parent", "child_0", "child_1" for tree; default parent
     body_content_html: Optional[str] = None  # when set, use as post body (same as preview); backend appends related + schema
+    source_category: Optional[str] = None  # app keyword category; mapped to WordPress taxonomy on publish
 
 
 class BlogPublishResponse(BaseModel):
@@ -128,4 +131,49 @@ class WorkflowPublishStatus(BaseModel):
     """Publish status for all articles in a workflow."""
     workflow_id: int
     posts: List[PublishedPostItem]
+
+
+class BlogAutoImagesRequest(BaseModel):
+    content_type: Literal["biography", "net_worth"]
+    blog_key: Optional[str] = "parent"
+    exclude_urls: Optional[List[str]] = None
+
+
+class BlogAutoImagesSectionImage(BaseModel):
+    section: str
+    url: str
+    alt: str = ""
+
+
+class BlogAutoImagesResponse(BaseModel):
+    workflow_id: int
+    content_type: str
+    featured_image: Optional[Dict[str, str]] = None
+    section_images: List[BlogAutoImagesSectionImage] = []
+    used_urls: List[str] = []
+    warnings: List[str] = []
+
+
+class BlogAutoImagesBatchItem(BaseModel):
+    workflow_id: int
+    content_type: Literal["biography", "net_worth"]
+
+
+class BlogAutoImagesBatchRequest(BaseModel):
+    items: List[BlogAutoImagesBatchItem]
+
+
+class BlogAutoImagesBatchResultItem(BaseModel):
+    workflow_id: int
+    content_type: str
+    featured_image: Optional[Dict[str, str]] = None
+    section_images: List[BlogAutoImagesSectionImage] = []
+    used_urls: List[str] = []
+    warnings: List[str] = []
+    error: Optional[str] = None
+
+
+class BlogAutoImagesBatchResponse(BaseModel):
+    results: List[BlogAutoImagesBatchResultItem]
+    used_urls: List[str] = []
 

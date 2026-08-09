@@ -25,7 +25,12 @@ from app.schemas.research import (
     NewsSourceItem,
 )
 from app.services.serpapi_service import fetch_topical_mapping
-from app.services.openrouter_service import generate_research_content_summary
+from app.services.openrouter_service import (
+    generate_research_content_summary,
+    set_llm_context,
+    reset_llm_context,
+)
+from app.services.llm_settings_service import resolve_api_key, resolve_llm_credentials
 from app.workflows.research_workflow import create_research_workflow
 
 router = APIRouter()
@@ -45,6 +50,8 @@ async def research_keywords_endpoint(
             results=results,
             created_at=datetime.utcnow().isoformat()
         )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -55,15 +62,20 @@ async def research_keywords_endpoint(
 @router.post("/content", response_model=ContentSuggestionResponse)
 async def get_content_suggestions_endpoint(
     request: ContentSuggestionRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Get content suggestions"""
     try:
+        tavily_key = resolve_api_key(db, current_user, "tavily")
         suggestions = await get_content_suggestions(
             request.query,
-            request.num_suggestions
+            request.num_suggestions,
+            api_key=tavily_key,
         )
         return ContentSuggestionResponse(suggestions=suggestions)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -75,6 +87,7 @@ async def get_content_suggestions_endpoint(
 async def generate_research_summary_endpoint(
     request: ResearchSummaryRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Generate AI research summary and structured content outline for blog generation."""
     if not request.query or not request.query.strip():
@@ -87,7 +100,10 @@ async def generate_research_summary_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Research results are required. Run keyword research first.",
         )
+    llm_token = None
     try:
+        creds = resolve_llm_credentials(db, current_user.id)
+        llm_token = set_llm_context(creds)
         topical_dict = None
         if request.topical_mapping:
             topical_dict = request.topical_mapping.model_dump()
@@ -131,11 +147,16 @@ async def generate_research_summary_endpoint(
         )
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating research summary: {str(e)}",
         )
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 @router.get("/topical-mapping", response_model=TopicalMappingResponse)
@@ -145,6 +166,7 @@ async def get_topical_mapping_endpoint(
     geo: str = "US",
     hl: str = "en",
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """Topical mapping: Google Autocomplete + Google Trends related queries (SerpAPI)."""
     if not q or not q.strip():
@@ -153,7 +175,10 @@ async def get_topical_mapping_endpoint(
             detail="Query parameter 'q' is required",
         )
     try:
-        data = await fetch_topical_mapping(q.strip(), limit=min(limit, 20), geo=geo, hl=hl)
+        serp_key = resolve_api_key(db, current_user, "serpapi")
+        data = await fetch_topical_mapping(
+            q.strip(), limit=min(limit, 20), geo=geo, hl=hl, api_key=serp_key
+        )
         return TopicalMappingResponse(
             query=data["query"],
             autocomplete_suggestions=[
@@ -166,7 +191,7 @@ async def get_topical_mapping_endpoint(
         )
     except ValueError as e:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
     except Exception as e:

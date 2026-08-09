@@ -105,7 +105,11 @@ async def _get_dataset_items(
     return r.json()
 
 
-async def scrape_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]:
+async def scrape_youtube_interviews(
+    celebrity_name: str,
+    *,
+    api_key: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Scrape YouTube for videos that are clearly interviews of the given celebrity.
 
@@ -122,9 +126,9 @@ async def scrape_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]
     """
     if not celebrity_name or not (celebrity_name := celebrity_name.strip()):
         return []
-    token = settings.apify_api_key
+    token = (api_key or settings.apify_api_key or "").strip()
     if not token:
-        logger.warning("APIFY_API_KEY not set; cannot scrape YouTube interviews")
+        logger.warning("Apify API key not set; cannot scrape YouTube interviews")
         return []
 
     search_queries = [
@@ -165,13 +169,17 @@ async def scrape_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]
     return results
 
 
-async def get_one_youtube_interview_url(celebrity_name: str) -> Optional[str]:
+async def get_one_youtube_interview_url(
+    celebrity_name: str,
+    *,
+    api_key: Optional[str] = None,
+) -> Optional[str]:
     """
     Return a single YouTube interview URL for the celebrity, or None.
-    Uses Apify when APIFY_API_KEY is set; otherwise returns None (caller can
+    Uses Apify when an API key is available; otherwise returns None (caller can
     fall back to Tavily find_youtube_interview).
     """
-    videos = await scrape_youtube_interviews(celebrity_name)
+    videos = await scrape_youtube_interviews(celebrity_name, api_key=api_key)
     for v in videos:
         url = v.get("url")
         if url:

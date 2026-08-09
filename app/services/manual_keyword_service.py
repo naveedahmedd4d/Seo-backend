@@ -28,6 +28,7 @@ def _keyword_to_dict(k: TrendingKeywords) -> Dict[str, Any]:
         "bio_blog_workflow_id": bio_id,
         "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
         "source": k.source,
+        "kd": k.kd,
         "value": keyword_data.get("value") if isinstance(keyword_data, dict) else None,
         "timestamp": keyword_data.get("timestamp") if isinstance(keyword_data, dict) else None,
     }

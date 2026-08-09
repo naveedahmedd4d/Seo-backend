@@ -16,6 +16,8 @@ from app.services.news_research_service import (
     estimate_engagement_score,
     suggested_platforms_for_headline,
 )
+from app.services.llm_settings_service import resolve_api_key, resolve_llm_credentials
+from app.services.openrouter_service import set_llm_context, reset_llm_context
 from app.services.http_ssl import httpx_verify
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
 from app.services.social_post_publish_service import (
@@ -252,15 +254,21 @@ async def save_social_post_template_presets(
 async def generate_social_post(
     request: SocialPostGenerateRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     Generate a social post headline from a query: fetch 7 Google News results,
     then use the LLM to produce a single compelling headline.
     """
+    llm_token = None
     try:
+        serp_key = resolve_api_key(db, current_user, "serpapi")
+        creds = resolve_llm_credentials(db, current_user.id)
+        llm_token = set_llm_context(creds)
         bundle = await build_news_bundle(
             request.query,
             template_variant=request.template_variant,
+            serpapi_api_key=serp_key,
         )
         if not bundle:
             raise HTTPException(
@@ -305,6 +313,9 @@ async def generate_social_post(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating social post: {str(e)}",
         )
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 @router.get("/history", response_model=list[SocialPostHistoryItemResponse])

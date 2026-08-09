@@ -67,7 +67,7 @@ def format_news_bundle_for_llm(bundle: NewsResearchBundle) -> str:
         f"Story hook (≤100 words): {bundle.story_description}",
         f"Short description: {bundle.description}",
         "",
-        "News sources (cite as markdown links where used):",
+        "News sources (mention in plain text only — do not embed links; use Wikipedia if a citation is needed):",
     ]
     for i, item in enumerate(bundle.news_results[:7], 1):
         title = (item.get("title") or "").strip()
@@ -93,6 +93,7 @@ async def build_news_bundle(
     max_days: int = 7,
     hashtag_count: int = 12,
     template_variant: Optional[str] = None,
+    serpapi_api_key: Optional[str] = None,
 ) -> Optional[NewsResearchBundle]:
     """
     Fetch Google News and generate headline, story caption, short description, hashtags.
@@ -106,6 +107,7 @@ async def build_news_bundle(
             q,
             num_results=num_results,
             max_days=max_days,
+            api_key=serpapi_api_key,
         )
         if not news_results:
             logger.info("No news results for query: %s", q)

@@ -14,6 +14,7 @@ class GscProperty(Base):
     display_name = Column(String, nullable=True)
     wordpress_site_id = Column(Integer, ForeignKey("wordpress_sites.id", ondelete="SET NULL"), nullable=True)
     last_synced_at = Column(DateTime(timezone=True), nullable=True)
+    last_sitemap_submitted_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User", back_populates="gsc_properties")
@@ -21,3 +22,5 @@ class GscProperty(Base):
     page_metrics = relationship("GscPageMetric", back_populates="property", cascade="all, delete-orphan")
     query_metrics = relationship("GscQueryMetric", back_populates="property", cascade="all, delete-orphan")
     action_items = relationship("SeoActionItem", back_populates="property", cascade="all, delete-orphan")
+    index_audit_runs = relationship("GscIndexAuditRun", back_populates="property", cascade="all, delete-orphan")
+    url_inspections = relationship("GscUrlInspection", back_populates="property", cascade="all, delete-orphan")

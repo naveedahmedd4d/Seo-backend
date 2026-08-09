@@ -10,6 +10,7 @@ ActionType = Literal[
     "zero_clicks",
     "keyword_gap",
     "cannibalization",
+    "not_indexed",
 ]
 
 ActionStatus = Literal["pending_review", "approved", "dismissed", "snoozed"]
@@ -18,6 +19,18 @@ ActionSeverity = Literal["critical", "warning", "info"]
 
 class GscOAuthStatusResponse(BaseModel):
     connected: bool
+
+
+class GscOAuthSetupInfoResponse(BaseModel):
+    redirect_uri: str
+    has_app_credentials: bool
+    client_id: Optional[str] = None
+    developer_portal_url: str = "https://console.cloud.google.com/apis/credentials"
+
+
+class GscOAuthConnectRequest(BaseModel):
+    client_id: str
+    client_secret: str
 
 
 class GscOAuthSetupResponse(BaseModel):
@@ -42,6 +55,7 @@ class GscPropertyResponse(BaseModel):
 class GscPropertiesListResponse(BaseModel):
     available: list[GscPropertyResponse]
     saved: list[GscPropertyResponse]
+    fetch_error: Optional[str] = None
 
 
 class GscSyncRequest(BaseModel):
@@ -112,6 +126,11 @@ class ActionItemResponse(BaseModel):
     linked_workflow_id: Optional[int] = None
     snoozed_until: Optional[str] = None
     detected_at: Optional[str] = None
+    fix_status: Optional[str] = None
+    fix_result: Optional[dict[str, Any]] = None
+    indexing_status: Optional[str] = None
+    gsc_inspect_url: Optional[str] = None
+    fixed_at: Optional[str] = None
 
 
 class ActionListResponse(BaseModel):
@@ -129,3 +148,26 @@ class ActionBulkRequest(BaseModel):
     ids: list[int]
     status: Literal["approved", "dismissed"]
     snoozed_until: Optional[datetime] = None
+
+
+class GscIndexAuditStartRequest(BaseModel):
+    property_id: int
+    force: bool = False
+
+
+class GscIndexAuditStatusResponse(BaseModel):
+    id: Optional[int] = None
+    property_id: int
+    status: str = "idle"
+    total_urls: int = 0
+    processed_urls: int = 0
+    not_indexed_count: int = 0
+    error_message: Optional[str] = None
+    warning_message: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class IndexingQueueResponse(BaseModel):
+    items: list[ActionItemResponse]
+    total: int

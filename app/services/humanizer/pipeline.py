@@ -34,6 +34,8 @@ async def humanize_pipeline(
     tone: Tone = "professional",
     voice_sample: Optional[str] = None,
     use_translation_chain: Optional[bool] = None,
+    *,
+    api_key: Optional[str] = None,
 ) -> HumanizeResponse:
     """Humanize via Apify; tone/voice_sample ignored (actor has no tone API)."""
     del voice_sample, use_translation_chain
@@ -44,7 +46,7 @@ async def humanize_pipeline(
     original = str(text).strip()
     analysis_before = analyze_text(original, tone=tone)
 
-    humanized = await humanize_text_apify(original)
+    humanized = await humanize_text_apify(original, api_key=api_key)
 
     analysis_after = analyze_text(humanized, tone=tone)
     diff_segments = build_diff(original, humanized)

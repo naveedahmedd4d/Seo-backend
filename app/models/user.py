@@ -41,3 +41,9 @@ class User(Base):
     )
     gsc_properties = relationship("GscProperty", back_populates="user", cascade="all, delete-orphan")
     seo_action_items = relationship("SeoActionItem", back_populates="user", cascade="all, delete-orphan")
+    llm_settings = relationship(
+        "UserLlmSettings",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )

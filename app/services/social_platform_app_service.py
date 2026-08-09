@@ -150,7 +150,7 @@ def upsert_user_platform_app(
         validation_error = validate_pinterest_app_credentials(client_id, client_secret)
     elif platform == "x":
         validation_error = validate_x_app_credentials(client_id, client_secret)
-    elif platform == "blogger":
+    elif platform in {"blogger", "gsc"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
     elif platform == "reddit":
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
@@ -258,6 +258,24 @@ def get_blogger_app_credentials(
     )
 
 
+def get_gsc_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    from app.services.gsc_oauth_service import get_gsc_redirect_uri
+
+    row = get_user_platform_app(db, user_id, "gsc")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_gsc_redirect_uri(),
+    )
+
+
 def get_reddit_app_credentials(
     db: Session,
     user_id: int,
@@ -336,6 +354,10 @@ def user_has_mastodon_app(db: Session, user_id: int) -> bool:
 
 def user_has_blogger_app(db: Session, user_id: int) -> bool:
     return get_blogger_app_credentials(db, user_id) is not None
+
+
+def user_has_gsc_app(db: Session, user_id: int) -> bool:
+    return get_gsc_app_credentials(db, user_id) is not None
 
 
 def user_has_reddit_app(db: Session, user_id: int) -> bool:

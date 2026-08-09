@@ -240,8 +240,9 @@ async def research_keywords(
     user_id: int
 ) -> Dict[str, Any]:
     """Research keywords using Tavily"""
-    if not settings.tavily_api_key:
-        raise ValueError("Tavily API key not configured")
+    from app.services.llm_settings_service import resolve_api_key
+
+    tavily_key = resolve_api_key(db, user_id, "tavily")
     
     await _rate_limit()
     
@@ -252,7 +253,7 @@ async def research_keywords(
             "Content-Type": "application/json"
         }
         payload = {
-            "api_key": settings.tavily_api_key,
+            "api_key": tavily_key,
             "query": query,
             "search_depth": "basic",
             "include_answer": True,
@@ -356,19 +357,24 @@ async def find_youtube_interview(celebrity_name: str) -> Optional[str]:
     return None
 
 
-async def search_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]:
+async def search_youtube_interviews(
+    celebrity_name: str,
+    *,
+    api_key: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Search for YouTube interview videos for the celebrity using Tavily.
     Returns a list of dicts with url, title, description (compatible with Apify-style response).
     """
-    if not celebrity_name or not settings.tavily_api_key:
+    tavily_key = (api_key or settings.tavily_api_key or "").strip()
+    if not celebrity_name or not tavily_key:
         return []
     await _rate_limit()
     query = f"{celebrity_name.strip()} interview YouTube"
     try:
         url_api = "https://api.tavily.com/search"
         payload = {
-            "api_key": settings.tavily_api_key,
+            "api_key": tavily_key,
             "query": query,
             "search_depth": "basic",
             "max_results": 10,
@@ -405,11 +411,14 @@ async def search_youtube_interviews(celebrity_name: str) -> List[Dict[str, Any]]
 
 async def get_content_suggestions(
     query: str,
-    num_suggestions: int = 5
+    num_suggestions: int = 5,
+    *,
+    api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Get content suggestions using Tavily"""
-    if not settings.tavily_api_key:
-        raise ValueError("Tavily API key not configured")
+    tavily_key = (api_key or "").strip()
+    if not tavily_key:
+        raise ValueError("Add your Tavily API key in Settings")
     
     await _rate_limit()
     
@@ -420,7 +429,7 @@ async def get_content_suggestions(
             "Content-Type": "application/json"
         }
         payload = {
-            "api_key": settings.tavily_api_key,
+            "api_key": tavily_key,
             "query": query,
             "search_depth": "advanced",
             "max_results": num_suggestions,

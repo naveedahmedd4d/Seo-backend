@@ -22,10 +22,19 @@ from app.services.openrouter_service import (
     generate_meta_description,
     generate_seo_title,
     _blog_delay,
+    set_llm_context,
+    reset_llm_context,
 )
+from app.services.llm_settings_service import resolve_llm_credentials
 from app.services.trivly_service import research_keywords
 
 logger = logging.getLogger(__name__)
+
+
+def _activate_user_llm(db: Session, user_id: int):
+    """Resolve and set LLM ContextVar. Returns reset token."""
+    creds = resolve_llm_credentials(db, user_id)
+    return set_llm_context(creds)
 
 ARTICLE_TYPE_HINTS = {
     "cost_guide": "Write a pricing and cost breakdown guide. Include factors affecting price, typical ranges, and what to budget for.",
@@ -35,9 +44,9 @@ ARTICLE_TYPE_HINTS = {
 }
 
 
-async def _research_snippet(keyword: str) -> str:
+async def _research_snippet(db: Session, user_id: int, keyword: str) -> str:
     try:
-        results = await research_keywords(keyword)
+        results = await research_keywords(db, keyword, user_id)
         if isinstance(results, dict):
             answer = results.get("answer") or ""
             if answer:
@@ -64,10 +73,14 @@ def _service_list_block(site: AuthoritySite) -> str:
 async def generate_money_page_content(
     site: AuthoritySite,
     *,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
     include_research: bool = False,
 ) -> Dict[str, str]:
     brand = site.wordpress_site.name if site.wordpress_site else "Our company"
-    research = await _research_snippet(site.money_page_focus_keyword) if include_research else ""
+    research = ""
+    if include_research and db is not None and user_id is not None:
+        research = await _research_snippet(db, user_id, site.money_page_focus_keyword)
     research_block = f"\nResearch context:\n{research}\n" if research else ""
 
     prompt = f"""You are an expert SEO copywriter for a commercial service business.
@@ -107,10 +120,14 @@ async def generate_service_page_content(
     site: AuthoritySite,
     cluster: AuthorityServiceCluster,
     *,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
     include_research: bool = False,
 ) -> Dict[str, str]:
     brand = site.wordpress_site.name if site.wordpress_site else "Our company"
-    research = await _research_snippet(cluster.focus_keyword) if include_research else ""
+    research = ""
+    if include_research and db is not None and user_id is not None:
+        research = await _research_snippet(db, user_id, cluster.focus_keyword)
     research_block = f"\nResearch context:\n{research}\n" if research else ""
     blog_titles = "\n".join(f"- {b.title} (/{b.slug})" for b in cluster.blog_posts)
 
@@ -152,10 +169,14 @@ async def generate_blog_content(
     cluster: AuthorityServiceCluster,
     blog: AuthorityBlogPost,
     *,
+    db: Optional[Session] = None,
+    user_id: Optional[int] = None,
     include_research: bool = False,
 ) -> Dict[str, str]:
     brand = site.wordpress_site.name if site.wordpress_site else "Our company"
-    research = await _research_snippet(blog.focus_keyword) if include_research else ""
+    research = ""
+    if include_research and db is not None and user_id is not None:
+        research = await _research_snippet(db, user_id, blog.focus_keyword)
     research_block = f"\nResearch context:\n{research}\n" if research else ""
     type_hint = ARTICLE_TYPE_HINTS.get(blog.article_type or "", "Write an informative guide.")
 
@@ -213,8 +234,12 @@ async def run_generate_money_page(
     site.money_page_is_generating = True
     site.money_page_generation_error = None
     db.commit()
+    llm_token = None
     try:
-        result = await generate_money_page_content(site, include_research=include_research)
+        llm_token = _activate_user_llm(db, user_id)
+        result = await generate_money_page_content(
+            site, db=db, user_id=user_id, include_research=include_research
+        )
         site.money_page_body = result["body"]
         site.money_page_seo_title = result.get("seo_title")
         site.money_page_meta_description = result.get("meta_description")
@@ -227,6 +252,9 @@ async def run_generate_money_page(
         site.money_page_is_generating = False
         site.money_page_generation_error = str(e)[:500]
         db.commit()
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 async def run_generate_service_page(
@@ -239,8 +267,12 @@ async def run_generate_service_page(
     cluster.is_generating = True
     cluster.generation_error = None
     db.commit()
+    llm_token = None
     try:
-        result = await generate_service_page_content(site, cluster, include_research=include_research)
+        llm_token = _activate_user_llm(db, user_id)
+        result = await generate_service_page_content(
+            site, cluster, db=db, user_id=user_id, include_research=include_research
+        )
         cluster.body = result["body"]
         cluster.seo_title = result.get("seo_title")
         cluster.meta_description = result.get("meta_description")
@@ -253,6 +285,9 @@ async def run_generate_service_page(
         cluster.is_generating = False
         cluster.generation_error = str(e)[:500]
         db.commit()
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 async def run_generate_blog(
@@ -266,8 +301,12 @@ async def run_generate_blog(
     blog.is_generating = True
     blog.generation_error = None
     db.commit()
+    llm_token = None
     try:
-        result = await generate_blog_content(site, cluster, blog, include_research=include_research)
+        llm_token = _activate_user_llm(db, user_id)
+        result = await generate_blog_content(
+            site, cluster, blog, db=db, user_id=user_id, include_research=include_research
+        )
         blog.body = result["body"]
         blog.seo_title = result.get("seo_title")
         blog.meta_description = result.get("meta_description")
@@ -280,6 +319,9 @@ async def run_generate_blog(
         blog.is_generating = False
         blog.generation_error = str(e)[:500]
         db.commit()
+    finally:
+        if llm_token is not None:
+            reset_llm_context(llm_token)
 
 
 async def run_generate_cluster_blogs(

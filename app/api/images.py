@@ -6,6 +6,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.image_search_history import ImageSearchHistory
 from app.services.serpapi_service import search_images
+from app.services.llm_settings_service import resolve_api_key
 from app.schemas.images import (
     ImageSearchRequest,
     ImageSearchResponse,
@@ -39,6 +40,7 @@ async def search_images_endpoint(
 ):
     """Search images by keyword and save to history."""
     try:
+        serp_key = resolve_api_key(db, current_user, "serpapi")
         images_data = await search_images(
             request.keyword,
             request.num_results,
@@ -46,6 +48,7 @@ async def search_images_endpoint(
             size=request.size,
             color=request.color,
             orientation=request.orientation,
+            api_key=serp_key,
         )
         images = [
             ImageResult(
@@ -70,6 +73,8 @@ async def search_images_endpoint(
             images=images,
             count=len(images),
         )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

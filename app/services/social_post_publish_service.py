@@ -9,12 +9,19 @@ from typing import Any, Optional
 from fastapi import Request
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
 from app.schemas.social_post import SocialPostPublishResultItem, SocialPostPublishPlatformOptions
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
-from app.services.social_post_copy_service import publish_context_from_history
+from app.services.social_post_copy_service import PublishCopyContext, build_platform_copy, publish_context_from_history
 from app.services.social_post_platform_publish import download_image_bytes, publish_to_platform
+from app.services.upload_post_service import (
+    UPLOAD_POST_PLATFORMS,
+    is_upload_post_configured,
+    is_upload_post_platform,
+    upload_photos,
+)
 
 
 class HistoryNotFoundError(Exception):
@@ -99,6 +106,87 @@ def _platform_options_dict(
     return opts if isinstance(opts, dict) else {}
 
 
+def _upload_post_title_for_platform(platform: str, ctx: PublishCopyContext) -> str:
+    copy = build_platform_copy(platform, ctx)
+    if platform == "instagram":
+        return str(copy.get("caption") or ctx.headline or "")
+    if platform == "facebook":
+        return str(copy.get("message") or ctx.headline or "")
+    if platform == "x":
+        return str(copy.get("text") or ctx.headline or "")
+    if platform == "pinterest":
+        return str(copy.get("title") or ctx.headline or "")
+    return ctx.headline or ""
+
+
+def _upload_post_description(ctx: PublishCopyContext, platforms: list[str]) -> str | None:
+    """Shared description field used by Facebook / Pinterest on Upload-Post."""
+    if "pinterest" in platforms:
+        copy = build_platform_copy("pinterest", ctx)
+        desc = copy.get("description")
+        if desc:
+            return str(desc)
+    if "facebook" in platforms:
+        story = (ctx.story_caption or ctx.short_description or "").strip()
+        return story or None
+    return (ctx.story_caption or ctx.short_description or "").strip() or None
+
+
+async def _publish_via_upload_post(
+    platforms: list[str],
+    ctx: PublishCopyContext,
+    image_bytes: bytes | None,
+    platform_options: Optional[SocialPostPublishPlatformOptions],
+) -> list[SocialPostPublishResultItem]:
+    if not is_upload_post_configured():
+        return [
+            SocialPostPublishResultItem(
+                platform=p,
+                success=False,
+                error="UPLOAD_POST_API_KEY is not configured",
+            )
+            for p in platforms
+        ]
+    if not image_bytes:
+        return [
+            SocialPostPublishResultItem(
+                platform=p,
+                success=False,
+                error="Image is required to publish via Upload-Post",
+            )
+            for p in platforms
+        ]
+
+    platform_titles = {
+        p: _upload_post_title_for_platform(p, ctx) for p in platforms
+    }
+    title = platform_titles.get(platforms[0]) or ctx.headline or " "
+    description = _upload_post_description(ctx, platforms)
+
+    pinterest_opts = _platform_options_dict("pinterest", platform_options)
+    facebook_opts = _platform_options_dict("facebook", platform_options)
+    board_id = (
+        str(pinterest_opts.get("board_id") or "").strip()
+        or (settings.upload_post_pinterest_board_id or "").strip()
+        or None
+    )
+    page_id = (
+        str(facebook_opts.get("page_id") or "").strip()
+        or (settings.upload_post_facebook_page_id or "").strip()
+        or None
+    )
+
+    return await upload_photos(
+        platforms,
+        image_bytes,
+        title=title,
+        description=description,
+        platform_titles=platform_titles,
+        pinterest_board_id=board_id,
+        facebook_page_id=page_id,
+    )
+
+
 async def publish_to_platforms(
     db: Session,
     user_id: int,
@@ -124,8 +212,34 @@ async def publish_to_platforms(
             except Exception:
                 image_bytes = None
 
-    results: list[SocialPostPublishResultItem] = []
-    for platform in platforms:
+    upload_post_platforms = [
+        p for p in platforms if is_upload_post_configured() and is_upload_post_platform(p)
+    ]
+    # Preserve original request order in final results
+    upload_set = set(upload_post_platforms)
+    native_platforms = [p for p in platforms if p not in upload_set]
+
+    results_by_platform: dict[str, SocialPostPublishResultItem] = {}
+
+    if upload_post_platforms:
+        up_results = await _publish_via_upload_post(
+            upload_post_platforms,
+            ctx,
+            image_bytes,
+            platform_options,
+        )
+        for item in up_results:
+            results_by_platform[item.platform] = item
+
+    for platform in native_platforms:
+        # Guard: if Upload-Post is configured, never fall back to native for migrated IDs
+        if is_upload_post_configured() and platform in UPLOAD_POST_PLATFORMS:
+            results_by_platform[platform] = SocialPostPublishResultItem(
+                platform=platform,
+                success=False,
+                error="Platform must be published via Upload-Post",
+            )
+            continue
         opts = _platform_options_dict(platform, platform_options)
         result = await publish_to_platform(
             db,
@@ -136,8 +250,17 @@ async def publish_to_platforms(
             image_bytes=image_bytes if platform == "x" else None,
             platform_options=opts,
         )
-        results.append(result)
-    return results
+        results_by_platform[result.platform] = result
+
+    return [
+        results_by_platform.get(
+            p,
+            SocialPostPublishResultItem(
+                platform=p, success=False, error="No publish result"
+            ),
+        )
+        for p in platforms
+    ]
 
 
 def record_publications(

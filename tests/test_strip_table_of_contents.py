@@ -1,8 +1,11 @@
-"""Tests for sanitizing blog body content (TOC, companion links)."""
+"""Tests for sanitizing blog body content (TOC, companion links, external links)."""
 
 from app.services.blog_consistency import (
+    append_site_cta_html,
+    append_site_cta_markdown,
     sanitize_blog_body,
     strip_companion_article_links,
+    strip_external_markdown_links,
     strip_table_of_contents,
 )
 
@@ -61,3 +64,53 @@ def test_sanitize_blog_body_removes_toc_and_companion_links():
     assert "Table of Contents" not in cleaned
     assert "jane-doe-net-worth" not in cleaned
     assert "## Intro" in cleaned
+
+
+def test_strip_external_markdown_links_keeps_text():
+    body = (
+        "According to [Wikipedia](https://en.wikipedia.org/wiki/Stephen_Curry), "
+        "he was born in Akron."
+    )
+    cleaned = strip_external_markdown_links(body)
+    assert "https://" not in cleaned
+    assert "Wikipedia" in cleaned
+    assert "he was born in Akron" in cleaned
+
+
+def test_strip_external_markdown_links_preserves_internal_paths():
+    body = "See [our guide](/stephen-curry-net-worth) for more."
+    cleaned = strip_external_markdown_links(body)
+    assert "](/stephen-curry-net-worth)" in cleaned
+
+
+def test_sanitize_blog_body_strips_external_links():
+    body = "## Career\n\nStats from [ESPN](https://www.espn.com/nba) show strong performance."
+    cleaned = sanitize_blog_body(body)
+    assert "https://" not in cleaned
+    assert "ESPN" in cleaned
+
+
+def test_append_site_cta_markdown_adds_relative_link():
+    body = "## Conclusion\n\nSummary paragraph."
+    result = append_site_cta_markdown(body)
+    assert result.endswith("For more insights, explore our [website](/).\n")
+    assert "[website](/)" in result
+
+
+def test_append_site_cta_markdown_skips_duplicate():
+    body = "For more insights, explore our [website](/)."
+    assert append_site_cta_markdown(body) == body
+
+
+def test_append_site_cta_html_uses_site_url():
+    body = "<p>Article body</p>"
+    result = append_site_cta_html(body, href="https://example.com")
+    assert '<a href="https://example.com">website</a>' in result
+    assert "For more insights" in result
+
+
+def test_append_site_cta_survives_sanitize_blog_body():
+    body = append_site_cta_markdown("## Intro\n\nContent here.")
+    cleaned = sanitize_blog_body(body)
+    assert "[website](/)" in cleaned
+    assert "For more insights" in cleaned

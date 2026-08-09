@@ -27,8 +27,10 @@ async def _rate_limit():
     _last_request_time = time.time()
 
 
-def _get_groq_fallback_key() -> Optional[str]:
-    """Groq API key for trending fallback (dedicated key or main groq key)."""
+def _get_groq_fallback_key(override: Optional[str] = None) -> Optional[str]:
+    """Groq API key for trending fallback (caller-resolved or legacy env)."""
+    if override and override.strip():
+        return override.strip()
     return settings.trending_fallback_groq_api_key or settings.groq_api_key
 
 
@@ -48,13 +50,15 @@ def _is_serpapi_rate_limit(status_code: int, error_message: str) -> bool:
 async def _fetch_trending_keywords_via_groq(
     db: Session,
     hours: int,
+    *,
+    groq_api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Fallback: generate trending-style keywords via Groq when SerpAPI is rate limited."""
-    api_key = _get_groq_fallback_key()
+    api_key = _get_groq_fallback_key(groq_api_key)
     if not api_key:
         raise ValueError(
             "SerpAPI rate limit hit and Groq fallback not configured. "
-            "Set TRENDING_FALLBACK_GROQ_API_KEY or GROQ_API_KEY in .env"
+            "Add a Trending fallback Groq or Groq API key in Settings."
         )
     await _rate_limit()
     prompt = f"""List 20 currently trending search keywords or topics (last {hours} hours). 
@@ -121,11 +125,15 @@ Examples: AI news, weather today, election results, sports scores."""
 
 async def fetch_trending_keywords(
     db: Session,
-    hours: int = 4
+    hours: int = 4,
+    *,
+    api_key: Optional[str] = None,
+    groq_fallback_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Fetch trending keywords from SerpAPI (last N hours)"""
-    if not settings.serpapi_key:
-        raise ValueError("SerpAPI key not configured")
+    """Fetch trending keywords from SerpAPI (last N hours)."""
+    serp_key = (api_key or settings.serpapi_key or "").strip()
+    if not serp_key:
+        raise ValueError("Add your SerpAPI API key in Settings")
     
     await _rate_limit()
     
@@ -137,7 +145,7 @@ async def fetch_trending_keywords(
         url = "https://serpapi.com/search.json"  # Use .json endpoint as per SerpAPI best practices
         params = {
             "engine": "google_trends_trending_now",  # Special engine for trending searches
-            "api_key": settings.serpapi_key,
+            "api_key": serp_key,
             "geo": "",  # Empty string for worldwide (or "US" for US-specific)
             "hours": str(hours)  # Number of past hours to retrieve (e.g., "4" for last 4 hours)
         }
@@ -153,8 +161,8 @@ async def fetch_trending_keywords(
                     error_msg = error_json.get("error", error_json.get("message", error_data))
                 except Exception:
                     error_msg = error_data
-                if _is_serpapi_rate_limit(response.status_code, error_msg) and _get_groq_fallback_key():
-                    return await _fetch_trending_keywords_via_groq(db, hours)
+                if _is_serpapi_rate_limit(response.status_code, error_msg) and _get_groq_fallback_key(groq_fallback_key):
+                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key)
                 raise Exception(f"SerpAPI returned {response.status_code}: {error_msg}")
             
             data = response.json()
@@ -162,8 +170,8 @@ async def fetch_trending_keywords(
             # SerpAPI can return 200 with {"error": "message"} for API errors (e.g. invalid key, rate limit)
             if "error" in data:
                 err_msg = data["error"]
-                if _is_serpapi_rate_limit(200, err_msg) and _get_groq_fallback_key():
-                    return await _fetch_trending_keywords_via_groq(db, hours)
+                if _is_serpapi_rate_limit(200, err_msg) and _get_groq_fallback_key(groq_fallback_key):
+                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key)
                 raise Exception(f"SerpAPI error: {err_msg}")
             
             # Extract trending keywords from response
@@ -269,14 +277,17 @@ def _parse_news_date_within_days(date_str: str, max_days: int = 7) -> bool:
 async def fetch_google_news_light(
     keyword: str,
     num_results: int = 10,
-    max_days: int = 7
+    max_days: int = 7,
+    *,
+    api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Fetch latest news from SerpAPI Google News Light (last 1-7 days).
     Uses tbs=qdr:w7 when possible; otherwise filters by parsing 'date' strings.
     """
-    if not settings.serpapi_key:
-        raise ValueError("SerpAPI key not configured")
+    serp_key = (api_key or settings.serpapi_key or "").strip()
+    if not serp_key:
+        raise ValueError("Add your SerpAPI API key in Settings")
 
     await _rate_limit()
 
@@ -284,7 +295,7 @@ async def fetch_google_news_light(
         url = "https://serpapi.com/search.json"
         params = {
             "engine": "google_news_light",
-            "api_key": settings.serpapi_key,
+            "api_key": serp_key,
             "q": keyword,
             "num": num_results,
         }
@@ -376,10 +387,13 @@ async def search_images(
     size: str | None = None,
     color: str | None = None,
     orientation: str | None = None,
+    *,
+    api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Search for images using SerpAPI"""
-    if not settings.serpapi_key:
-        raise ValueError("SerpAPI key not configured")
+    serp_key = (api_key or settings.serpapi_key or "").strip()
+    if not serp_key:
+        raise ValueError("Add your SerpAPI API key in Settings")
 
     await _rate_limit()
 
@@ -391,7 +405,7 @@ async def search_images(
 
         params: Dict[str, Any] = {
             "engine": "google_images",
-            "api_key": settings.serpapi_key,
+            "api_key": serp_key,
             "q": query,
             "num": num_results,
         }
@@ -451,16 +465,18 @@ def get_trending_keywords_from_db(
         "bio_blog_workflow_id": k.bio_blog_workflow_id if k.bio_blog_workflow_id is not None else k.blog_workflow_id,
         "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
         "source": k.source,
+        "kd": k.kd,
     } for k in keywords]
 
 
-async def _serpapi_get(params: Dict[str, Any]) -> Dict[str, Any]:
+async def _serpapi_get(params: Dict[str, Any], *, api_key: Optional[str] = None) -> Dict[str, Any]:
     """Shared SerpAPI GET helper with error handling."""
-    if not settings.serpapi_key:
-        raise ValueError("SerpAPI key not configured")
+    serp_key = (api_key or settings.serpapi_key or "").strip()
+    if not serp_key:
+        raise ValueError("Add your SerpAPI API key in Settings")
 
     await _rate_limit()
-    params = {**params, "api_key": settings.serpapi_key}
+    params = {**params, "api_key": serp_key}
     url = "https://serpapi.com/search.json"
 
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
@@ -485,6 +501,8 @@ async def fetch_google_autocomplete(
     limit: int = 10,
     geo: str = "US",
     hl: str = "en",
+    *,
+    api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Google Autocomplete via SerpAPI (engine=google_autocomplete).
@@ -498,7 +516,7 @@ async def fetch_google_autocomplete(
         "q": query.strip(),
         "gl": geo.lower() if geo else "us",
         "hl": hl,
-    })
+    }, api_key=api_key)
 
     results: List[Dict[str, Any]] = []
     seen: set[str] = set()
@@ -524,6 +542,8 @@ async def fetch_google_trends_related_queries(
     limit: int = 10,
     geo: str = "US",
     hl: str = "en",
+    *,
+    api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Google Trends related queries via SerpAPI (engine=google_trends, data_type=RELATED_QUERIES).
@@ -539,7 +559,7 @@ async def fetch_google_trends_related_queries(
         "date": "today 12-m",
         "geo": geo.upper() if geo else "US",
         "hl": hl,
-    })
+    }, api_key=api_key)
 
     related = data.get("related_queries") or {}
     results: List[Dict[str, Any]] = []
@@ -571,10 +591,12 @@ async def fetch_topical_mapping(
     limit: int = 8,
     geo: str = "US",
     hl: str = "en",
+    *,
+    api_key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Fetch autocomplete suggestions and Trends related queries in parallel."""
-    autocomplete_task = fetch_google_autocomplete(query, limit=limit, geo=geo, hl=hl)
-    related_task = fetch_google_trends_related_queries(query, limit=limit, geo=geo, hl=hl)
+    autocomplete_task = fetch_google_autocomplete(query, limit=limit, geo=geo, hl=hl, api_key=api_key)
+    related_task = fetch_google_trends_related_queries(query, limit=limit, geo=geo, hl=hl, api_key=api_key)
     autocomplete, related_queries = await asyncio.gather(
         autocomplete_task,
         related_task,
@@ -625,5 +647,6 @@ def get_used_trending_keywords_from_db(
         "bio_blog_workflow_id": k.bio_blog_workflow_id if k.bio_blog_workflow_id is not None else k.blog_workflow_id,
         "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
         "source": k.source,
+        "kd": k.kd,
     } for k in keywords]
 
