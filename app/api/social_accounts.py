@@ -159,46 +159,8 @@ async def list_social_accounts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        build_synthetic_account_responses,
-        get_connected_platforms,
-        is_upload_post_configured,
-        is_upload_post_platform,
-    )
-
     accounts = get_user_social_accounts(db, current_user.id)
-    responses = [_account_to_response(account) for account in accounts]
-
-    if is_upload_post_configured():
-        # Prefer Upload-Post synthetic accounts for migrated platforms
-        responses = [r for r in responses if not is_upload_post_platform(r.platform)]
-        connected = await get_connected_platforms()
-        synthetic = build_synthetic_account_responses(
-            connected,
-            pinterest_board_id=settings.upload_post_pinterest_board_id,
-            facebook_page_id=settings.upload_post_facebook_page_id,
-        )
-        for row in synthetic:
-            responses.append(SocialAccountResponse(**row))
-
-    return responses
-
-
-def _reject_native_oauth_when_upload_post(platform: str) -> None:
-    from app.services.upload_post_service import (
-        is_upload_post_configured,
-        is_upload_post_platform,
-        upload_post_manage_users_url,
-    )
-
-    if is_upload_post_configured() and is_upload_post_platform(platform):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"{platform} is managed via Upload-Post. "
-                f"Connect or reconnect it at {upload_post_manage_users_url()}"
-            ),
-        )
+    return [_account_to_response(account) for account in accounts]
 
 
 # --- Pinterest ---
@@ -250,7 +212,6 @@ async def pinterest_connect(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _reject_native_oauth_when_upload_post("pinterest")
     try:
         upsert_user_platform_app(
             db,
@@ -311,23 +272,6 @@ async def pinterest_boards(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        get_pinterest_boards as upload_post_pinterest_boards,
-        is_upload_post_configured,
-    )
-
-    if is_upload_post_configured():
-        boards_raw = await upload_post_pinterest_boards()
-        boards = [
-            PinterestBoardItem(id=str(b["id"]), name=str(b.get("name") or "Board"))
-            for b in boards_raw
-            if b.get("id")
-        ]
-        default_board_id = settings.upload_post_pinterest_board_id
-        if not default_board_id and boards:
-            default_board_id = boards[0].id
-        return PinterestBoardsResponse(boards=boards, default_board_id=default_board_id)
-
     account = get_user_social_account(db, current_user.id, "pinterest")
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pinterest not connected")
@@ -352,21 +296,6 @@ async def pinterest_set_default_board(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        is_upload_post_configured,
-        upload_post_manage_users_url,
-    )
-
-    if is_upload_post_configured():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Pinterest boards are managed via Upload-Post. "
-                f"Set UPLOAD_POST_PINTEREST_BOARD_ID in the server env, or connect boards at "
-                f"{upload_post_manage_users_url()}"
-            ),
-        )
-
     account = get_user_social_account(db, current_user.id, "pinterest")
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pinterest not connected")
@@ -411,7 +340,6 @@ async def x_connect(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _reject_native_oauth_when_upload_post("x")
     try:
         upsert_user_platform_app(
             db,
@@ -1020,7 +948,6 @@ async def facebook_connect(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _reject_native_oauth_when_upload_post("facebook")
     try:
         upsert_user_platform_app(
             db,
@@ -1081,23 +1008,6 @@ async def facebook_pages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        get_facebook_pages as upload_post_facebook_pages,
-        is_upload_post_configured,
-    )
-
-    if is_upload_post_configured():
-        pages_raw = await upload_post_facebook_pages()
-        pages = [
-            FacebookPageItem(id=str(p["id"]), name=str(p.get("name") or "Page"))
-            for p in pages_raw
-            if p.get("id")
-        ]
-        default_page_id = settings.upload_post_facebook_page_id
-        if not default_page_id and len(pages) == 1:
-            default_page_id = pages[0].id
-        return FacebookPagesResponse(pages=pages, default_page_id=default_page_id)
-
     account = get_user_social_account(db, current_user.id, "facebook")
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facebook not connected")
@@ -1121,21 +1031,6 @@ async def facebook_set_default_page(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        is_upload_post_configured,
-        upload_post_manage_users_url,
-    )
-
-    if is_upload_post_configured():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Facebook pages are managed via Upload-Post. "
-                f"Set UPLOAD_POST_FACEBOOK_PAGE_ID in the server env, or manage pages at "
-                f"{upload_post_manage_users_url()}"
-            ),
-        )
-
     account = get_user_social_account(db, current_user.id, "facebook")
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Facebook not connected")
@@ -1180,7 +1075,6 @@ async def instagram_connect(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    _reject_native_oauth_when_upload_post("instagram")
     try:
         upsert_user_platform_app(
             db,
@@ -1295,20 +1189,6 @@ async def disconnect_social_account(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    from app.services.upload_post_service import (
-        is_upload_post_configured,
-        upload_post_manage_users_url,
-    )
-
-    if account_id < 0 and is_upload_post_configured():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "This account is managed via Upload-Post. "
-                f"Disconnect it at {upload_post_manage_users_url()}"
-            ),
-        )
-
     account = get_social_account_by_id(db, account_id, current_user.id)
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")

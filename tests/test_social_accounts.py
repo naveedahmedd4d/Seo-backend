@@ -1,7 +1,5 @@
 """Social accounts API tests."""
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -21,15 +19,6 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-@pytest.fixture(autouse=True)
-def disable_upload_post(monkeypatch):
-    """Keep native OAuth tests isolated from Upload-Post env configuration."""
-    monkeypatch.setattr("app.config.settings.upload_post_api_key", None)
-    monkeypatch.setattr(
-        "app.services.upload_post_service.settings.upload_post_api_key", None
-    )
 
 
 @pytest.fixture()
@@ -226,45 +215,3 @@ def test_social_media_storage_roundtrip(monkeypatch):
     filename = save_png_base64(encoded)
     assert filename.endswith(".png")
     assert public_image_url(filename).startswith("http://localhost:8000/api/social-post/media/")
-
-
-def test_list_social_accounts_merges_upload_post(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("app.config.settings.upload_post_api_key", "test-key")
-    monkeypatch.setattr(
-        "app.services.upload_post_service.settings.upload_post_api_key", "test-key"
-    )
-    connected = {
-        "instagram": {
-            "label": "trendifypress · Upload-Post",
-            "raw": {"display_name": "trendifypress"},
-            "synthetic_id": -101,
-        },
-        "x": {
-            "label": "X · Upload-Post",
-            "raw": {"username": "x"},
-            "synthetic_id": -104,
-        },
-    }
-    with patch(
-        "app.services.upload_post_service.get_connected_platforms",
-        new=AsyncMock(return_value=connected),
-    ):
-        response = client.get("/api/social-accounts", headers=auth_headers)
-    assert response.status_code == 200
-    platforms = {row["platform"] for row in response.json()}
-    assert platforms == {"instagram", "x"}
-    assert all(row["metadata"]["managed_by"] == "upload_post" for row in response.json())
-
-
-def test_upload_post_blocks_native_instagram_connect(client, auth_headers, monkeypatch):
-    monkeypatch.setattr("app.config.settings.upload_post_api_key", "test-key")
-    monkeypatch.setattr(
-        "app.services.upload_post_service.settings.upload_post_api_key", "test-key"
-    )
-    response = client.post(
-        "/api/social-accounts/instagram/connect",
-        headers=auth_headers,
-        json={"client_id": "123456789012345", "client_secret": "real_secret_value_here"},
-    )
-    assert response.status_code == 400
-    assert "Upload-Post" in response.json()["detail"]

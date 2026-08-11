@@ -90,12 +90,7 @@ def test_linkedin_facebook_instagram_are_active():
     for platform_id in ("linkedin", "facebook", "instagram"):
         p = platforms[platform_id]
         assert p.status == "active"
-    assert platforms["linkedin"].connect_enabled is True
-    # IG / Facebook / Pinterest / X connect via Upload-Post Manage Users
-    assert platforms["facebook"].connect_enabled is False
-    assert platforms["instagram"].connect_enabled is False
-    assert platforms["pinterest"].connect_enabled is False
-    assert platforms["x"].connect_enabled is False
+        assert p.connect_enabled is True
 
 
 def test_registry_file_exists():

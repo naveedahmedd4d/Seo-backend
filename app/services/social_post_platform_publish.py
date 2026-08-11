@@ -24,7 +24,6 @@ from app.services.reddit_service import get_valid_reddit_access_token, submit_li
 from app.services.social_account_service import get_account_metadata, get_user_social_account
 from app.services.social_post_copy_service import PublishCopyContext, build_platform_copy
 from app.services.x_service import create_tweet, get_valid_x_access_token, upload_media as upload_x_media
-from app.services.upload_post_service import is_upload_post_configured, is_upload_post_platform
 
 
 async def download_image_bytes(image_url: str) -> bytes:
@@ -45,18 +44,6 @@ async def publish_to_platform(
     platform_options: dict | None = None,
 ) -> SocialPostPublishResultItem:
     platform_options = platform_options or {}
-    platform = platform.lower()
-
-    if is_upload_post_configured() and is_upload_post_platform(platform):
-        return SocialPostPublishResultItem(
-            platform=platform,
-            success=False,
-            error=(
-                f"{platform} is published via Upload-Post. "
-                "Use the history publish flow (batched Upload-Post upload)."
-            ),
-        )
-
     copy = build_platform_copy(platform, ctx)
 
     if platform == "pinterest":

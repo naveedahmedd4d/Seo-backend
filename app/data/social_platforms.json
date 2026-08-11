@@ -33,10 +33,10 @@
     "content_types": ["image_card", "link"],
     "status": "active",
     "post_api_available": true,
-    "connect_enabled": false,
+    "connect_enabled": true,
     "sort_order": 30,
-    "description": "Pins publish via Upload-Post. Connect Pinterest on the Upload-Post Manage Users page.",
-    "docs_url": "https://docs.upload-post.com/api/upload-photo"
+    "description": "Create pins with your social card image and source link.",
+    "docs_url": "https://developers.pinterest.com/docs/api/v5/"
   },
   {
     "id": "linkedin",
@@ -59,10 +59,10 @@
     "content_types": ["link", "image_card"],
     "status": "active",
     "post_api_available": true,
-    "connect_enabled": false,
+    "connect_enabled": true,
     "sort_order": 50,
-    "description": "Facebook Page posts publish via Upload-Post. Connect the Page on Upload-Post Manage Users.",
-    "docs_url": "https://docs.upload-post.com/api/upload-photo"
+    "description": "Publish to Facebook Pages via the Meta Graph API.",
+    "docs_url": "https://developers.facebook.com/docs/pages-api"
   },
   {
     "id": "instagram",
@@ -72,10 +72,10 @@
     "content_types": ["image_card"],
     "status": "active",
     "post_api_available": true,
-    "connect_enabled": false,
+    "connect_enabled": true,
     "sort_order": 60,
-    "description": "Instagram feed posts publish via Upload-Post. Connect Instagram on Upload-Post Manage Users.",
-    "docs_url": "https://docs.upload-post.com/api/upload-photo"
+    "description": "Publish feed posts via Meta Graph API (Business/Creator account required).",
+    "docs_url": "https://developers.facebook.com/docs/instagram-api"
   },
   {
     "id": "x",
@@ -85,10 +85,10 @@
     "content_types": ["link", "image_card"],
     "status": "active",
     "post_api_available": true,
-    "connect_enabled": false,
+    "connect_enabled": true,
     "sort_order": 70,
-    "description": "Tweets publish via Upload-Post. Connect X on the Upload-Post Manage Users page.",
-    "docs_url": "https://docs.upload-post.com/api/upload-photo"
+    "description": "Post tweets with text, links, and images.",
+    "docs_url": "https://developer.x.com/en/docs/twitter-api"
   },
   {
     "id": "mastodon",

@@ -16,7 +16,9 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here"
     jwt_algorithm: str = "HS256"
     jwt_expiration: int = 3600
-    
+    # Only this account may use server .env API keys as platform defaults
+    platform_owner_email: Optional[str] = None
+
     # External APIs
     serpapi_key: Optional[str] = None
     mangools_api_token: Optional[str] = None
@@ -39,9 +41,6 @@ class Settings(BaseSettings):
     groq_blog_delay_seconds: float = 4.0
     # TLS verify for outbound httpx (Groq, Tavily, SerpAPI, etc.). Uses OS trust store via truststore, then certifi. Set false only for local dev.
     groq_ssl_verify: bool = True
-
-    # Only this email may use server .env API keys as platform defaults.
-    platform_owner_email: str = "hkaim1st@gmail.com"
     
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
@@ -76,13 +75,6 @@ class Settings(BaseSettings):
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
     google_gsc_redirect_uri: Optional[str] = None
-
-    # Upload-Post (unified social publishing for IG / Facebook / Pinterest / X)
-    upload_post_api_key: Optional[str] = None
-    upload_post_user: str = "trendifypress"
-    upload_post_base_url: str = "https://api.upload-post.com"
-    upload_post_pinterest_board_id: Optional[str] = None
-    upload_post_facebook_page_id: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),
