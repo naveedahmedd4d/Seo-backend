@@ -14,12 +14,14 @@ class TrendingKeywordResponse(BaseModel):
     id: Optional[int] = None
     keyword: str
     value: Optional[int] = None
+    increase_percentage: Optional[int] = None
     timestamp: Optional[str] = None
     fetched_at: Optional[str] = None
     category: Optional[str] = None
     kd: Optional[int] = None
     bio_blog_workflow_id: Optional[int] = None
     net_worth_blog_workflow_id: Optional[int] = None
+    blog_workflow_id: Optional[int] = None
     source: Optional[str] = None
     parent_id: Optional[int] = None
     subs: Optional[List["TrendingKeywordResponse"]] = None
@@ -28,7 +30,7 @@ class TrendingKeywordResponse(BaseModel):
 
 class SetBlogWorkflowRequest(BaseModel):
     workflow_id: int
-    content_type: Literal["biography", "net_worth"]
+    content_type: Literal["biography", "net_worth", "cluster_hub"]
 
 
 class AddManualKeywordsRequest(BaseModel):

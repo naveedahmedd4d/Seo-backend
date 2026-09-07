@@ -4,8 +4,11 @@ from app.services.blog_consistency import (
     append_site_cta_html,
     append_site_cta_markdown,
     sanitize_blog_body,
+    sanitize_net_worth_body,
     strip_companion_article_links,
     strip_external_markdown_links,
+    strip_net_worth_body_faq,
+    strip_net_worth_placeholder_rows,
     strip_table_of_contents,
 )
 
@@ -114,3 +117,82 @@ def test_append_site_cta_survives_sanitize_blog_body():
     cleaned = sanitize_blog_body(body)
     assert "[website](/)" in cleaned
     assert "For more insights" in cleaned
+
+
+def test_strip_net_worth_body_faq_removes_trailing_faq():
+    body = (
+        "Tulsi Gabbard has an estimated net worth of $8 million.\n\n"
+        "## Quick Facts / Tulsi Gabbard at a Glance\n\n"
+        "| Fact | Details |\n"
+        "| Full Name | Tulsi Gabbard |\n\n"
+        "## How Tulsi Gabbard Makes Her Money\n\n"
+        "Congressional salary and speaking fees.\n\n"
+        "## FAQ: Tulsi Gabbard Net Worth & More\n\n"
+        "### What is Tulsi Gabbard's net worth in 2026?\n\n"
+        "Estimates range from $55 million to $127 million.\n"
+    )
+    cleaned = sanitize_net_worth_body(body)
+    assert "## FAQ" not in cleaned
+    assert "What is Tulsi Gabbard's net worth" not in cleaned
+    assert "## Quick Facts" in cleaned
+    assert "Congressional salary" in cleaned
+
+
+def test_strip_net_worth_body_faq_leaves_body_without_faq_unchanged():
+    body = (
+        "Opening paragraph with a net worth figure.\n\n"
+        "## Quick Facts / Name at a Glance\n\n"
+        "Table here.\n\n"
+        "## Career & Achievements\n\n"
+        "Timeline bullets."
+    )
+    assert strip_net_worth_body_faq(body) == body
+    assert sanitize_net_worth_body(body) == body
+
+
+def test_strip_net_worth_body_faq_stops_at_next_h2():
+    body = (
+        "## Career & Achievements\n\n"
+        "Milestones.\n\n"
+        "## Frequently Asked Questions\n\n"
+        "Q: How much is she worth?\n\n"
+        "## Personal Life\n\n"
+        "Partner details."
+    )
+    cleaned = strip_net_worth_body_faq(body)
+    assert "Frequently Asked Questions" not in cleaned
+    assert "How much is she worth" not in cleaned
+    assert "## Career & Achievements" in cleaned
+    assert "## Personal Life" in cleaned
+    assert "Partner details." in cleaned
+
+
+def test_strip_net_worth_placeholder_rows_removes_unknown_facts():
+    body = (
+        "## Quick Facts / Scott Bessent at a Glance\n\n"
+        "| Fact | Details |\n"
+        "|------|--------|\n"
+        "| Full Name | Scott Bessent |\n"
+        "| Date of Birth | Not publicly disclosed |\n"
+        "| Nationality | American |\n"
+        "| Partner | **Not publicly disclosed** |\n"
+        "| Estimated Net Worth | $600 million |\n\n"
+        "## Scott Bessent Net Worth & Income Sources\n\n"
+        "Hedge fund management."
+    )
+    cleaned = sanitize_net_worth_body(body)
+    assert "Not publicly disclosed" not in cleaned
+    assert "| Full Name | Scott Bessent |" in cleaned
+    assert "| Nationality | American |" in cleaned
+    assert "| Estimated Net Worth | $600 million |" in cleaned
+    assert "|------|--------|" in cleaned
+    assert "Hedge fund management." in cleaned
+
+
+def test_strip_net_worth_placeholder_rows_leaves_real_values():
+    body = (
+        "| Fact | Details |\n"
+        "| Full Name | Jane Doe |\n"
+        "| Partner | John Smith |\n"
+    )
+    assert strip_net_worth_placeholder_rows(body) == body

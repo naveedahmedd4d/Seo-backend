@@ -39,5 +39,13 @@ def build_oauth_redirect_uri(platform: str, request: Optional[Request] = None) -
     override = env_map.get(platform)
     if override:
         return override.strip()
+    # OAuth providers reject any mismatch between the redirect_uri shown on the
+    # setup screen, the one sent in the authorize request, and the one on the
+    # callback. When API_PUBLIC_URL is explicitly configured, use it as the
+    # single source of truth instead of per-request Host headers (which can
+    # differ behind proxies or when the API is reachable via several domains).
+    configured = settings.api_public_url.rstrip("/")
+    if configured and configured != "http://localhost:8000":
+        return f"{configured}/api/social-accounts/{platform}/callback"
     base = resolve_public_base_url(request)
     return f"{base}/api/social-accounts/{platform}/callback"

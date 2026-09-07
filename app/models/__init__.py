@@ -29,7 +29,14 @@ from app.models.authority_site import (
     AuthorityLinkStatus,
 )
 from app.models.user_llm_settings import UserLlmSettings
+from app.models.user_blog_settings import UserBlogSettings, UserBlogTemplate
 from app.models.keyword_site_coverage import KeywordSiteCoverage
+from app.models.website_audit_run import WebsiteAuditRun
+from app.models.website_audit_page import WebsiteAuditPage
+from app.models.website_audit_issue import WebsiteAuditIssue
+from app.models.blog_content_audit_run import BlogContentAuditRun
+from app.models.blog_content_audit import BlogContentAudit
+from app.models.blog_content_audit_fix import BlogContentAuditFix
 
 __all__ = [
     "User",
@@ -64,6 +71,14 @@ __all__ = [
     "AuthorityLinkType",
     "AuthorityLinkStatus",
     "UserLlmSettings",
+    "UserBlogSettings",
+    "UserBlogTemplate",
     "KeywordSiteCoverage",
+    "WebsiteAuditRun",
+    "WebsiteAuditPage",
+    "WebsiteAuditIssue",
+    "BlogContentAuditRun",
+    "BlogContentAudit",
+    "BlogContentAuditFix",
 ]
 

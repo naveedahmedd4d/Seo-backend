@@ -47,3 +47,14 @@ class User(Base):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    blog_settings = relationship(
+        "UserBlogSettings",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    blog_templates = relationship(
+        "UserBlogTemplate",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )

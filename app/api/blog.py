@@ -30,6 +30,7 @@ from app.services.openrouter_service import (
     sanitize_religion_body,
     set_llm_context,
     reset_llm_context,
+    ensure_min_body_words,
 )
 from app.services.llm_settings_service import resolve_llm_credentials
 from app.services.serpapi_service import search_images as serpapi_search_images
@@ -46,9 +47,11 @@ from app.services.blog_consistency import (
     apply_canonical_zodiac,
     sanitize_filmography_table,
     sanitize_net_worth_body,
+    strip_net_worth_placeholder_rows,
     sanitize_blog_body,
     append_site_cta_markdown,
     append_site_cta_html,
+    rewrite_fortune_h1,
 )
 from app.services.blog_image_service import (
     apply_auto_images_to_workflow,
@@ -73,6 +76,10 @@ from app.schemas.blog import (
     BlogAutoImagesBatchResponse,
     BlogAutoImagesBatchResultItem,
     BlogAutoImagesSectionImage,
+    ClusterHubLinksRequest,
+    ClusterHubLinksResponse,
+    SiblingLinksRequest,
+    SiblingLinksResponse,
 )
 from app.models.workflow_state import WorkflowState
 from app.models.published_post import PublishedPost
@@ -432,6 +439,59 @@ def inject_internal_links_into_body(
     return result
 
 
+def _blog_overrides_from_state(workflow_state) -> Dict[str, Any]:
+    from app.services.blog_generation_config import extract_overrides
+
+    state = workflow_state.state_data if isinstance(getattr(workflow_state, "state_data", None), dict) else {}
+    return extract_overrides(state)
+
+
+def _resolve_workflow_blog_config(
+    db: Session,
+    workflow_state,
+    *,
+    topic: str,
+    description: Optional[str],
+    category: str,
+    content_intent: Optional[str] = None,
+    celebrity_content_type: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
+):
+    from app.services.blog_generation_config import (
+        resolve_article_type,
+        resolve_blog_generation_config,
+    )
+
+    overrides = _blog_overrides_from_state(workflow_state)
+    article_type = resolve_article_type(
+        content_intent=content_intent,
+        celebrity_content_type=celebrity_content_type,
+        category=category,
+        topic=topic,
+        description=description,
+        template_article_type=overrides.get("template_article_type"),
+    )
+    user_id = getattr(workflow_state, "user_id", None)
+    return resolve_blog_generation_config(
+        db,
+        user_id,
+        article_type=article_type,
+        overrides=overrides,
+        cluster_subs=cluster_subs,
+        topic=topic or "",
+    )
+
+
+def _apply_site_cta(body: str, cfg) -> str:
+    if cfg is None or not getattr(cfg, "include_site_cta", True):
+        return body or ""
+    return append_site_cta_markdown(
+        body or "",
+        href=getattr(cfg, "cta_href", "/") or "/",
+        text=getattr(cfg, "cta_text", None),
+    )
+
+
 CELEBRITY_CONTENT_TYPE_INTENTS: Dict[str, str] = {
     "biography": "parent_overview",
     "religious": "religion",
@@ -454,6 +514,15 @@ async def _run_celebrity_single_article(
 ) -> None:
     """Generate one celebrity article (biography, religious, or net worth) instead of the full tree."""
     content_intent = CELEBRITY_CONTENT_TYPE_INTENTS[celebrity_content_type]
+    cfg = _resolve_workflow_blog_config(
+        db,
+        workflow_state,
+        topic=topic,
+        description=description,
+        category=category,
+        content_intent=content_intent,
+        celebrity_content_type=celebrity_content_type,
+    )
 
     keyword_strategy: Optional[Dict[str, Any]] = None
     if research_context:
@@ -475,6 +544,7 @@ async def _run_celebrity_single_article(
         title = await generate_seo_title(
             topic, description, keywords, category,
             research_context=research_context, content_intent=content_intent,
+            seo_power_words=cfg.seo_power_words,
         )
     await _blog_delay()
     meta_description = (suggested_meta_description or "").strip()
@@ -501,6 +571,7 @@ async def _run_celebrity_single_article(
         "research_context": research_context,
         "content_intent": content_intent,
         "keyword_strategy": keyword_strategy,
+        "blog_config": cfg,
     }
     if celebrity_content_type == "biography":
         body_kwargs["youtube_url"] = youtube_url
@@ -511,20 +582,43 @@ async def _run_celebrity_single_article(
     body_content = await generate_blog_body(topic, description, keywords, category, **body_kwargs)
     await _blog_delay()
 
+    thin_content = False
     if celebrity_content_type == "biography":
         body_content = _inject_youtube_embed(body_content, youtube_url)
         body_content = sanitize_filmography_table(body_content, topic)
+        from app.services.celebrity_outline_templates import is_athlete_biography_topic
+
+        if is_athlete_biography_topic(topic, category, description):
+            body_content, thin_content = await ensure_min_body_words(
+                topic,
+                body_content,
+                min_words=cfg.min_words,
+                content_intent=content_intent,
+                research_context=research_context,
+            )
+            await _blog_delay()
     elif celebrity_content_type == "net_worth":
+        body_content = sanitize_net_worth_body(body_content)
+        body_content, thin_content = await ensure_min_body_words(
+            topic,
+            body_content,
+            min_words=cfg.min_words,
+            content_intent=content_intent,
+            research_context=research_context,
+        )
+        await _blog_delay()
         body_content = sanitize_net_worth_body(body_content)
 
     faqs = await generate_faqs(
         topic, description, keywords, category,
         research_context=research_context, content_intent=content_intent,
+        faq_count=cfg.faq_count,
     )
     await _blog_delay()
     related_queries_raw = await generate_related_queries(
         topic, description, keywords, category,
         research_context=research_context, content_intent=content_intent,
+        related_query_count=cfg.related_query_count,
     )
     related_queries = _normalize_related_queries(related_queries_raw)
 
@@ -533,7 +627,7 @@ async def _run_celebrity_single_article(
         body_content = sanitize_religion_body(body_content)
     body_content = _sanitize_conclusion_and_sources(body_content)
     body_content = rewrite_legacy_person_tree_paths(body_content)
-    body_content = append_site_cta_markdown(body_content)
+    body_content = _apply_site_cta(body_content, cfg)
 
     try:
         focus_keyword = await resolve_celebrity_display_name(topic, research_context)
@@ -542,10 +636,17 @@ async def _run_celebrity_single_article(
     if not focus_keyword:
         focus_keyword = topic.strip() or (keywords[0] if keywords else "article")
 
+    if celebrity_content_type == "net_worth":
+        focus_keyword = f"{focus_keyword} net worth".strip()
+        title = rewrite_fortune_h1(title, name=topic, year=None)
+
     if celebrity_content_type == "biography":
-        slug = generate_slug(title, focus_keyword=focus_keyword)
+        slug = generate_slug(title, focus_keyword=focus_keyword.replace(" net worth", "").strip() or focus_keyword)
     else:
-        parent_slug = generate_slug("", focus_keyword=focus_keyword)
+        parent_slug = generate_slug(
+            "",
+            focus_keyword=(focus_keyword.replace(" net worth", "").strip() or focus_keyword),
+        )
         slug = generate_slug("", parent_slug=parent_slug, intent=content_intent)
 
     state_data: Dict[str, Any] = {
@@ -562,11 +663,267 @@ async def _run_celebrity_single_article(
         "related_queries": related_queries,
         "focus_keyword": focus_keyword,
         "slug": slug,
+        "blog_config": cfg.to_snapshot(),
     }
+    if thin_content:
+        state_data["thin_content"] = True
     if keyword_strategy:
         state_data["keyword_strategy"] = keyword_strategy
     if research_context:
         state_data["research_summary"] = research_context[:500] + ("..." if len(research_context) > 500 else "")
+
+    workflow_state.state_data = state_data
+    workflow_state.status = WorkflowStatus.COMPLETED
+    db.commit()
+
+
+async def _run_cluster_hub_article(
+    db: Session,
+    workflow_state: WorkflowState,
+    topic: str,
+    description: Optional[str],
+    keywords: list,
+    category: str,
+    research_context: Optional[str],
+    cluster_subs: Optional[List[str]] = None,
+    suggested_title: Optional[str] = None,
+    suggested_meta_description: Optional[str] = None,
+    cluster_member_facts: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Generate a pillar hub listicle from a cluster main keyword + member names."""
+    from app.services.cluster_hub_templates import CLUSTER_HUB_INTENT, normalize_cluster_members
+
+    members = normalize_cluster_members(cluster_subs)
+    content_intent = CLUSTER_HUB_INTENT
+    cluster_member_facts = cluster_member_facts or []
+    cfg = _resolve_workflow_blog_config(
+        db,
+        workflow_state,
+        topic=topic,
+        description=description,
+        category=category,
+        content_intent=content_intent,
+        cluster_subs=members,
+    )
+
+    title = (suggested_title or "").strip()
+    if not title:
+        title = await generate_seo_title(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+    meta_description = (suggested_meta_description or "").strip()
+    if not meta_description:
+        meta_description = await generate_meta_description(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+
+    body_content = await generate_blog_body(
+        topic,
+        description,
+        keywords,
+        category,
+        research_context=research_context,
+        content_intent=content_intent,
+        cluster_subs=members,
+        cluster_member_facts=cluster_member_facts,
+        blog_config=cfg,
+    )
+    await _blog_delay()
+    body_content = strip_net_worth_placeholder_rows(body_content or "")
+    body_content, thin_content = await ensure_min_body_words(
+        topic,
+        body_content,
+        min_words=cfg.min_words,
+        content_intent=content_intent,
+        research_context=research_context,
+        cluster_subs=members,
+    )
+    await _blog_delay()
+    body_content = strip_net_worth_placeholder_rows(body_content or "")
+
+    faqs = await generate_faqs(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+        faq_count=cfg.faq_count,
+    )
+    await _blog_delay()
+    related_queries_raw = await generate_related_queries(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+        related_query_count=cfg.related_query_count,
+    )
+    related_queries = _normalize_related_queries(related_queries_raw)
+
+    body_content = sanitize_blog_body(body_content or "")
+    body_content = _sanitize_conclusion_and_sources(body_content)
+    # Ensure Last Updated block exists on hubs
+    if cfg.last_updated_footer and "Last Updated" not in (body_content or ""):
+        from datetime import date
+        from app.services.blog_consistency import last_updated_sources_block
+
+        block = last_updated_sources_block(date.today().strftime("%B %d, %Y"))
+        parts = (body_content or "").split("\n\n", 1)
+        if len(parts) == 2:
+            body_content = f"{parts[0]}\n\n{block}\n\n{parts[1]}"
+        else:
+            body_content = f"{body_content}\n\n{block}\n"
+    body_content = _apply_site_cta(body_content, cfg)
+
+    focus_keyword = topic.strip() or (keywords[0] if keywords else "article")
+    slug = generate_slug(title, focus_keyword=focus_keyword)
+
+    state_payload: Dict[str, Any] = {
+        "topic": topic,
+        "description": description,
+        "keywords": keywords,
+        "category": category,
+        "content_intent": content_intent,
+        "cluster_subs": members,
+        "title": title,
+        "meta_description": meta_description,
+        "body_content": body_content,
+        "faqs": faqs,
+        "related_queries": related_queries,
+        "focus_keyword": focus_keyword,
+        "slug": slug,
+    }
+    if cluster_member_facts:
+        state_payload["cluster_member_facts"] = cluster_member_facts
+    if thin_content:
+        state_payload["thin_content"] = True
+    if research_context:
+        state_payload["research_summary"] = research_context[:500] + (
+            "..." if len(research_context) > 500 else ""
+        )
+
+    workflow_state.state_data = state_payload
+    workflow_state.status = WorkflowStatus.COMPLETED
+    db.commit()
+
+
+NEWS_CONTENT_INTENTS = {"news_timeline", "news_explainer", "news_opinion"}
+
+# Minimum word targets per news intent
+_NEWS_MIN_WORDS: Dict[str, int] = {
+    "news_timeline": 1500,
+    "news_explainer": 1500,
+    "news_opinion": 1000,
+}
+
+
+async def _run_news_article(
+    db: Session,
+    workflow_state,
+    topic: str,
+    description: Optional[str],
+    keywords: list,
+    category: str,
+    research_context: Optional[str],
+    content_intent: str,
+    suggested_title: Optional[str] = None,
+    suggested_meta_description: Optional[str] = None,
+    news_context: Optional[str] = None,
+) -> None:
+    """Generate one news article (timeline, explainer, or opinion/reaction)."""
+    cfg = _resolve_workflow_blog_config(
+        db,
+        workflow_state,
+        topic=topic,
+        description=description,
+        category=category,
+        content_intent=content_intent,
+    )
+
+    # Extract story_description from news_context block if present (first few lines)
+    story_description: Optional[str] = None
+    if news_context and content_intent == "news_opinion":
+        for line in news_context.splitlines():
+            if line.startswith("Story hook"):
+                story_description = line.split(":", 1)[-1].strip()
+                break
+
+    title = (suggested_title or "").strip()
+    if not title:
+        title = await generate_seo_title(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+
+    meta_description = (suggested_meta_description or "").strip()
+    if not meta_description:
+        meta_description = await generate_meta_description(
+            topic, description, keywords, category,
+            research_context=research_context, content_intent=content_intent,
+        )
+    await _blog_delay()
+
+    body_content = await generate_blog_body(
+        topic,
+        description,
+        keywords,
+        category,
+        research_context=research_context,
+        content_intent=content_intent,
+        news_sources_block=news_context,
+        story_description=story_description,
+        blog_config=cfg,
+    )
+    await _blog_delay()
+
+    body_content, thin_content = await ensure_min_body_words(
+        topic,
+        body_content,
+        min_words=cfg.min_words,
+        content_intent=content_intent,
+        research_context=research_context,
+    )
+    await _blog_delay()
+
+    body_content = sanitize_blog_body(body_content or "")
+    body_content = _sanitize_conclusion_and_sources(body_content)
+    body_content = _apply_site_cta(body_content, cfg)
+
+    faqs = await generate_faqs(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+        faq_count=cfg.faq_count,
+    )
+    await _blog_delay()
+    related_queries_raw = await generate_related_queries(
+        topic, description, keywords, category,
+        research_context=research_context, content_intent=content_intent,
+        related_query_count=cfg.related_query_count,
+    )
+    related_queries = _normalize_related_queries(related_queries_raw)
+
+    focus_keyword = topic.strip() or (keywords[0] if keywords else "article")
+    slug = generate_slug(title, focus_keyword=focus_keyword)
+
+    state_data: Dict[str, Any] = {
+        "topic": topic,
+        "description": description,
+        "keywords": keywords,
+        "category": category,
+        "content_intent": content_intent,
+        "title": title,
+        "meta_description": meta_description,
+        "body_content": body_content,
+        "faqs": faqs,
+        "related_queries": related_queries,
+        "focus_keyword": focus_keyword,
+        "slug": slug,
+    }
+    if thin_content:
+        state_data["thin_content"] = True
+    if research_context:
+        state_data["research_summary"] = research_context[:500] + (
+            "..." if len(research_context) > 500 else ""
+        )
 
     workflow_state.state_data = state_data
     workflow_state.status = WorkflowStatus.COMPLETED
@@ -586,6 +943,9 @@ async def run_blog_workflow(
     suggested_title: Optional[str] = None,
     suggested_meta_description: Optional[str] = None,
     news_context: Optional[str] = None,
+    content_intent: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
+    cluster_member_facts: Optional[List[Dict[str, Any]]] = None,
 ):
     """Run the blog generation workflow with SEO-optimized content"""
     llm_token = None
@@ -611,7 +971,9 @@ async def run_blog_workflow(
         if include_research and has_tavily:
             try:
                 query = topic
-                if description and description.strip():
+                if celebrity_content_type == "net_worth":
+                    query = f"{topic.strip()} net worth" if topic else "net worth"
+                elif description and description.strip():
                     desc_snippet = description.strip()[:200]
                     query = f"{topic}. {desc_snippet}"
                 data = await research_keywords(db, query, user_id)
@@ -659,7 +1021,7 @@ async def run_blog_workflow(
                 except Exception as e:
                     logger.warning("Celebrity enrichment query failed: %s", e)
 
-        if news_context and news_context.strip():
+        if news_context and news_context.strip() and (content_intent or "") not in NEWS_CONTENT_INTENTS:
             news_block = news_context.strip()
             if research_context:
                 research_context = news_block + "\n\n" + research_context
@@ -670,13 +1032,63 @@ async def run_blog_workflow(
         if not workflow_state:
             return
 
+        state_payload = workflow_state.state_data if isinstance(workflow_state.state_data, dict) else {}
+        resolved_intent = content_intent or state_payload.get("content_intent")
+        resolved_subs = cluster_subs if cluster_subs is not None else state_payload.get("cluster_subs")
+        resolved_facts = (
+            cluster_member_facts
+            if cluster_member_facts is not None
+            else state_payload.get("cluster_member_facts")
+        )
+        if resolved_intent in NEWS_CONTENT_INTENTS:
+            await _run_news_article(
+                db,
+                workflow_state,
+                topic,
+                description,
+                keywords,
+                category,
+                research_context,
+                content_intent=resolved_intent,
+                suggested_title=suggested_title,
+                suggested_meta_description=suggested_meta_description,
+                news_context=news_context,
+            )
+            return
+
+        if resolved_intent == "cluster_hub":
+            await _run_cluster_hub_article(
+                db,
+                workflow_state,
+                topic,
+                description,
+                keywords,
+                category,
+                research_context,
+                cluster_subs=resolved_subs if isinstance(resolved_subs, list) else None,
+                suggested_title=suggested_title,
+                suggested_meta_description=suggested_meta_description,
+                cluster_member_facts=resolved_facts if isinstance(resolved_facts, list) else None,
+            )
+            return
+
         if category != "Celebrities & Public Figures":
             # Single-blog flow (batched: 2 LLM calls instead of 6, shared context)
-            batch = await generate_single_blog_batch(topic, description, keywords, category, research_context)
+            generic_cfg = _resolve_workflow_blog_config(
+                db,
+                workflow_state,
+                topic=topic,
+                description=description,
+                category=category,
+            )
+            batch = await generate_single_blog_batch(
+                topic, description, keywords, category, research_context, blog_config=generic_cfg
+            )
             title = batch["title"]
             meta_description = batch["meta_description"]
-            body_content = append_site_cta_markdown(
-                sanitize_blog_body(batch["body_content"] or "")
+            body_content = _apply_site_cta(
+                sanitize_blog_body(batch["body_content"] or ""),
+                generic_cfg,
             )
             faqs = batch["faqs"]
             related_queries = batch["related_queries"]
@@ -750,6 +1162,18 @@ async def run_blog_workflow(
 
         omit_parent_rel = not include_religion
         omit_nw_rel = not include_religion
+        parent_cfg = _resolve_workflow_blog_config(
+            db, workflow_state, topic=topic, description=description, category=category,
+            content_intent="parent_overview", celebrity_content_type="biography",
+        )
+        religion_cfg = _resolve_workflow_blog_config(
+            db, workflow_state, topic=topic, description=description, category=category,
+            content_intent="religion", celebrity_content_type="religious",
+        )
+        nw_cfg = _resolve_workflow_blog_config(
+            db, workflow_state, topic=topic, description=description, category=category,
+            content_intent="net_worth", celebrity_content_type="net_worth",
+        )
 
         # Generate each body separately so parent and religion get full token budget (2,500-3,000 words each)
         parent_body = await generate_blog_body(
@@ -759,6 +1183,7 @@ async def run_blog_workflow(
             keyword_strategy=keyword_strategy,
             youtube_url=youtube_url,
             omit_religion_in_parent=omit_parent_rel,
+            blog_config=parent_cfg,
         )
         parent_body = _inject_youtube_embed(parent_body, youtube_url)
         await _blog_delay()
@@ -769,6 +1194,7 @@ async def run_blog_workflow(
                 research_context=research_context,
                 content_intent="religion",
                 keyword_strategy=keyword_strategy,
+                blog_config=religion_cfg,
             )
             c1_body = sanitize_religion_body(c1_body)
             await _blog_delay()
@@ -778,6 +1204,7 @@ async def run_blog_workflow(
             content_intent="net_worth",
             keyword_strategy=keyword_strategy,
             omit_religion_refs_in_net_worth=omit_nw_rel,
+            blog_config=nw_cfg,
         )
         c2_body = sanitize_net_worth_body(c2_body)
         await _blog_delay()
@@ -871,10 +1298,10 @@ async def run_blog_workflow(
         if include_religion:
             c1_body = _sanitize_conclusion_and_sources(c1_body)
         c2_body = _sanitize_conclusion_and_sources(c2_body)
-        parent_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(parent_body))
+        parent_body = _apply_site_cta(rewrite_legacy_person_tree_paths(parent_body), parent_cfg)
         if include_religion:
-            c1_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(c1_body))
-        c2_body = append_site_cta_markdown(rewrite_legacy_person_tree_paths(c2_body))
+            c1_body = _apply_site_cta(rewrite_legacy_person_tree_paths(c1_body), religion_cfg)
+        c2_body = _apply_site_cta(rewrite_legacy_person_tree_paths(c2_body), nw_cfg)
 
         breadcrumb_parent = [
             {"name": "Celebrities", "url": "/category/celebrities"},
@@ -1048,6 +1475,26 @@ async def generate_blog(
                 **({"suggested_meta_description": request.suggested_meta_description} if request.suggested_meta_description else {}),
                 **({"news_context": request.news_context} if request.news_context else {}),
                 **({"model": request.model} if request.model else {}),
+                **({"content_intent": request.content_intent} if request.content_intent else {}),
+                **({"cluster_subs": request.cluster_subs} if request.cluster_subs else {}),
+                **(
+                    {"cluster_member_facts": request.cluster_member_facts}
+                    if request.cluster_member_facts
+                    else {}
+                ),
+                "blog_overrides": {
+                    k: v
+                    for k, v in {
+                        "target_word_count": request.target_word_count,
+                        "faq_count": request.faq_count,
+                        "related_query_count": request.related_query_count,
+                        "include_site_cta": request.include_site_cta,
+                        "auto_images": request.auto_images,
+                        "creativity": request.creativity,
+                        "template_article_type": request.template_article_type,
+                    }.items()
+                    if v is not None
+                },
             }
         )
         db.add(workflow_state)
@@ -1069,6 +1516,9 @@ async def generate_blog(
             request.suggested_title,
             request.suggested_meta_description,
             request.news_context,
+            request.content_intent,
+            request.cluster_subs,
+            request.cluster_member_facts,
         )
         
         return BlogGenerateResponse(
@@ -1479,6 +1929,139 @@ async def auto_images_batch(
     return BlogAutoImagesBatchResponse(
         results=results,
         used_urls=batch.get("used_urls", []),
+    )
+
+
+@router.post(
+    "/workflows/{workflow_id}/cluster-hub-links",
+    response_model=ClusterHubLinksResponse,
+)
+async def inject_cluster_hub_links(
+    workflow_id: int,
+    request: ClusterHubLinksRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Inject relative internal links under cluster-hub member headings."""
+    from app.services.cluster_hub_links import inject_cluster_hub_member_links
+
+    workflow_state = get_workflow_state(db, workflow_id, current_user.id)
+    if not workflow_state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if workflow_state.status != WorkflowStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only inject links for completed workflows",
+        )
+
+    state_data = workflow_state.state_data or {}
+    body = (state_data.get("body_content") or "").strip()
+    if not body:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workflow has no body content",
+        )
+
+    link_payload = [{"name": item.name, "path": item.path} for item in (request.links or [])]
+    before = body
+    body = inject_cluster_hub_member_links(body, link_payload)
+    state_data["body_content"] = body
+    workflow_state.state_data = state_data
+    flag_modified(workflow_state, "state_data")
+    db.commit()
+    db.refresh(workflow_state)
+
+    injected = 0
+    for item in link_payload:
+        path = (item.get("path") or "").strip()
+        if path and path in body and path not in before:
+            injected += 1
+        elif path and f"]({path})" in body and f"]({path})" not in before:
+            injected += 1
+
+    # Count newly added markdown links more reliably
+    injected = max(
+        0,
+        body.count("](/") - before.count("](/"),
+    )
+
+    warnings: List[str] = []
+    from app.services.cluster_hub_links import normalize_person_key
+
+    body_key = normalize_person_key(body)
+    for item in link_payload:
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        if normalize_person_key(name) not in body_key and name.lower() not in body.lower():
+            warnings.append(f"Section not found: {name}")
+
+    return ClusterHubLinksResponse(
+        workflow_id=workflow_state.id,
+        body_content=body,
+        injected=injected,
+        warnings=warnings,
+    )
+
+
+@router.post("/workflows/sibling-links", response_model=SiblingLinksResponse)
+async def inject_sibling_links(
+    request: SiblingLinksRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Inject bio↔net_worth cross-links when both workflows exist."""
+    from app.services.cluster_hub_links import inject_sibling_article_link, normalize_internal_path
+
+    bio = get_workflow_state(db, request.biography_workflow_id, current_user.id)
+    nw = get_workflow_state(db, request.net_worth_workflow_id, current_user.id)
+    if not bio or not nw:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow not found")
+    if bio.status != WorkflowStatus.COMPLETED or nw.status != WorkflowStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both workflows must be completed before sibling links",
+        )
+
+    bio_data = dict(bio.state_data or {})
+    nw_data = dict(nw.state_data or {})
+    bio_slug = normalize_internal_path(str(bio_data.get("slug") or ""))
+    nw_slug = normalize_internal_path(str(nw_data.get("slug") or ""))
+    warnings: List[str] = []
+    injected = 0
+
+    if nw_slug:
+        before = bio_data.get("body_content") or ""
+        after = inject_sibling_article_link(
+            before, label="Net worth profile", path=nw_slug
+        )
+        if after != before:
+            bio_data["body_content"] = after
+            bio.state_data = bio_data
+            flag_modified(bio, "state_data")
+            injected += 1
+    else:
+        warnings.append("Net worth workflow has no slug")
+
+    if bio_slug:
+        before = nw_data.get("body_content") or ""
+        after = inject_sibling_article_link(
+            before, label="Biography", path=bio_slug
+        )
+        if after != before:
+            nw_data["body_content"] = after
+            nw.state_data = nw_data
+            flag_modified(nw, "state_data")
+            injected += 1
+    else:
+        warnings.append("Biography workflow has no slug")
+
+    db.commit()
+    return SiblingLinksResponse(
+        biography_workflow_id=bio.id,
+        net_worth_workflow_id=nw.id,
+        injected=injected,
+        warnings=warnings,
     )
 
 

@@ -428,20 +428,22 @@ def test_build_celebrity_net_worth_outline():
     from app.services.celebrity_outline_templates import build_celebrity_net_worth_outline
 
     outline = build_celebrity_net_worth_outline(celebrity_name="Jutta Leerdam")
+    assert len(outline) == 6
     h2_texts = [n["text"] for n in outline if n["level"] == 2]
     assert h2_texts[0] == "Introduction"
     assert "Quick Facts" in h2_texts[1]
     assert "Jutta Leerdam Net Worth & Income Sources" in h2_texts[2]
+    assert "How Jutta Leerdam's Net Worth Is Estimated" in h2_texts
     assert "Career & Achievements" in h2_texts
-    assert "Early Life & Background" in h2_texts
     assert "Personal Life" in h2_texts
-    assert any("FAQ" in t for t in h2_texts)
+    assert "Early Life & Background" not in h2_texts
+    assert not any("FAQ" in t for t in h2_texts)
 
     income = next(n for n in outline if "Net Worth & Income Sources" in n["text"])
     child_texts = [c["text"] for c in income.get("children") or []]
     assert "Career Earnings & Salary" in child_texts
-    assert "Brand Endorsements & Sponsorships" in child_texts
-    assert "Social Media & Content Income" in child_texts
+    assert "Media, Endorsements & Public Appearances" in child_texts
+    assert "Investments, Real Estate & Other Assets" in child_texts
 
     career_idx = h2_texts.index("Career & Achievements")
     personal_idx = h2_texts.index("Personal Life")
@@ -455,6 +457,21 @@ def test_net_worth_quality_rules():
     assert "Jutta Leerdam Net Worth" in rules
     assert "religion" in rules.lower()
     assert "FAQ" in rules or "net worth" in rules.lower()
+    assert "do not" in rules.lower() and "faq" in rules.lower()
+    assert "not publicly disclosed" in rules.lower()
+
+
+def test_outline_to_net_worth_prompt_block_excludes_faq():
+    from app.services.celebrity_outline_templates import outline_to_net_worth_prompt_block
+
+    block = outline_to_net_worth_prompt_block("Jutta Leerdam")
+    assert "Jutta Leerdam Net Worth & Income Sources" in block
+    assert "How Jutta Leerdam's Net Worth Is Estimated" in block
+    assert "Media, Endorsements & Public Appearances" in block
+    assert "do not" in block.lower() and "faq" in block.lower()
+    assert "## FAQ" not in block
+    assert "omit" in block.lower() or "only include a row" in block.lower()
+    assert "1,150" in block or "1150" in block
 
 
 @pytest.mark.asyncio
@@ -467,8 +484,9 @@ async def test_celebrity_net_worth_summary_uses_template_outline():
         "section_notes": {
             "intro": ["$5M net worth as of 2026", "Primary: prize money + endorsements", "Salary €600k–€900k"],
             "career_earnings": ["Olympic gold 2026", "World Championship payouts", "Team Jumbo-Visma contract"],
-            "endorsements": ["Dior partnership", "Hugo Boss deal", "Omega sponsorship"],
-            "social_media": ["4.8M Instagram followers", "Estimated per-post rate", "Brand deal income"],
+            "media_appearances": ["Dior partnership", "Hugo Boss deal", "Omega sponsorship"],
+            "investments_assets": ["No major disclosed real estate", "Team contract residual value"],
+            "methodology": ["Prize money plus endorsements", "Public contract reports"],
         },
         "key_topics": ["Jutta Leerdam net worth"],
         "subtopics": [],
@@ -485,7 +503,7 @@ async def test_celebrity_net_worth_summary_uses_template_outline():
         "long_tail": [],
     }
     with patch(
-        "app.services.openrouter_service.generate_blog_seo_content",
+        "app.services.openrouter_service.generate_content",
         new_callable=AsyncMock,
         return_value=json.dumps(net_worth_json),
     ), patch(
@@ -499,11 +517,11 @@ async def test_celebrity_net_worth_summary_uses_template_outline():
             category="Celebrities & Public Figures",
             celebrity_content_type="net_worth",
         )
-    assert result["outline_template"] == "celebrity_net_worth_v1"
+    assert result["outline_template"] == "celebrity_net_worth_v2"
     assert result["celebrity_content_type"] == "net_worth"
     assert "net worth" in result["h1"].lower()
     assert "net worth" in result["summary"].lower() or "$" in result["summary"]
-    assert len(result["outline"]) == 7
+    assert len(result["outline"]) == 6
     assert any("Net Worth & Income Sources" in n["text"] for n in result["outline"])
     assert result.get("section_notes")
     assert "jutta leerdam net worth" in result["target_keywords"][0].lower()
@@ -514,7 +532,7 @@ async def test_celebrity_net_worth_summary_fallback():
     from app.services.openrouter_service import _fallback_celebrity_net_worth_summary
 
     with patch(
-        "app.services.openrouter_service.generate_blog_seo_content",
+        "app.services.openrouter_service.generate_content",
         new_callable=AsyncMock,
         return_value="not valid json",
     ), patch(
@@ -528,10 +546,10 @@ async def test_celebrity_net_worth_summary_fallback():
             category="Celebrities & Public Figures",
             celebrity_content_type="net_worth",
         )
-    assert result["outline_template"] == "celebrity_net_worth_v1"
+    assert result["outline_template"] == "celebrity_net_worth_v2"
     assert "net worth" in result["h1"].lower()
 
     fallback = _fallback_celebrity_net_worth_summary("jutta leerdam", SAMPLE_RESULTS)
-    assert fallback["outline_template"] == "celebrity_net_worth_v1"
+    assert fallback["outline_template"] == "celebrity_net_worth_v2"
     assert fallback["celebrity_content_type"] == "net_worth"
     assert "Jutta Leerdam" in fallback["h1"]

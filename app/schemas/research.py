@@ -72,6 +72,8 @@ class ResearchSummaryRequest(BaseModel):
     opportunities: Optional[List[SummaryOpportunityInput]] = None
     category: Optional[str] = None
     celebrity_content_type: Optional[Literal["biography", "religious", "net_worth"]] = None
+    content_intent: Optional[Literal["cluster_hub", "news_timeline", "news_explainer", "news_opinion"]] = None
+    cluster_subs: Optional[List[str]] = None
 
 
 class HeadingNode(BaseModel):

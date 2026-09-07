@@ -713,6 +713,98 @@ async def get_wp_post(site: WordPressSite, wp_post_id: int, post_type: str = "po
     }
 
 
+def _meta_string(meta: Dict[str, Any], *keys: str) -> Optional[str]:
+    for key in keys:
+        val = meta.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        if isinstance(val, list) and val and isinstance(val[0], str) and val[0].strip():
+            return val[0].strip()
+    return None
+
+
+async def fetch_wp_content_for_audit(
+    site: WordPressSite,
+    wp_post_id: int,
+    post_type: str = "post",
+) -> Dict[str, Any]:
+    """
+    Fetch rendered content + SEO meta for website audit fallback.
+    Uses view context first (rendered HTML), then merges edit meta when available.
+    """
+    endpoint = _wp_rest_endpoint(post_type)
+    base = site.url.rstrip("/")
+    api_url = f"{base}/wp-json/wp/v2/{endpoint}/{wp_post_id}"
+    decrypted_key = decrypt_api_key(site.api_key)
+    auth = (site.username, decrypted_key)
+
+    async with httpx.AsyncClient(verify=httpx_verify(), timeout=60.0) as client:
+        view_resp = await client.get(
+            api_url,
+            auth=auth,
+            params={
+                "context": "view",
+                "_fields": "id,link,title,content,excerpt,meta,yoast_head_json,rank_math",
+            },
+        )
+        if view_resp.status_code >= 400:
+            # Fallback to edit context
+            edit = await get_wp_post(site, wp_post_id, post_type)
+            if not edit.get("success"):
+                return {
+                    "success": False,
+                    "status_code": view_resp.status_code,
+                    "message": view_resp.text[:500],
+                }
+            return {
+                "success": True,
+                "id": edit.get("id"),
+                "link": edit.get("link"),
+                "title": edit.get("title") or "",
+                "content_html": edit.get("content") or "",
+                "meta_description": None,
+                "meta": edit.get("meta") or {},
+            }
+
+        data = view_resp.json()
+        title_obj = data.get("title") or {}
+        content_obj = data.get("content") or {}
+        title = title_obj.get("rendered") or title_obj.get("raw") or ""
+        content_html = content_obj.get("rendered") or content_obj.get("raw") or ""
+        meta = data.get("meta") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+
+        meta_description = _meta_string(
+            meta,
+            "rank_math_description",
+            "_yoast_wpseo_metadesc",
+            "yoast_wpseo_metadesc",
+        )
+        yoast = data.get("yoast_head_json") or {}
+        if isinstance(yoast, dict) and not meta_description:
+            meta_description = yoast.get("description") or yoast.get("og_description")
+
+        seo_title = _meta_string(
+            meta,
+            "rank_math_title",
+            "_yoast_wpseo_title",
+            "yoast_wpseo_title",
+        )
+        if isinstance(yoast, dict) and not seo_title:
+            seo_title = yoast.get("title") or yoast.get("og_title")
+
+        return {
+            "success": True,
+            "id": data.get("id"),
+            "link": data.get("link"),
+            "title": seo_title or title,
+            "content_html": content_html,
+            "meta_description": meta_description,
+            "meta": meta,
+        }
+
+
 async def update_wp_post(
     site: WordPressSite,
     wp_post_id: int,

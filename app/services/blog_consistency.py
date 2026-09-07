@@ -36,16 +36,20 @@ def _normalize_cta_href(href: str) -> str:
     return f"/{h.lstrip('/')}"
 
 
-def append_site_cta_markdown(body: str, href: str = "/") -> str:
+def append_site_cta_markdown(body: str, href: str = "/", text: Optional[str] = None) -> str:
     """Append internal-link CTA using markdown (relative href survives body sanitization)."""
     if has_site_cta(body):
         return body or ""
     link_href = _normalize_cta_href(href)
-    line = f"\n\nFor more insights, explore our [website]({link_href}).\n"
+    lead = (text or "For more insights, explore our").strip() or "For more insights, explore our"
+    if "[" in lead:
+        line = f"\n\n{lead}\n"
+    else:
+        line = f"\n\n{lead} [website]({link_href}).\n"
     return (body or "").rstrip() + line
 
 
-def append_site_cta_html(content: str, href: str = "/") -> str:
+def append_site_cta_html(content: str, href: str = "/", text: Optional[str] = None) -> str:
     """Append internal-link CTA as HTML (for WordPress HTML publish pipeline)."""
     if has_site_cta(content):
         return content or ""
@@ -53,7 +57,12 @@ def append_site_cta_html(content: str, href: str = "/") -> str:
 
     link_href = _normalize_cta_href(href)
     escaped_href = html_module.escape(link_href, quote=True)
-    line = f'\n\n<p>For more insights, explore our <a href="{escaped_href}">website</a>.</p>'
+    lead = (text or "For more insights, explore our").strip() or "For more insights, explore our"
+    if "<a " in lead.lower():
+        line = f"\n\n<p>{lead}</p>"
+    else:
+        escaped_lead = html_module.escape(lead)
+        line = f"\n\n<p>{escaped_lead} <a href=\"{escaped_href}\">website</a>.</p>"
     return (content or "").rstrip() + line
 
 
@@ -437,10 +446,174 @@ def apply_canonical_zodiac(
         _replace_in_body(c)
 
 
+_NET_WORTH_FAQ_HEADING = re.compile(
+    r"^##[ \t]+(?:faq\b|frequently asked questions\b).*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_net_worth_body_faq(body: str) -> str:
+    """Remove in-body FAQ H2 blocks (FAQs are stored separately)."""
+    if not body or not body.strip():
+        return body
+    match = _NET_WORTH_FAQ_HEADING.search(body)
+    if not match:
+        return body
+    start = match.start()
+    rest = body[match.end() :]
+    next_h2 = re.search(r"^##[ \t]+\S", rest, re.MULTILINE)
+    end = match.end() + next_h2.start() if next_h2 else len(body)
+    cleaned = (body[:start] + body[end:]).strip()
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
+_NET_WORTH_PLACEHOLDER_ROW = re.compile(
+    r"^\|([^|\n]+)\|[\s*]*("
+    r"not publicly disclosed|not publicly itemized|undisclosed|"
+    r"n/?a|n\.a\.|unknown|not available"
+    r")[\s*.]*\|\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_net_worth_placeholder_rows(body: str) -> str:
+    """Drop Quick Facts rows whose value is a placeholder instead of a real fact."""
+    if not body or not body.strip():
+        return body
+    cleaned = _NET_WORTH_PLACEHOLDER_ROW.sub("", body)
+    return re.sub(r"\n{3,}", "\n\n", cleaned)
+
+
+_HTML_BLOCK_PATTERN = re.compile(
+    r"<(?:img|iframe|script|style)\b[^>]*>.*?</(?:iframe|script|style)>|<(?:img)\b[^>]*/?>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CODE_FENCE_PATTERN = re.compile(r"```[\s\S]*?```")
+_MD_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\([^)]+\)")
+_FORTUNE_H1_PATTERN = re.compile(
+    r"^(.+?)\s+Net Worth\s+(\d{4})\s*:\s*How (?:She|He|They) Built (?:Her|His|Their) .+$",
+    re.IGNORECASE,
+)
+_GENERIC_FILLER_SECTION = re.compile(
+    r"(^##[ \t]+(?:Investments?,?\s*Real Estate(?:\s*&\s*Other Assets)?|Personal Life)\s*$)"
+    r"([\s\S]*?)(?=^##[ \t]+\S|\Z)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_GENERIC_FILLER_MARKERS = re.compile(
+    r"not publicly (?:available|disclosed)|specific (?:details|figures) (?:are|were) not|"
+    r"relatively private personal life|lifestyle reflects? (?:her|his|their) success|"
+    r"philanthropic efforts|engages? with (?:her|his|their) fans on social media",
+    re.IGNORECASE,
+)
+
+
+def count_markdown_words(body: str) -> int:
+    """Count words in markdown body after stripping images, iframes, and code fences."""
+    if not body or not body.strip():
+        return 0
+    text = _HTML_BLOCK_PATTERN.sub(" ", body)
+    text = _CODE_FENCE_PATTERN.sub(" ", text)
+    text = _MD_IMAGE_PATTERN.sub(" ", text)
+    text = _MD_LINK_PATTERN.sub(r"\1", text)
+    text = re.sub(r"[#>*_`~\-|]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return 0
+    return len(text.split(" "))
+
+
+def is_thin_body(body: str, min_words: int) -> bool:
+    return count_markdown_words(body) < max(0, int(min_words or 0))
+
+
+def rewrite_fortune_h1(title: str, name: str = "", year: Optional[int] = None) -> str:
+    """Rewrite 'How She Built Her $XM Fortune' titles to salary/earnings pattern."""
+    from datetime import date
+
+    t = (title or "").strip()
+    if not t:
+        return t
+    m = _FORTUNE_H1_PATTERN.match(t)
+    if not m:
+        # Also catch titles that only end with Fortune without a clean prefix
+        if re.search(r"\bHow (?:She|He|They) Built (?:Her|His|Their) .+ Fortune\b", t, re.I):
+            display = (name or "").strip() or "Celebrity"
+            y = year or date.today().year
+            return f"{display} Net Worth {y}: Salary, Endorsements & Earnings"
+        return t
+    display = (name or m.group(1) or "").strip() or "Celebrity"
+    y = year or int(m.group(2))
+    return f"{display} Net Worth {y}: Salary, Endorsements & Earnings"
+
+
+_MONEY_PHRASE = re.compile(
+    r"(?:"
+    r"\$[\d,.]+(?:\s*(?:million|billion|k|m|b))?"
+    r"|"
+    r"[\d,.]+\s*(?:million|billion)\s*(?:dollars?)?"
+    r")",
+    re.IGNORECASE,
+)
+_COMP_CONTEXT = re.compile(
+    r"\b(?:salary|salaries|contract|nil|compensation|earned|earns|paycheck|base pay)\b",
+    re.IGNORECASE,
+)
+_FORTUNE_CONTEXT = re.compile(r"\b(?:net worth|fortune|estimated worth)\b", re.IGNORECASE)
+
+
+def extract_headline_compensation(body: str) -> Optional[str]:
+    """First salary/NIL/contract money phrase from intro or Quick Facts; skip fortune guesses."""
+    if not body or not body.strip():
+        return None
+    # Prefer Quick Facts table cells, then first ~800 chars of prose
+    chunks: List[str] = []
+    qf = re.search(
+        r"^##[ \t]+Quick Facts\s*$([\s\S]*?)(?=^##[ \t]+\S|\Z)",
+        body,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if qf:
+        chunks.append(qf.group(1))
+    intro = body.split("\n## ", 1)[0]
+    chunks.append(intro[:1200])
+    blob = "\n".join(chunks)
+    salary_hit: Optional[str] = None
+    fortune_hit: Optional[str] = None
+    for m in _MONEY_PHRASE.finditer(blob):
+        start = max(0, m.start() - 80)
+        end = min(len(blob), m.end() + 80)
+        window = blob[start:end]
+        phrase = m.group(0).strip()
+        if _COMP_CONTEXT.search(window):
+            salary_hit = phrase
+            break
+        if fortune_hit is None and _FORTUNE_CONTEXT.search(window):
+            fortune_hit = phrase
+    return salary_hit or fortune_hit
+
+
+def strip_generic_filler_sections(body: str) -> str:
+    """Omit Investments/Personal Life sections that are only generic filler."""
+    if not body or not body.strip():
+        return body
+
+    def _repl(match: re.Match) -> str:
+        heading, content = match.group(1), match.group(2) or ""
+        prose = re.sub(r"^[-*]\s+.*$", "", content, flags=re.MULTILINE)
+        prose = re.sub(r"\s+", " ", prose).strip()
+        if len(prose.split()) < 40 and _GENERIC_FILLER_MARKERS.search(content):
+            return ""
+        return match.group(0)
+
+    cleaned = _GENERIC_FILLER_SECTION.sub(_repl, body)
+    return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+
 def sanitize_net_worth_body(body: str) -> str:
     """
     Post-process net worth markdown: fix awkward internal-link artifacts, broken image
-    placeholders, and redundant phrasing. Complements stricter net worth LLM prompts.
+    placeholders, redundant phrasing, and accidental in-body FAQ sections.
     """
     if not body or not body.strip():
         return body
@@ -467,4 +640,13 @@ def sanitize_net_worth_body(body: str) -> str:
     # Broken / placeholder images from prompts
     s = re.sub(r"!\[[^\]]*\]\(\s*image-url\s*\)", "", s, flags=re.I)
     s = re.sub(r"!\[[^\]]*\]\(\s*https?://image-url[^\)]*\)", "", s, flags=re.I)
-    return s
+    s = strip_net_worth_placeholder_rows(s)
+    s = strip_net_worth_body_faq(s)
+    s = strip_generic_filler_sections(s)
+    # Rewrite fortune-style markdown H1 if the model put one in the body
+    lines = s.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("# ") and not line.startswith("## "):
+            lines[i] = "# " + rewrite_fortune_h1(line[2:].strip())
+            break
+    return "\n".join(lines)

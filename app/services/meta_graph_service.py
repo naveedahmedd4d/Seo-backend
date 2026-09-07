@@ -16,6 +16,30 @@ GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
 META_AUTH_URL = f"https://www.facebook.com/{GRAPH_VERSION}/dialog/oauth"
 
 
+class MetaGraphError(Exception):
+    """A Meta Graph API call failed.
+
+    Only the Meta-supplied error message is carried. Raising this instead of
+    letting ``httpx.HTTPStatusError`` propagate keeps the request URL - which
+    holds ``client_secret`` / ``access_token`` / the OAuth ``code`` in its query
+    string - out of exception text, logs, and any error surfaced to the browser.
+    """
+
+
+def _raise_meta_error(response: httpx.Response, action: str) -> None:
+    detail: Optional[str] = None
+    try:
+        payload = response.json()
+        err = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(err, dict):
+            detail = err.get("error_user_msg") or err.get("message")
+    except Exception:  # noqa: BLE001 - response body may not be JSON
+        detail = None
+    raise MetaGraphError(
+        f"{action} failed ({response.status_code}): {detail or 'Meta Graph API error'}"
+    )
+
+
 def build_meta_authorization_url(
     credentials: OAuthAppCredentials,
     state: str,
@@ -46,7 +70,7 @@ async def exchange_code_for_user_token(
         response = await client.get(f"{GRAPH_BASE}/oauth/access_token", params=params)
     if response.status_code >= 400:
         logger.error("Meta code exchange failed: %s", response.text)
-        response.raise_for_status()
+        _raise_meta_error(response, "OAuth code exchange")
     return response.json()
 
 
@@ -64,7 +88,7 @@ async def exchange_long_lived_user_token(
         response = await client.get(f"{GRAPH_BASE}/oauth/access_token", params=params)
     if response.status_code >= 400:
         logger.error("Meta long-lived token exchange failed: %s", response.text)
-        response.raise_for_status()
+        _raise_meta_error(response, "Long-lived token exchange")
     return response.json()
 
 
@@ -81,7 +105,7 @@ async def graph_get(
         response = await client.get(url, params=query)
     if response.status_code >= 400:
         logger.error("Meta Graph GET %s failed: %s", path, response.text)
-        response.raise_for_status()
+        _raise_meta_error(response, f"Graph GET {path}")
     return response.json()
 
 
@@ -98,32 +122,38 @@ async def graph_post(
         response = await client.post(url, data=payload)
     if response.status_code >= 400:
         logger.error("Meta Graph POST %s failed: %s", path, response.text)
-        response.raise_for_status()
+        _raise_meta_error(response, f"Graph POST {path}")
     return response.json()
 
 
 async def fetch_user_pages(user_access_token: str) -> list[dict[str, Any]]:
-    payload = await graph_get(
-        "me/accounts",
-        user_access_token,
-        params={"fields": "id,name,access_token,instagram_business_account"},
-    )
     pages: list[dict[str, Any]] = []
-    for item in payload.get("data", []):
-        page_id = item.get("id")
-        if not page_id:
-            continue
-        ig_account = item.get("instagram_business_account") or {}
-        pages.append(
-            {
-                "id": str(page_id),
-                "name": str(item.get("name") or "Page"),
-                "access_token": str(item.get("access_token") or ""),
-                "instagram_business_account_id": (
-                    str(ig_account.get("id")) if ig_account.get("id") else None
-                ),
-            }
-        )
+    params: dict[str, Any] = {
+        "fields": "id,name,access_token,instagram_business_account",
+        "limit": 100,
+    }
+    for _ in range(20):  # safety bound: up to ~2000 Pages
+        payload = await graph_get("me/accounts", user_access_token, params=params)
+        for item in payload.get("data", []):
+            page_id = item.get("id")
+            if not page_id:
+                continue
+            ig_account = item.get("instagram_business_account") or {}
+            pages.append(
+                {
+                    "id": str(page_id),
+                    "name": str(item.get("name") or "Page"),
+                    "access_token": str(item.get("access_token") or ""),
+                    "instagram_business_account_id": (
+                        str(ig_account.get("id")) if ig_account.get("id") else None
+                    ),
+                }
+            )
+        paging = payload.get("paging") or {}
+        after = (paging.get("cursors") or {}).get("after")
+        if not paging.get("next") or not after:
+            break
+        params = {**params, "after": after}
     return pages
 
 

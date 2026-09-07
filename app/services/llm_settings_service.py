@@ -27,7 +27,15 @@ ApiKeyProvider = Literal[
     "apify",
 ]
 
-DEFAULT_GROQ_BLOG_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_BLOG_MODEL = "openai/gpt-oss-120b"
+
+# Retired Groq IDs → current production replacements (Llama 3.x / Scout shutdown 2026)
+GROQ_MODEL_MIGRATIONS = {
+    "llama-3.1-8b-instant": "openai/gpt-oss-20b",
+    "llama-3.3-70b-versatile": "openai/gpt-oss-120b",
+    "meta-llama/llama-4-scout-17b-16e-instruct": "openai/gpt-oss-20b",
+    "meta-llama/llama-4-maverick-17b-128e-instruct": "openai/gpt-oss-120b",
+}
 
 _PROVIDER_LABELS = {
     "openrouter": "OpenRouter",
@@ -80,18 +88,13 @@ def get_model_allowlist() -> List[LlmModelOption]:
             provider="openrouter",
         ),
         LlmModelOption(
+            id="openai/gpt-oss-20b",
+            label="Groq · GPT-OSS 20B",
+            provider="groq",
+        ),
+        LlmModelOption(
             id=DEFAULT_GROQ_BLOG_MODEL,
-            label="Groq · Llama 3.3 70B",
-            provider="groq",
-        ),
-        LlmModelOption(
-            id="llama-3.1-8b-instant",
-            label="Groq · Llama 3.1 8B Instant",
-            provider="groq",
-        ),
-        LlmModelOption(
-            id="meta-llama/llama-4-scout-17b-16e-instruct",
-            label="Groq · Llama 4 Scout",
+            label="Groq · GPT-OSS 120B",
             provider="groq",
         ),
     ]
@@ -338,6 +341,10 @@ def _platform_default_model(provider: Provider) -> str:
     return DEFAULT_GROQ_BLOG_MODEL
 
 
+def _migrate_groq_model_id(model_id: str) -> str:
+    return GROQ_MODEL_MIGRATIONS.get(model_id, model_id)
+
+
 def _resolve_model(
     provider: Provider,
     preferred_model: Optional[str],
@@ -345,13 +352,13 @@ def _resolve_model(
 ) -> str:
     allow = _allowlist_ids()
     if model_override:
-        ov = model_override.strip()
+        ov = _migrate_groq_model_id(model_override.strip())
         if ov and ov != "default":
             if ov not in allow:
                 raise ValueError(f"Model not allowed: {ov}")
             return ov
     if preferred_model and preferred_model.strip() and preferred_model.strip() != "default":
-        pm = preferred_model.strip()
+        pm = _migrate_groq_model_id(preferred_model.strip())
         if pm in allow:
             return pm
     return _platform_default_model(provider)

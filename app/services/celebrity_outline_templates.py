@@ -544,6 +544,144 @@ def get_biography_section_slugs() -> List[str]:
     return slugs
 
 
+_ATHLETE_MARKERS = re.compile(
+    r"\b(wnba|nba|nfl|mlb|nhl|soccer|football|basketball|tennis|olympics?|"
+    r"athlete|player|coach|goalkeeper|quarterback|pitcher|guard|forward|"
+    r"premier league|champions league|fifa|uefa)\b",
+    re.IGNORECASE,
+)
+
+
+def is_athlete_biography_topic(
+    topic: Optional[str] = None,
+    category: Optional[str] = None,
+    description: Optional[str] = None,
+    parent_category: Optional[str] = None,
+) -> bool:
+    """True when biography should use the athlete outline (not entertainment)."""
+    cat = (category or "").strip()
+    parent = (parent_category or "").strip()
+    if cat == "Sports" or parent == "Sports":
+        return True
+    blob = " ".join(
+        x for x in [(topic or ""), (description or ""), cat, parent] if x
+    )
+    if re.search(r"\bparent cluster category:\s*sports\b", blob, re.I):
+        return True
+    return bool(_ATHLETE_MARKERS.search(blob))
+
+
+def get_athlete_biography_template() -> List[OutlineSection]:
+    """Sports/athlete biography — no First Leading Role / entertainment H3s."""
+    return [
+        _h2(
+            "intro",
+            "Introduction",
+            "intro",
+            (180, 220),
+            "Who {name} is, sport/league, why they matter today. No religion. No news-headline H1 inside body.",
+        ),
+        _h2(
+            "quick_facts",
+            "Quick Facts",
+            "celebrity_focus",
+            (80, 100),
+            "Markdown table: Profession, Date of Birth, Nationality, Current team/league. Omit unknown rows. No Religion row.",
+        ),
+        _h2(
+            "early_life",
+            "Early Life & College",
+            "celebrity_focus",
+            (220, 280),
+            "Birthplace, family sports background, high school, college program and accolades.",
+        ),
+        _h2(
+            "first_media",
+            "First Media Appearance / Interview Embed",
+            "celebrity_focus",
+            (100, 140),
+            "YouTube interview embed or note; early media significance for {name}.",
+        ),
+        _h2(
+            "pro_career",
+            "Draft & Pro Career",
+            "celebrity_focus",
+            (400, 500),
+            "Draft position and pro path for {name}.",
+            [
+                _h3(
+                    "draft_debut",
+                    "Draft & Debut",
+                    "celebrity_focus",
+                    (120, 150),
+                    "Draft year/pick, first team, rookie impact.",
+                ),
+                _h3(
+                    "teams_seasons",
+                    "Teams & Standout Seasons",
+                    "celebrity_focus",
+                    (140, 180),
+                    "Teams, trades, standout seasons with verified stats where research supports.",
+                ),
+                _h3(
+                    "recent_form",
+                    "Recent Form",
+                    "celebrity_focus",
+                    (120, 150),
+                    "Current team role and recent notable games — no invented opponents.",
+                ),
+            ],
+        ),
+        _h2(
+            "playing_style",
+            "Playing Style & Notable Games",
+            "celebrity_focus",
+            (180, 220),
+            "Style of play and 2–3 verified signature performances.",
+        ),
+        _h2(
+            "honors",
+            "Honors & Awards",
+            "celebrity_focus",
+            (160, 200),
+            "All-Star, MVP, championships, Olympic medals — chronological, verified only.",
+        ),
+        _h2(
+            "off_court",
+            "Off the Court",
+            "celebrity_focus",
+            (140, 180),
+            "Public philanthropy, business, NIL/endorsements if sourced. Omit if no facts.",
+        ),
+        _h2(
+            "conclusion",
+            "Conclusion",
+            "conclusion",
+            (120, 160),
+            "Career summary and forward-looking close for {name}. No religion.",
+        ),
+    ]
+
+
+def build_athlete_biography_outline(
+    celebrity_name: Optional[str] = None, query: str = ""
+) -> List[Dict[str, Any]]:
+    name = celebrity_name or normalize_celebrity_name(query)
+    return [_section_to_heading_nodes(s, name) for s in get_athlete_biography_template()]
+
+
+def get_athlete_biography_section_slugs() -> List[str]:
+    slugs: List[str] = []
+
+    def walk(sections: List[OutlineSection]) -> None:
+        for s in sections:
+            slugs.append(s.slug)
+            walk(s.children)
+
+    walk(get_athlete_biography_template())
+    return slugs
+
+
 def is_celebrity_religious_summary(category: Optional[str], celebrity_content_type: Optional[str]) -> bool:
     return (
         (category or "").strip() == CELEBRITY_CATEGORY
@@ -558,41 +696,46 @@ def is_celebrity_biography_summary(category: Optional[str], celebrity_content_ty
     )
 
 
-NET_WORTH_TARGET_WORD_COUNT = 1500
+NET_WORTH_TARGET_WORD_COUNT = 1200
 
-NET_WORTH_FORMAT_RULES = """LENGTH (required):
-- Total article body: approximately 1,500 words (minimum 1,400, maximum 1,600).
-- Prioritize intro, quick_facts, and net_worth_income sections if trimming is needed.
+NET_WORTH_FORMAT_RULES = """LENGTH (required — do not stop early):
+- Total article body: approximately 1,200 words (minimum 1,150, maximum 1,300).
+- Write EVERY H2 and H3 in the outline. Stopping after the intro or Quick Facts is a failure.
+- Each section MUST meet its word_budget. If dollar amounts are missing, expand with role context, income channels, career timeline, and how estimates work — never pad with placeholder phrases.
+- Prioritize intro, quick_facts, net_worth_income, and methodology if trimming is needed.
+- REQUIRED: include a Documented compensation subsection (year | team/league | salary or NIL) when research supports any pay figure — even if private net worth is unknown.
+- If Investments or Personal Life have no research-backed specifics, OMIT that entire section — do not write three generic bullets about privacy, philanthropy, or lifestyle.
 
 FORMATTING (required):
 - Write prose in short paragraphs of 2–4 sentences each.
 - After the opening prose for each H2 and each H3, include one markdown bullet list with 3–4 bullet points.
-- Each bullet must be one clear, factual point with figures where available.
-- Introduction: net worth figure in the FIRST two sentences; Quick Facts table immediately after.
-- Quick Facts table columns: Full Name | Data — rows for Full Name, Date of Birth, Nationality, Net Worth, Salary, Profession, Partner.
+- Each bullet must be one clear, factual point with figures where research supports them.
+- Introduction: if research has a credible compensation or net-worth figure, put it in the FIRST two sentences with as-of year and primary income sources. If there is no credible figure, open with who the person is and how they earn money — do not write "not publicly disclosed" and do not invent a private fortune.
+- Quick Facts table columns: Fact | Details. Only include a row when you have a real value from research. Omit Date of Birth, Partner, Salary, or any other row if the value is unknown.
+- BANNED table/cell text: "Not publicly disclosed", "Not publicly itemized", "N/A", "Unknown", "Undisclosed", "—". Never invent a value to fill a row.
 - Do not add a Table of Contents.
-- FAQ section: 4–6 questions as H3 or bold Q/A pairs targeting People Also Ask queries."""
+- Do NOT write an FAQ section, FAQ headings, or Q/A pairs in the body. FAQs are generated separately."""
 
-NET_WORTH_QUALITY_RULES = """NET WORTH FIRST (critical — reader must get the number immediately):
-- The summary and Introduction MUST state one headline net worth figure (or a narrow range) with an as-of year in the first two sentences.
-- Name the primary income sources in the opening (e.g. prize money, salary, endorsements).
-- H1 MUST contain "{name} Net Worth" and the current year.
+NET_WORTH_QUALITY_RULES = """NET WORTH FIRST (critical — reader must get compensation clarity immediately):
+- Prefer documented salary, contract, or NIL figures over inventing a private net-worth fortune.
+- The summary and Introduction MUST state one headline compensation figure (salary/contract/NIL) or a narrow reported range with an as-of year in the first two sentences when research supports it. If research has no credible figure, lead with {name}'s role and income sources — do not write "not publicly disclosed" and do not invent a number.
+- Name the primary income sources in the opening (e.g. salary, media, speaking, investments).
+- H1 MUST contain "{name} Net Worth" and the current year. Preferred pattern: "{name} Net Worth {year}: Salary, Endorsements & Earnings". NEVER use "How She/He Built Her/His $XM Fortune".
 
 INCOME BREAKDOWN (core SEO section):
-- Dedicated H2 "{name} Net Worth & Income Sources" with H3 subsections for career earnings, endorsements, and social media income.
-- Include specific figures where research supports them (salary, prize money, brand deals, follower counts).
+- Dedicated H2 "{name} Net Worth & Income Sources" with H3 subsections for career earnings, media/endorsements/appearances, and investments/real estate (omit Investments if no facts).
+- Include specific figures where research supports them. If a dollar amount is unavailable, describe the income channel (salary band, book/speaking deals, disclosed property) instead of inventing amounts.
 - Label estimates clearly (e.g. "reported", "estimated", "approx.") when not verified.
 
 STRUCTURE & TONE:
 - Career & Achievements BEFORE Personal Life — order is fixed.
-- Early Life & Background: brief only (100–150 words max).
-- Personal Life: high-traffic hook (partner, family); optional partner net worth comparison if relevant.
+- Career & Achievements: money-relevant timeline only (roles, titles, turning points that affect income) — not childhood biography.
+- Personal Life: only when research has concrete public facts; otherwise omit the section.
+- Include H2 "How {name}'s Net Worth Is Estimated" covering assets minus liabilities, public disclosures vs third-party estimates, and why ranges exist.
 - BANNED: religion, faith, spirituality, church, prayer, or non-financial belief content.
 - Do NOT embed external hyperlinks; mention Wikipedia in plain text when attribution is needed.
 - Include disclaimer once: "Net worth estimates are based on publicly available information and may vary."
-
-FAQ:
-- Target PAA-style queries: "{name} net worth", "how much does {name} make", "{name} salary", "{name} endorsements"."""
+- Do NOT include FAQ headings or Q/A pairs in the body. FAQs are generated in a separate field."""
 
 
 def get_net_worth_quality_rules(name: str = "the celebrity") -> str:
@@ -603,84 +746,84 @@ def get_net_worth_format_rules() -> str:
     return NET_WORTH_FORMAT_RULES
 
 
-CELEBRITY_NET_WORTH_TEMPLATE_ID = "celebrity_net_worth_v1"
+CELEBRITY_NET_WORTH_TEMPLATE_ID = "celebrity_net_worth_v2"
 
 
 def get_celebrity_net_worth_template() -> List[OutlineSection]:
-    """Fixed net worth outline — figure first, income breakdown core, career before personal life."""
+    """Fixed net worth outline — figure first, income breakdown, methodology, no in-body FAQ."""
     return [
         _h2(
             "intro",
             "Introduction",
             "intro",
-            (120, 150),
-            "FIRST two sentences: state {name}'s net worth figure (or range) with as-of year and primary income sources. "
-            "Then one sentence on why readers search for this now.",
+            (110, 130),
+            "FIRST two sentences: state {name}'s net worth figure (or range) with as-of year and primary income sources "
+            "when research supports a figure; otherwise open with who {name} is and how they earn money "
+            "(do not write 'not publicly disclosed'). Then one sentence on why readers search for this now. "
+            "Include the disclaimer once.",
         ),
         _h2(
             "quick_facts",
             "Quick Facts / {name} at a Glance",
             "celebrity_focus",
-            (80, 100),
-            "Markdown table: Full Name, Date of Birth, Nationality, Net Worth, Salary, Profession, Partner — one row per fact.",
+            (70, 90),
+            "Markdown table with columns Fact | Details. Include only rows with real research values "
+            "(Full Name, Date of Birth, Nationality, Profession, Estimated Net Worth, Primary Income Sources, Partner). "
+            "Omit any row you cannot fill. Never write Not publicly disclosed, N/A, or Unknown.",
         ),
         _h2(
             "net_worth_income",
             "{name} Net Worth & Income Sources",
             "celebrity_focus",
-            (400, 500),
-            "Core SEO section: total wealth overview; how {name} earns money.",
+            (280, 320),
+            "Core SEO section: how {name} earns money. Use research-backed figures when present; "
+            "otherwise describe the income channel without inventing amounts.",
             [
                 _h3(
                     "career_earnings",
                     "Career Earnings & Salary",
                     "celebrity_focus",
-                    (130, 160),
-                    "Prize money, contracts, team salary, tournament payouts — specific figures from research.",
+                    (90, 110),
+                    "Salary, contracts, prize money, public-office pay bands — specific figures from research only.",
                 ),
                 _h3(
-                    "endorsements",
-                    "Brand Endorsements & Sponsorships",
+                    "media_appearances",
+                    "Media, Endorsements & Public Appearances",
                     "celebrity_focus",
-                    (130, 160),
-                    "Named brands and sponsorship deals with estimated values where available.",
+                    (90, 110),
+                    "Books, speaking, brand deals, commentary, appearances — named deals with values only if sourced.",
                 ),
                 _h3(
-                    "social_media",
-                    "Social Media & Content Income",
+                    "investments_assets",
+                    "Investments, Real Estate & Other Assets",
                     "celebrity_focus",
-                    (130, 160),
-                    "Follower counts, per-post estimates, brand deal rates from research.",
+                    (90, 110),
+                    "Disclosed property, investments, and other assets; describe categories if dollar amounts are unknown.",
                 ),
             ],
+        ),
+        _h2(
+            "methodology",
+            "How {name}'s Net Worth Is Estimated",
+            "celebrity_focus",
+            (160, 180),
+            "Assets minus liabilities; public disclosures vs third-party estimates; why ranges exist. "
+            "Wikipedia for biography, not as a wealth audit. Do not invent a new headline figure here.",
         ),
         _h2(
             "career_achievements",
             "Career & Achievements",
             "celebrity_focus",
-            (250, 300),
-            "Major titles, awards, Olympic/medical milestones for {name}; paragraph + 3–4 bullets.",
-        ),
-        _h2(
-            "early_life",
-            "Early Life & Background",
-            "celebrity_focus",
-            (100, 150),
-            "Brief: birthplace, upbringing, path into career — keep short; most readers skip this.",
+            (180, 200),
+            "Money-relevant timeline for {name}: roles, titles, turning points that affect income. "
+            "Paragraph + 3–4 bullets as Year — Role. Not a childhood biography.",
         ),
         _h2(
             "personal_life",
             "Personal Life",
             "celebrity_focus",
-            (150, 200),
-            "Partner, family, high-traffic personal hooks; optional partner net worth comparison if relevant.",
-        ),
-        _h2(
-            "faq",
-            "FAQ: {name} Net Worth & More",
-            "conclusion",
-            (150, 200),
-            "4–6 People Also Ask questions with concise answers; each answer restates or supports the headline net worth figure.",
+            (150, 170),
+            "Household, partner, lifestyle hooks for {name}. Do not invent a spouse net worth if it is not public.",
         ),
     ]
 

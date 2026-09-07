@@ -10,7 +10,10 @@ from app.services.http_ssl import httpx_verify
 import time
 
 # Groq model for trending fallback
-TRENDING_FALLBACK_GROQ_MODEL = "llama-3.3-70b-versatile"
+TRENDING_FALLBACK_GROQ_MODEL = "openai/gpt-oss-20b"
+
+# Google Trends "trending now" look-back windows supported by SerpAPI (hours).
+ALLOWED_TREND_HOURS = (4, 24, 48, 168)
 
 # Simple rate limiting
 _last_request_time = 0
@@ -102,7 +105,7 @@ Examples: AI news, weather today, election results, sports scores."""
         if line and len(line) < 200:
             keywords.append({
                 "keyword": line,
-                "value": "—",
+                "value": None,
                 "timestamp": datetime.utcnow().isoformat(),
             })
     if not keywords:
@@ -121,6 +124,78 @@ Examples: AI news, weather today, election results, sports scores."""
             db.add(TrendingKeywords(keyword=keyword, data=keyword_data, source="trending"))
     db.commit()
     return get_trending_keywords_from_db(db, hours)
+
+
+_TRAFFIC_MULTIPLIERS = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
+
+
+def _coerce_search_volume(trend: Dict[str, Any]) -> Optional[int]:
+    """Read a numeric search volume from a trending_searches item.
+
+    The `google_trends_trending_now` engine returns `search_volume` (int).
+    Older/other shapes used `formatted_traffic` ("2K+") or `value`.
+    """
+    raw = trend.get("search_volume")
+    if isinstance(raw, bool):
+        raw = None
+    if isinstance(raw, (int, float)) and raw > 0:
+        return int(raw)
+
+    fallback = trend.get("formatted_traffic")
+    if fallback is None:
+        fallback = trend.get("value")
+    if isinstance(fallback, bool):
+        return None
+    if isinstance(fallback, (int, float)) and fallback > 0:
+        return int(fallback)
+    if isinstance(fallback, str):
+        match = re.match(r"\s*([\d,.]+)\s*([KkMmBb]?)", fallback)
+        if match:
+            try:
+                num = float(match.group(1).replace(",", ""))
+            except ValueError:
+                return None
+            mult = _TRAFFIC_MULTIPLIERS.get(match.group(2).lower(), 1)
+            volume = int(num * mult)
+            return volume or None
+    return None
+
+
+def _parse_trending_item(trend: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Normalize one trending_searches item to our stored `data` shape."""
+    if not isinstance(trend, dict):
+        return None
+    query = (trend.get("query") or "").strip()
+    if not query:
+        return None
+
+    start_ts = trend.get("start_timestamp")
+    if isinstance(start_ts, (int, float)) and start_ts > 0:
+        timestamp = datetime.utcfromtimestamp(start_ts).isoformat() + "Z"
+    else:
+        timestamp = trend.get("date") or (datetime.utcnow().isoformat() + "Z")
+
+    volume = _coerce_search_volume(trend)
+    increase = trend.get("increase_percentage")
+    if isinstance(increase, bool):
+        increase = None
+
+    categories = [
+        c.get("name")
+        for c in (trend.get("categories") or [])
+        if isinstance(c, dict) and c.get("name")
+    ]
+
+    return {
+        "keyword": query,
+        "value": volume,
+        "search_volume": volume,
+        "increase_percentage": increase if isinstance(increase, (int, float)) else None,
+        "active": trend.get("active"),
+        "categories": categories,
+        "trend_breakdown": [t for t in (trend.get("trend_breakdown") or []) if t],
+        "timestamp": timestamp,
+    }
 
 
 async def fetch_trending_keywords(
@@ -179,29 +254,17 @@ async def fetch_trending_keywords(
             keywords = []
             
             # Parse keywords from trending_searches (primary format for trending_now engine)
-            trending_searches = data.get("trending_searches", [])
-            if trending_searches:
-                for trend in trending_searches:
-                    # Extract query field (primary field for trending searches)
-                    query = trend.get("query", "")
-                    if query:
-                        keywords.append({
-                            "keyword": query,
-                            "value": trend.get("formatted_traffic", trend.get("value", 0)),
-                            "timestamp": trend.get("date", datetime.utcnow().isoformat())
-                        })
-            
+            for trend in data.get("trending_searches", []) or []:
+                parsed = _parse_trending_item(trend)
+                if parsed:
+                    keywords.append(parsed)
+
             # Fallback: Check default.trending_searches if main trending_searches is empty
             if not keywords and "default" in data:
-                trending_searches = data.get("default", {}).get("trending_searches", [])
-                for trend in trending_searches:
-                    query = trend.get("query", "")
-                    if query:
-                        keywords.append({
-                            "keyword": query,
-                            "value": trend.get("formatted_traffic", trend.get("value", 0)),
-                            "timestamp": trend.get("date", datetime.utcnow().isoformat())
-                        })
+                for trend in data.get("default", {}).get("trending_searches", []) or []:
+                    parsed = _parse_trending_item(trend)
+                    if parsed:
+                        keywords.append(parsed)
             
             # If no keywords found, raise helpful error
             if not keywords:

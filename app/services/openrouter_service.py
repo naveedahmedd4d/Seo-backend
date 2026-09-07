@@ -10,14 +10,15 @@ import time
 
 if TYPE_CHECKING:
     from app.services.llm_settings_service import LlmCredentials
+    from app.schemas.blog_settings import BlogGenerationConfig
 
 # Simple rate limiting - reduced interval for faster processing
 _last_request_time = 0
 _min_request_interval = 0.1  # Reduced from 0.5 to 0.1 seconds for faster processing
 
-# Default Groq model for general completions (all former OpenRouter traffic uses Groq)
-BLOG_GENERATION_MODEL_GROQ = "llama-3.3-70b-versatile"
-KEYWORD_CATEGORIZATION_MODEL_GROQ = "meta-llama/llama-4-scout-17b-16e-instruct"
+# Groq production models (Llama 3.x / Llama 4 Scout were shut down Aug 2026)
+BLOG_GENERATION_MODEL_GROQ = "openai/gpt-oss-120b"
+KEYWORD_CATEGORIZATION_MODEL_GROQ = "openai/gpt-oss-20b"
 
 # Per-request LLM credentials (set at blog/authority workflow entry)
 LLM_CONTEXT: ContextVar[Optional["LlmCredentials"]] = ContextVar("llm_context", default=None)
@@ -34,6 +35,46 @@ def reset_llm_context(token) -> None:
 
 def get_llm_context() -> Optional["LlmCredentials"]:
     return LLM_CONTEXT.get()
+
+
+def _llm_gen_kwargs(
+    blog_config: Optional["BlogGenerationConfig"],
+    default_tokens: int,
+    default_temp: float,
+) -> Dict[str, Any]:
+    if blog_config is None:
+        return {"max_tokens": default_tokens, "temperature": default_temp}
+    return {"max_tokens": blog_config.max_tokens, "temperature": blog_config.temperature}
+
+
+def _with_style_notes(category_style: str, blog_config: Optional["BlogGenerationConfig"]) -> str:
+    notes = (blog_config.custom_style_notes or "").strip() if blog_config else ""
+    if not notes:
+        return category_style
+    return f"{category_style}\n\nAdditional style notes from the publisher:\n{notes}"
+
+
+def _config_structure_block(
+    blog_config: Optional["BlogGenerationConfig"],
+    name: str,
+    fallback: str,
+    topic: str = "",
+) -> str:
+    if blog_config is None or not blog_config.sections:
+        return fallback
+    from app.services.blog_generation_config import (
+        format_rules_from_config,
+        sections_to_prompt_block,
+        substitute_section_tokens,
+    )
+
+    sections = substitute_section_tokens(
+        blog_config.sections, name or topic, topic or name
+    )
+    return (
+        f"{format_rules_from_config(blog_config)}\n\n"
+        f"{sections_to_prompt_block(sections, name or topic)}"
+    )
 
 
 async def _rate_limit():
@@ -118,8 +159,8 @@ async def _groq_chat_completion(
         payload["top_p"] = top_p
     if frequency_penalty is not None:
         payload["frequency_penalty"] = frequency_penalty
-    if presence_penalty is not None:
-        payload["presence_penalty"] = presence_penalty
+    if model.startswith("openai/gpt-oss"):
+        payload["reasoning_effort"] = "low"
 
     last_error: Optional[str] = None
     for key_index, api_key in enumerate(api_keys):
@@ -159,7 +200,9 @@ async def _groq_chat_completion(
                     if "choices" in data and len(data["choices"]) > 0:
                         msg = data["choices"][0].get("message") or {}
                         content = msg.get("content")
-                        if content is None:
+                        if not (isinstance(content, str) and content.strip()):
+                            content = msg.get("reasoning")
+                        if not (isinstance(content, str) and content.strip()):
                             raise Exception(
                                 "Groq returned no message content. Response data: "
                                 f"{data}"
@@ -881,7 +924,8 @@ async def generate_seo_title(
     keywords: List[str] = None,
     category: str = "Technology & AI",
     research_context: Optional[str] = None,
-    content_intent: Optional[str] = None
+    content_intent: Optional[str] = None,
+    seo_power_words: bool = True,
 ) -> str:
     """Generate SEO-optimized blog title following Rank Math guidelines"""
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
@@ -904,8 +948,8 @@ Writing Style Guidelines:
 Rank Math SEO Requirements (all required):
 - Title must be 50-60 characters long
 - Put the Focus Keyword (primary keyword or topic) in the SEO title and near the beginning (first 3-5 words if possible)
-- Include at least one power word (e.g. Ultimate, Essential, Best, Proven, Secret, Complete, Guide, Top, Key, Must-Know, Incredible, Simple)
-- Include a number in the title (e.g. "5 Facts", "2024 Guide", "10 Things")
+{'- Include at least one power word (e.g. Ultimate, Essential, Best, Proven, Secret, Complete, Guide, Top, Key, Must-Know, Incredible, Simple)' if seo_power_words else '- Do not force marketing power words; keep the title accurate'}
+{'- Include a number in the title (e.g. "5 Facts", "2024 Guide", "10 Things")' if seo_power_words else '- A number in the title is optional'}
 - Use positive or negative sentiment (e.g. "Why...", "How...", "The Rise of...", "What Makes...")
 - Make it compelling and click-worthy; avoid clickbait - be accurate and informative
 
@@ -964,6 +1008,7 @@ def _build_parent_article_prompt(
     last_updated_block: str,
     youtube_url: Optional[str] = None,
     omit_religion: bool = False,
+    blog_config: Optional["BlogGenerationConfig"] = None,
 ) -> str:
     """Build full 12-section parent/overview article prompt (minimum 2,500 words)."""
     has_news_hook = "## News hook" in (description_text or "")
@@ -999,7 +1044,13 @@ NEWS HOOK (required when present in Additional Context):
 | Nationality | ... |
 - **Do not** add in-body links or sentences pointing to separate net worth or religion companion articles."""
     )
-    return f"""Write a comprehensive celebrity overview article. Total length 2,000-3,000 words. Use research to fact-check career dates, film titles, and awards.
+    length_line = (
+        f"Total length approximately {blog_config.target_word_count:,} words (minimum {blog_config.min_words:,})."
+        if blog_config
+        else "Total length 2,000-3,000 words."
+    )
+    config_structure = _config_structure_block(blog_config, topic, "", topic)
+    return f"""Write a comprehensive celebrity overview article. {length_line} Use research to fact-check career dates, film titles, and awards.
 
 Topic: "{topic}"{description_text}
 Target Keywords: {keywords_text}
@@ -1016,7 +1067,8 @@ Rank Math SEO (required):
 - Do not add in-body links or call-to-action lines to separate net worth or religion articles (no `/name-net-worth` or `/name-religion` paths in the body).
 - Include at least one image placeholder with Focus Keyword in the alt text: e.g. ![Topic Name at Event](image-url) or ![Topic Name - Description](image-url).
 
-STRUCTURE (use these exact H2 headings in order):
+{config_structure if config_structure else ""}
+STRUCTURE (use these exact H2 headings in order, unless a custom ARTICLE STRUCTURE is provided above):
 
 ## Introduction (200-250 words)
 - Compelling hook about the celebrity
@@ -1066,6 +1118,72 @@ STRUCTURE (use these exact H2 headings in order):
 Format in clean markdown. Do not include the article title. {"Start with the news hook opening paragraph (no heading), then continue with Introduction." if has_news_hook else "Start with the introduction."} Use the Focus Keyword in at least 2 of the H2 section headings (e.g. "Early Life of [Name]", "[Name]'s Career Overview")."""
 
 
+def _build_athlete_article_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block: str,
+    youtube_url: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Sports/athlete biography — no First Leading Role, no religion stuffing."""
+    from app.services.celebrity_outline_templates import (
+        build_athlete_biography_outline,
+        normalize_celebrity_name,
+        outline_to_markdown,
+    )
+
+    name = normalize_celebrity_name(topic)
+    has_news_hook = "## News hook" in (description_text or "")
+    news_hook_block = ""
+    if has_news_hook:
+        news_hook_block = """
+NEWS HOOK (required when present in Additional Context):
+- BEFORE "## Introduction", write 1 opening paragraph (no H2) from the "## News hook" text.
+- Do NOT put the news event into the article H1 (title is set separately).
+- "## Introduction" must not merely repeat the news; explain who they are as an athlete.
+"""
+    yt_instruction = (
+        f'In "First Media Appearance / Interview Embed" include exactly: [YOUTUBE_EMBED: {youtube_url}] on its own line, then 1-2 paragraphs of context.'
+        if youtube_url
+        else 'In "First Media Appearance / Interview Embed" note that no suitable interview was found and write 1-2 paragraphs on early media significance.'
+    )
+    outline_md = outline_to_markdown(build_athlete_biography_outline(name))
+    structure_block = _config_structure_block(blog_config, name, f"ARTICLE STRUCTURE (follow these exact H2/H3 headings):\n{outline_md}", topic)
+    length_line = (
+        f"Total length approximately {blog_config.target_word_count:,} words (minimum {blog_config.min_words:,})."
+        if blog_config
+        else "Total length approximately 1,200–1,600 words (minimum 1,200)."
+    )
+    return f"""Write a comprehensive athlete biography. {length_line} Use research to fact-check teams, draft year, and awards. Do not invent opponents or game scores.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}
+{news_hook_block}
+
+Include where relevant (e.g. end of Conclusion): {last_updated_block}.
+
+Rank Math SEO (required):
+- Focus Keyword: use "{name}" in the first 1-2 sentences and in at least two H2 headings.
+- Short paragraphs (2–4 sentences).
+- Do not add a Table of Contents.
+- Do NOT mention religion, faith, spirituality, church, or prayer.
+- Do NOT use entertainment headings like "First Leading Role".
+- {yt_instruction}
+
+{structure_block}
+
+BANNED: inventing private net-worth fortunes; stuffing religion into the body; Hollywood "leading role" framing.
+
+{CITATION_POLICY_PROMPT}
+
+Format in clean markdown. Do not include the article title. {"Start with the news hook opening paragraph (no heading), then ## Introduction." if has_news_hook else "Start with ## Introduction."}"""
+
+
 def sanitize_religion_body(body: str) -> str:
     """Remove TOC blocks, placeholder images, and broken markdown image links from religion articles."""
     if not body or not body.strip():
@@ -1100,6 +1218,7 @@ def _build_religion_article_prompt(
     research_block: str,
     last_updated_block: str,
     description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
 ) -> str:
     """Celebrity religion article prompt — context-first outline or magazine template fallback."""
     from app.services.celebrity_outline_templates import (
@@ -1119,7 +1238,14 @@ def _build_religion_article_prompt(
             "Do not use the default section list below."
         )
     else:
-        structure_block = outline_to_prompt_block(name, include_briefs=True)
+        structure_block = _config_structure_block(
+            blog_config, name, outline_to_prompt_block(name, include_briefs=True), topic
+        )
+    length_close = (
+        f"Total length approximately {blog_config.target_word_count:,} words (minimum {blog_config.min_words:,})."
+        if blog_config
+        else "Total length approximately 1,500 words (1,400-1,600 maximum)."
+    )
 
     return f"""You are an expert celebrity religion blogger writing for whatreligionisinfo.com. Create a factual, SEO-optimized article about {name}'s religious beliefs and spiritual background.
 
@@ -1144,7 +1270,402 @@ Rank Math SEO (required):
 
 {CITATION_POLICY_PROMPT}
 
-Format in clean markdown. Do not include the article title (it will be added separately). Start with ## Introduction. Total length approximately 1,500 words (1,400-1,600 maximum)."""
+Format in clean markdown. Do not include the article title (it will be added separately). Start with ## Introduction. {length_close}"""
+
+
+def _build_net_worth_article_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block_nw: str,
+    omit_religion_refs_in_net_worth: bool = False,
+    description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Celebrity net worth article prompt — fixed outline or research handoff headings."""
+    from app.services.celebrity_outline_templates import (
+        get_net_worth_format_rules,
+        get_net_worth_quality_rules,
+        normalize_celebrity_name,
+        outline_to_net_worth_prompt_block,
+    )
+
+    name = normalize_celebrity_name(topic)
+    default_structure = outline_to_net_worth_prompt_block(name, include_briefs=True)
+    has_content_outline = bool(description and "## Content outline" in description)
+
+    if has_content_outline:
+        structure_block = (
+            "ARTICLE STRUCTURE: Follow the H2/H3 headings under "
+            '"## Content outline" in Additional Context. '
+            "If that outline is incomplete, use the default headings and word budgets below. "
+            "Do not add an FAQ section even if the outline mentions related questions.\n\n"
+            f"{default_structure}"
+        )
+    else:
+        structure_block = _config_structure_block(blog_config, name, default_structure, topic)
+
+    sibling_line = (
+        "- **Do not** add in-body links to the overview or any religion article (none exists for this person)."
+        if omit_religion_refs_in_net_worth
+        else "- **Do not** add in-body links to overview or religion companion articles."
+    )
+
+    return f"""You are an expert celebrity finance blogger writing a net worth article about {name}. Create a factual, SEO-optimized article focused on money, compensation, assets, and how wealth is estimated.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}
+
+Rank Math SEO (required):
+- Focus Keyword: use "{name} net worth" or the topic as focus keyword in the first 1-2 sentences and in at least two H2 headings.
+- Do not add a Table of Contents.
+- Do NOT add markdown images unless Research context includes a real https URL for that image (never example.com or placeholders).
+- Do NOT include an FAQ section, FAQ headings, or Q/A pairs in the body. FAQs are generated separately.
+{sibling_line}
+- Last Updated: include this block verbatim after the opening paragraph: {last_updated_block_nw}
+
+E-E-A-T and accuracy (YMYL financial content):
+- **Banned:** religion, faith, spirituality, church, prayer, religious identity, or any non-financial personal belief content.
+- Give **one** headline net worth figure (or a **narrow range** from official disclosures) when research supports it. If research has no credible figure, describe role and income sources instead — do not invent a number and do not write "not publicly disclosed".
+- State the **as-of date**, **reporting year**, or **methodology**.
+- **Do not** put **annual salary** in the same "% of net worth" table as asset buckets without explanation.
+- Include this disclaimer verbatim once: "Net worth estimates are based on publicly available information and may vary."
+
+{get_net_worth_quality_rules(name)}
+
+{structure_block}
+
+{get_net_worth_format_rules()}
+
+{CITATION_POLICY_PROMPT}
+
+Format in clean markdown. Do not include the article title (it will be added separately). Start with the introduction paragraph (no H2 required for the opening), then write EVERY remaining outline section. You MUST produce 1,150-1,300 words. Incomplete articles that stop after Quick Facts fail the assignment. Do not invent a private fortune figure for the H1 or intro."""
+
+
+async def expand_thin_blog_body(
+    topic: str,
+    draft: str,
+    *,
+    min_words: int,
+    content_intent: str,
+    research_context: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
+) -> str:
+    """One expand pass when a draft is under the minimum word count."""
+    from app.services.blog_consistency import count_markdown_words
+
+    current = (draft or "").strip()
+    if not current:
+        return current
+    words = count_markdown_words(current)
+    if words >= min_words:
+        return current
+
+    research_block = (
+        f"\n\nResearch context (use for expansion; do not invent fortunes):\n{research_context[:2500]}"
+        if research_context
+        else ""
+    )
+    members = ""
+    if cluster_subs:
+        members = "\nCluster members: " + ", ".join(cluster_subs)
+    prompt = f"""You are expanding a thin SEO article draft. Return the FULL rewritten article in markdown (not a diff).
+
+Topic: "{topic}"
+Content intent: {content_intent}
+Current word count: ~{words}. Required minimum: {min_words}.{members}
+{research_block}
+
+RULES:
+- Keep all existing H2/H3 headings. Expand under-budget sections with role context, career timeline, documented salary/contract/NIL when available, and methodology.
+- Do NOT invent private net-worth "fortune" figures. Prefer documented compensation.
+- Do NOT add FAQ sections or external http(s) links.
+- Do NOT omit sections that already have substance; deepen them.
+- Target at least {min_words} words of prose (images/iframes do not count).
+- Omit Investments/Personal Life only if they are empty filler; otherwise expand with research-backed facts.
+
+DRAFT:
+{current}
+"""
+    expanded = await generate_blog_seo_content(prompt, max_tokens=5000, temperature=0.45)
+    expanded = (expanded or "").strip()
+    if not expanded:
+        return current
+    if count_markdown_words(expanded) >= words:
+        return expanded
+    return current
+
+
+async def ensure_min_body_words(
+    topic: str,
+    body: str,
+    *,
+    min_words: int,
+    content_intent: str,
+    research_context: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
+) -> Tuple[str, bool]:
+    """
+    Expand once if thin. Returns (body, thin_content_warning).
+    thin_content_warning is True only if still under min after expand.
+    """
+    from app.services.blog_consistency import is_thin_body
+
+    draft = body or ""
+    if not is_thin_body(draft, min_words):
+        return draft, False
+    expanded = await expand_thin_blog_body(
+        topic,
+        draft,
+        min_words=min_words,
+        content_intent=content_intent,
+        research_context=research_context,
+        cluster_subs=cluster_subs,
+    )
+    still_thin = is_thin_body(expanded, min_words)
+    return expanded, still_thin
+
+
+def _build_cluster_hub_article_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block: str,
+    cluster_subs: Optional[List[str]] = None,
+    description: Optional[str] = None,
+    cluster_member_facts: Optional[List[Dict[str, Any]]] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Pillar hub listicle prompt — comparison table plus one section per member."""
+    from app.services.cluster_hub_templates import (
+        get_cluster_hub_format_rules,
+        get_cluster_hub_quality_rules,
+        normalize_cluster_members,
+        outline_to_cluster_hub_prompt_block,
+    )
+
+    members = normalize_cluster_members(cluster_subs)
+    fallback = outline_to_cluster_hub_prompt_block(topic, members, include_briefs=True)
+    structure_block = _config_structure_block(blog_config, topic, fallback, topic)
+    if description and "## Content outline" in description:
+        structure_block = (
+            "ARTICLE STRUCTURE: Follow the H2/H3 headings under "
+            '"## Content outline" in Additional Context. '
+            "If that outline is incomplete, use the default headings and word budgets below. "
+            "Do not add an FAQ section.\n\n"
+            f"{structure_block}"
+        )
+
+    facts_block = ""
+    facts = cluster_member_facts or []
+    if facts or members:
+        lines = [
+            "MEMBER COMPENSATION FACTS (use ONLY these for At a Glance Estimated net worth; leave cell blank if missing):",
+            "| Name | Role | Estimated / documented compensation |",
+            "| --- | --- | --- |",
+        ]
+        by_name = {
+            str(f.get("name") or "").strip().lower(): f
+            for f in facts
+            if isinstance(f, dict) and str(f.get("name") or "").strip()
+        }
+        for name in members:
+            fact = by_name.get(name.lower()) or {}
+            role = str(fact.get("role") or "").strip()
+            comp = str(fact.get("headline_compensation") or "").strip()
+            lines.append(f"| {name} | {role} | {comp} |")
+        facts_block = "\n".join(lines) + "\n\nDo not invent fortunes for blank cells.\n"
+
+    return f"""You are an expert SEO editor writing a pillar hub / listicle about "{topic}". Compare the named cluster members. This is NOT a single-person biography or net-worth profile.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}
+
+Rank Math SEO (required):
+- Focus Keyword: use the pillar topic in the first 1-2 sentences and in at least two H2 headings.
+- Do not add a Table of Contents.
+- Do NOT add markdown images unless Research context includes a real https URL.
+- Do NOT include an FAQ section, FAQ headings, or Q/A pairs in the body. FAQs are generated separately.
+- Last Updated: include this block verbatim after the opening paragraph: {last_updated_block}
+
+{get_cluster_hub_quality_rules()}
+
+{facts_block}{structure_block}
+
+{get_cluster_hub_format_rules()}
+
+{CITATION_POLICY_PROMPT}
+
+Format in clean markdown. Do not include the article title. Start with the introduction paragraph, then write EVERY outline section including one heading per cluster member. You MUST produce 1,200-1,600 words. Prefer documented salary/contract/NIL over invented private fortunes."""
+
+
+def _build_news_timeline_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block: str,
+    news_sources_block: Optional[str] = None,
+    description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Build news timeline article prompt — chronological H3 structure, news sources as primary citations."""
+    from app.services.news_outline_templates import (
+        get_news_timeline_format_rules,
+        get_news_timeline_quality_rules,
+        outline_to_news_timeline_prompt_block,
+    )
+
+    subject = topic.strip()
+    fallback = outline_to_news_timeline_prompt_block(subject, include_briefs=True)
+    structure_block = _config_structure_block(blog_config, subject, fallback, topic)
+    news_block = (
+        f"\n\nNews sources (primary citations — cite outlet names in plain text, never embed URLs):\n{news_sources_block}"
+        if news_sources_block
+        else ""
+    )
+    return f"""You are an expert news editor writing a timeline article about "{topic}". This is a NEWS article, NOT a biography.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}{news_block}
+
+Rank Math SEO (required):
+- Focus Keyword: use the topic in the first 1-2 sentences and in at least two H2 headings.
+- Do not add a Table of Contents.
+- Do NOT write Early Life, Career Overview, or biography sections.
+- Do NOT include an FAQ section or Q/A pairs in the body. FAQs are generated separately.
+- Timeline H3 headings must follow the format: ### [Month Day, Year] — [Event label]
+
+{get_news_timeline_quality_rules()}
+
+{structure_block}
+
+{get_news_timeline_format_rules()}
+
+Format in clean markdown. Do not include the article title. Start with the What Happened section (no hook paragraph). Write EVERY outline section. You MUST produce 1,800-2,500 words. Cite news outlets by name in plain text — never embed URLs."""
+
+
+def _build_news_explainer_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block: str,
+    news_sources_block: Optional[str] = None,
+    description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Build news explainer/guide prompt — direct answer, key terms table, real examples."""
+    from app.services.news_outline_templates import (
+        get_news_explainer_format_rules,
+        get_news_explainer_quality_rules,
+        outline_to_news_explainer_prompt_block,
+    )
+
+    structure_block = _config_structure_block(
+        blog_config,
+        topic.strip(),
+        outline_to_news_explainer_prompt_block(topic.strip(), include_briefs=True),
+        topic,
+    )
+    news_block = (
+        f"\n\nNews sources (use for real-world examples and named perspectives — cite outlets in plain text):\n{news_sources_block}"
+        if news_sources_block
+        else ""
+    )
+    return f"""You are an expert SEO editor writing an explainer guide about "{topic}". This is a GUIDE, NOT a biography or a news report.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}{news_block}
+
+Rank Math SEO (required):
+- Focus Keyword: use the topic in the first 1-2 sentences and in at least two H2 headings.
+- Do not add a Table of Contents.
+- Key Terms section must be a markdown table: Term | Plain-English Definition.
+- Do NOT include an FAQ section or Q/A pairs in the body. FAQs are generated separately.
+- Last Updated: include this block verbatim at the end of the Perspectives section: {last_updated_block}
+
+{get_news_explainer_quality_rules()}
+
+{structure_block}
+
+{get_news_explainer_format_rules()}
+
+Format in clean markdown. Do not include the article title. Start with the Introduction section. Write EVERY outline section. You MUST produce 1,800-2,500 words. Cite named sources in plain text — never embed URLs."""
+
+
+def _build_news_opinion_prompt(
+    topic: str,
+    description_text: str,
+    keywords_text: str,
+    category_style: str,
+    research_block: str,
+    last_updated_block: str,
+    news_sources_block: Optional[str] = None,
+    story_description: Optional[str] = None,
+    description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
+) -> str:
+    """Build news opinion/reaction prompt — hook paragraph, named reactions, clearly-labeled Our Take."""
+    from app.services.news_outline_templates import (
+        get_news_opinion_format_rules,
+        get_news_opinion_quality_rules,
+        outline_to_news_opinion_prompt_block,
+    )
+
+    subject = topic.strip()
+    structure_block = _config_structure_block(
+        blog_config,
+        subject,
+        outline_to_news_opinion_prompt_block(subject, include_briefs=True),
+        topic,
+    )
+    news_block = (
+        f"\n\nNews sources (primary citations — attribute every reaction to a named person or outlet):\n{news_sources_block}"
+        if news_sources_block
+        else ""
+    )
+    hook_instruction = ""
+    if story_description and story_description.strip():
+        hook_instruction = (
+            f"\n\nNews hook (use this verbatim or near-verbatim as the opening paragraph before the first H2):\n{story_description.strip()}"
+        )
+    return f"""You are an expert news editor writing a reaction/opinion article about "{topic}". This is a NEWS REACTION piece, NOT a biography.
+
+Topic: "{topic}"{description_text}
+Target Keywords: {keywords_text}
+Writing style: {category_style}
+{research_block}{news_block}{hook_instruction}
+
+Rank Math SEO (required):
+- Focus Keyword: use the topic in the first paragraph and in at least two H2 headings.
+- Do not add a Table of Contents.
+- The opening hook paragraph has NO H2 heading — write it as a standalone paragraph before ## What Happened.
+- The Our Take section MUST begin with: **Editorial opinion:**
+- Do NOT include an FAQ section or Q/A pairs in the body. FAQs are generated separately.
+- Last Updated: include this block verbatim at the end of the Our Take section: {last_updated_block}
+
+{get_news_opinion_quality_rules()}
+
+{structure_block}
+
+{get_news_opinion_format_rules()}
+
+Format in clean markdown. Do not include the article title. Start with the hook paragraph (no H2), then write EVERY outline section. You MUST produce 1,000-1,500 words. Attribute every reaction to a named person — never embed URLs."""
 
 
 async def generate_blog_body(
@@ -1158,6 +1679,11 @@ async def generate_blog_body(
     youtube_url: Optional[str] = None,
     omit_religion_in_parent: bool = False,
     omit_religion_refs_in_net_worth: bool = False,
+    cluster_subs: Optional[List[str]] = None,
+    cluster_member_facts: Optional[List[Dict[str, Any]]] = None,
+    news_sources_block: Optional[str] = None,
+    story_description: Optional[str] = None,
+    blog_config: Optional["BlogGenerationConfig"] = None,
 ) -> str:
     """Generate SEO-optimized blog body content following Rank Math guidelines"""
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
@@ -1167,7 +1693,10 @@ async def generate_blog_body(
             keywords_text = keywords_text + ". Also use: " + ", ".join(extra_kw[:5]) if extra_kw else keywords_text
         else:
             keywords_text = keywords_text + ". Primary: " + str(extra_kw) if extra_kw else keywords_text
-    category_style = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["Lifestyle & Misc"])
+    category_style = _with_style_notes(
+        CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["Lifestyle & Misc"]),
+        blog_config,
+    )
     description_text = f"\n\nAdditional Context/Background:\n{description}" if description else ""
     research_block = f"\n\nResearch context (use to inform your response):\n{research_context}" if research_context else ""
     intent_block = ""
@@ -1176,45 +1705,127 @@ async def generate_blog_body(
     from datetime import date
     _last_updated = date.today().strftime("%B %d, %Y")
     _last_updated_block = last_updated_sources_block(_last_updated)
+    if blog_config is not None and not blog_config.last_updated_footer:
+        _last_updated_block = ""
     _last_updated_block_nw = (
         f'> **Last Updated:** {_last_updated} | **Sources:** Wikipedia'
     )
+    if blog_config is not None and not blog_config.last_updated_footer:
+        _last_updated_block_nw = ""
     eeat_block = ""
-    if content_intent == "net_worth":
-        sibling_line = (
-            "- **Do not** add in-body links to the overview or any religion article (none exists for this person)."
-            if omit_religion_refs_in_net_worth
-            else "- **Do not** add in-body links to overview or religion companion articles."
+    if content_intent == "news_timeline":
+        prompt = _build_news_timeline_prompt(
+            topic,
+            description_text,
+            keywords_text,
+            category_style,
+            research_block,
+            _last_updated_block,
+            news_sources_block=news_sources_block,
+            description=description,
+            blog_config=blog_config,
         )
-        eeat_block = f"""
-
-E-E-A-T and accuracy (YMYL financial content):
-- **Banned:** religion, faith, spirituality, church, prayer, religious identity, or any non-financial personal belief content. Keep this article strictly about money, compensation, assets, and career-related finance.
-- **Sources:** Do NOT embed external hyperlinks. Mention Wikipedia in plain text when attribution is needed for financial or biographical facts.
-- Include this disclaimer verbatim once: "Net worth estimates are based on publicly available information and may vary."
-- Give **one** headline net worth figure (or a **narrow range** from official disclosures) and state the **as-of date**, **reporting year**, or **methodology** (e.g. midpoint of disclosure ranges).
-- **Do not** put **annual salary** in the same "% of net worth" table as asset buckets without explanation. Use either:
-  - **Wealth table:** | Category | Estimated amount or range | % of estimated net worth | where rows are **asset/debt components** and percentages refer to **estimated total wealth** (sum 100%); **or**
-  - A **separate** small table or paragraph for **annual income** (salary, fees) labeled clearly as **per year**, not as a percentage of net worth unless you show the math.
-- Include this block verbatim near the top (after the opening paragraph): {_last_updated_block_nw}
-{sibling_line}
-
-{CITATION_POLICY_PROMPT}"""
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 4500, 0.5)
+        )
+    elif content_intent == "news_explainer":
+        prompt = _build_news_explainer_prompt(
+            topic,
+            description_text,
+            keywords_text,
+            category_style,
+            research_block,
+            _last_updated_block,
+            news_sources_block=news_sources_block,
+            description=description,
+            blog_config=blog_config,
+        )
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 4500, 0.5)
+        )
+    elif content_intent == "news_opinion":
+        prompt = _build_news_opinion_prompt(
+            topic,
+            description_text,
+            keywords_text,
+            category_style,
+            research_block,
+            _last_updated_block,
+            news_sources_block=news_sources_block,
+            story_description=story_description,
+            description=description,
+            blog_config=blog_config,
+        )
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 3500, 0.6)
+        )
+    if content_intent == "cluster_hub":
+        prompt = _build_cluster_hub_article_prompt(
+            topic,
+            description_text,
+            keywords_text,
+            category_style,
+            research_block,
+            _last_updated_block,
+            cluster_subs=cluster_subs,
+            description=description,
+            cluster_member_facts=cluster_member_facts,
+            blog_config=blog_config,
+        )
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 4500, 0.5)
+        )
+    if content_intent == "net_worth":
+        prompt = _build_net_worth_article_prompt(
+            topic,
+            description_text,
+            keywords_text,
+            category_style,
+            research_block,
+            _last_updated_block_nw,
+            omit_religion_refs_in_net_worth=omit_religion_refs_in_net_worth,
+            description=description,
+            blog_config=blog_config,
+        )
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 4500, 0.5)
+        )
     elif content_intent == "religion":
         eeat_block = _build_religion_article_prompt(
             topic, description_text, keywords_text, category_style, research_block,
-            _last_updated_block, description=description,
+            _last_updated_block, description=description, blog_config=blog_config,
         )
         prompt = eeat_block
-        body = await generate_blog_seo_content(prompt, max_tokens=4500, temperature=0.5)
+        body = await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 4500, 0.5)
+        )
         return sanitize_religion_body(body)
     elif content_intent == "parent_overview":
+        from app.services.celebrity_outline_templates import is_athlete_biography_topic
+
+        if is_athlete_biography_topic(topic, category, description):
+            prompt = _build_athlete_article_prompt(
+                topic,
+                description_text,
+                keywords_text,
+                category_style,
+                research_block,
+                _last_updated_block,
+                youtube_url=youtube_url,
+                blog_config=blog_config,
+            )
+            return await generate_blog_seo_content(
+                prompt, **_llm_gen_kwargs(blog_config, 5000, 0.55)
+            )
         prompt = _build_parent_article_prompt(
             topic, description_text, keywords_text, category_style,
             research_block, _last_updated_block, youtube_url=youtube_url,
             omit_religion=omit_religion_in_parent,
+            blog_config=blog_config,
         )
-        return await generate_blog_seo_content(prompt, max_tokens=5000, temperature=0.6)
+        return await generate_blog_seo_content(
+            prompt, **_llm_gen_kwargs(blog_config, 5000, 0.6)
+        )
     
     prompt = f"""Write a comprehensive, SEO-optimized blog post on the following topic.
 
@@ -1234,7 +1845,7 @@ Rank Math SEO Requirements (all required):
 5. Do not add a Table of Contents.
 6. Include at least one image with Focus Keyword in the alt text: e.g. ![Topic or Keyword description](image-url).
 7. Use bullet points and numbered lists where appropriate.
-8. Write at least 800-1200 words for comprehensive coverage.
+8. Write at least {blog_config.target_word_count if blog_config else 1000} words for comprehensive coverage ({(blog_config.min_words if blog_config else 800)} minimum).
 9. Include a compelling introduction that hooks the reader.
 10. End with a strong conclusion that summarizes key points.
 
@@ -1258,7 +1869,9 @@ Start directly with the introduction paragraph.
 {CITATION_POLICY_PROMPT}
 When the topic is time-sensitive or factual, include: {_last_updated_block}"""
 
-    return await generate_blog_seo_content(prompt, max_tokens=4000, temperature=0.7)
+    return await generate_blog_seo_content(
+        prompt, **_llm_gen_kwargs(blog_config, 4000, 0.7)
+    )
 
 
 # ---------- Batched blog generation (fewer LLM calls, shared context, rate-limit friendly) ----------
@@ -1270,26 +1883,35 @@ async def generate_single_blog_batch(
     keywords: List[str],
     category: str,
     research_context: Optional[str],
+    blog_config: Optional["BlogGenerationConfig"] = None,
 ) -> Dict[str, Any]:
     """Generate title, meta, faqs, related_queries in one call; then body in a second call. Reuses shared context."""
     import json
-    category_style = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["Lifestyle & Misc"])
+    category_style = _with_style_notes(
+        CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["Lifestyle & Misc"]),
+        blog_config,
+    )
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
     description_text = f"\nContext: {description}" if description else ""
     research_block = f"\n\nResearch context:\n{research_context}" if research_context else ""
+    faq_n = blog_config.faq_count if blog_config is not None else 5
+    rel_n = blog_config.related_query_count if blog_config is not None else 8
+    power = ""
+    if blog_config is None or blog_config.seo_power_words:
+        power = " Include a number in the title. Use one power word (e.g. Ultimate, Essential, Best, Guide, Top). Use positive or negative sentiment."
     prompt_meta = f"""Generate SEO fields for ONE blog post in a single JSON object. Return ONLY valid JSON, no markdown.
 
 Topic: "{topic}"{description_text}
 Keywords: {keywords_text}
 Category: {category}{research_block}
 
-Style: {category_style[:200]}
+Style: {category_style[:400]}
 
-Rank Math: Put Focus Keyword (topic/primary keyword) in title near the beginning. Include a number in the title. Use one power word (e.g. Ultimate, Essential, Best, Guide, Top). Use positive or negative sentiment.
+Rank Math: Put Focus Keyword (topic/primary keyword) in title near the beginning.{power}
 
 Return this exact structure (replace with your content):
-{{"title": "SEO title 50-60 chars", "meta_description": "150-160 chars", "faqs": [{{"question": "...", "answer": "..."}}, ...5 items], "related_queries": [{{"query": "query1", "answer": "1-2 sentence answer."}}, ...8 items]}}
-Meta description 150-160 chars and must include the focus keyword. FAQs: 5 items; each FAQ answer must be 2-3 sentences (about 2-3 lines) with a bit more detail—avoid one-line answers. related_queries: 8 items, each with "query" (search phrase) and "answer" (1-2 sentence answer for content length)."""
+{{"title": "SEO title 50-60 chars", "meta_description": "150-160 chars", "faqs": [{{"question": "...", "answer": "..."}}, ...{faq_n} items], "related_queries": [{{"query": "query1", "answer": "1-2 sentence answer."}}, ...{rel_n} items]}}
+Meta description 150-160 chars and must include the focus keyword. FAQs: {faq_n} items; each FAQ answer must be 2-3 sentences (about 2-3 lines) with a bit more detail—avoid one-line answers. related_queries: {rel_n} items, each with "query" (search phrase) and "answer" (1-2 sentence answer for content length). If FAQ or related count is 0, return an empty array for that field."""
     result_meta = await generate_blog_seo_content(prompt_meta, max_tokens=2000, temperature=0.6)
     await _blog_delay()
     # Parse meta block
@@ -1306,13 +1928,13 @@ Meta description 150-160 chars and must include the focus keyword. FAQs: 5 items
         faqs = meta_data.get("faqs")
         if not isinstance(faqs, list):
             faqs = []
-        faqs = [{"question": str(x.get("question", "")), "answer": str(x.get("answer", ""))} for x in faqs[:5]]
+        faqs = [{"question": str(x.get("question", "")), "answer": str(x.get("answer", ""))} for x in faqs[:faq_n]]
         related_queries = meta_data.get("related_queries")
         if not isinstance(related_queries, list):
             related_queries = []
         # Normalize to list of {query, answer}; accept legacy list of strings
         _rq = []
-        for q in related_queries[:8]:
+        for q in related_queries[:rel_n]:
             if isinstance(q, dict):
                 _rq.append({"query": str(q.get("query", "")).strip(), "answer": str(q.get("answer", "")).strip()})
             else:
@@ -1330,7 +1952,9 @@ Meta description 150-160 chars and must include the focus keyword. FAQs: 5 items
         faqs = [{"question": f"What is {topic}?", "answer": f"This article covers {topic}."}]
         related_queries = _default_related_queries(topic)[:2]
     # Body in separate call (largest output)
-    body_content = await generate_blog_body(topic, description, keywords, category, research_context=research_context)
+    body_content = await generate_blog_body(
+        topic, description, keywords, category, research_context=research_context, blog_config=blog_config
+    )
     return {
         "title": title,
         "meta_description": meta_description,
@@ -1664,9 +2288,13 @@ async def generate_faqs(
     keywords: List[str] = None,
     category: str = "Technology & AI",
     research_context: Optional[str] = None,
-    content_intent: Optional[str] = None
+    content_intent: Optional[str] = None,
+    faq_count: int = 5,
 ) -> List[Dict[str, str]]:
     """Generate FAQ section in schema-ready format for Rank Math"""
+    n = max(0, min(10, int(faq_count)))
+    if n == 0:
+        return []
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
     category_style = CATEGORY_PROMPTS.get(category, CATEGORY_PROMPTS["Lifestyle & Misc"])
     description_text = f"\nContext: {description}" if description else ""
@@ -1675,7 +2303,7 @@ async def generate_faqs(
     if content_intent and content_intent in CONTENT_INTENT_PROMPTS:
         intent_block = f"\n\nContent intent (follow this focus):\n{CONTENT_INTENT_PROMPTS[content_intent]}"
     
-    prompt = f"""Generate 5 frequently asked questions (FAQs) with answers for the following blog topic.
+    prompt = f"""Generate {n} frequently asked questions (FAQs) with answers for the following blog topic.
 
 Topic: "{topic}"{description_text}
 Related Keywords: {keywords_text}
@@ -1685,11 +2313,12 @@ Writing Style Guidelines:
 {category_style}
 
 Requirements:
-1. Create 5 relevant, commonly-asked questions
+1. Create {n} relevant, commonly-asked questions
 2. Include target keywords naturally in questions and answers
 3. Keep answers concise but informative (2-4 sentences each)
 4. Questions should be what real users would search for
 5. Answers should provide genuine value
+6. For net_worth or cluster_hub intents: do NOT invent private fortune figures. Prefer documented salary, contract, or NIL language. If unknown, say estimates vary and cite role/income channels without a made-up million-dollar fortune.
 
 Format your response as a JSON array with this exact structure:
 [
@@ -1826,8 +2455,12 @@ async def generate_related_queries(
     category: str = "Technology & AI",
     research_context: Optional[str] = None,
     content_intent: Optional[str] = None,
+    related_query_count: int = 8,
 ) -> List[Dict[str, str]]:
     """Generate related search queries with short answers (for SEO content length)."""
+    n = max(0, min(12, int(related_query_count)))
+    if n == 0:
+        return []
     keywords_text = ", ".join(keywords) if keywords else "relevant terms"
     description_text = f"\nContext: {description}" if description else ""
     research_block = (
@@ -1846,7 +2479,7 @@ For celebrity biography articles, include queries such as: "Who is [name]", "[na
 Each answer must give useful facts (2-3 sentences), not a teaser that says "read the article only".
 """
 
-    prompt = f"""Generate 8 related search queries users type into Google for this blog topic, WITH a helpful answer for each.
+    prompt = f"""Generate {n} related search queries users type into Google for this blog topic, WITH a helpful answer for each.
 
 Topic: "{topic}"{description_text}
 Related Keywords: {keywords_text}
@@ -1857,9 +2490,9 @@ Requirements:
 2. Answers must use research context when available; if unknown, say what is not publicly confirmed.
 3. Mix: "Who is", career, team/project, age, net worth, personal life, latest news — as relevant to the topic.
 4. Answers must stand alone as mini-FAQs (valuable, specific, not empty).
-5. Do not duplicate the same facts across all eight answers.
+5. Do not duplicate the same facts across all answers.
 
-Return ONLY a JSON array of 8 objects:
+Return ONLY a JSON array of {n} objects:
 [{{"query": "search phrase", "answer": "2-3 sentence answer."}}, ...]
 
 Return ONLY valid JSON, no markdown fences or other text."""
@@ -1872,7 +2505,7 @@ Return ONLY valid JSON, no markdown fences or other text."""
             defaults = _default_related_queries(topic)
             seen = {x["query"].lower() for x in out}
             for d in defaults:
-                if d["query"].lower() not in seen and len(out) < 8:
+                if d["query"].lower() not in seen and len(out) < n:
                     out.append(d)
                     seen.add(d["query"].lower())
         # Backfill empty answers
@@ -1882,9 +2515,9 @@ Return ONLY valid JSON, no markdown fences or other text."""
                     f"This article explains {item['query']} in context of {topic}, "
                     f"with career background and verified public facts."
                 )
-        return out[:8]
+        return out[:n]
     except json.JSONDecodeError:
-        return _default_related_queries(topic)[:8]
+        return _default_related_queries(topic)[:n]
 
 
 async def generate_internal_links(
@@ -2278,7 +2911,8 @@ def _fallback_celebrity_net_worth_summary(query: str, results: Dict[str, Any]) -
         "subtopics": [],
         "core_content_recommendations": [
             f"Verify latest salary and endorsement figures for {name}",
-            "Break down income by career earnings, endorsements, and social media",
+            "Break down income by career earnings, media/appearances, and investments",
+            "Explain how the net worth estimate is calculated",
             "Mention Wikipedia in plain text when attribution is needed",
         ],
         "seo_suggestions": [f'Use focus keyword "{name} net worth" in title and first paragraph'],
@@ -2527,17 +3161,27 @@ async def _generate_celebrity_biography_summary(
     from app.services.celebrity_outline_templates import (
         CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
         CELEBRITY_CATEGORY,
+        build_athlete_biography_outline,
         build_celebrity_biography_outline,
+        get_athlete_biography_section_slugs,
         get_biography_section_slugs,
+        is_athlete_biography_topic,
         normalize_celebrity_name,
     )
     from app.services.news_research_service import build_news_bundle, format_news_bundle_for_llm
     from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
 
     name = normalize_celebrity_name(query)
-    outline = build_celebrity_biography_outline(name)
-    slugs = get_biography_section_slugs()
     research_text = format_research_context(results) or ""
+    athlete = is_athlete_biography_topic(query, CELEBRITY_CATEGORY, research_text)
+    if athlete:
+        outline = build_athlete_biography_outline(name)
+        slugs = get_athlete_biography_section_slugs()
+        template_id = "athlete_biography_v1"
+    else:
+        outline = build_celebrity_biography_outline(name)
+        slugs = get_biography_section_slugs()
+        template_id = CELEBRITY_BIOGRAPHY_TEMPLATE_ID
 
     news_bundle = await build_news_bundle(query)
     seo_headline: Optional[str] = None
@@ -2546,7 +3190,7 @@ async def _generate_celebrity_biography_summary(
     news_block = ""
     if news_bundle:
         news_block = f"\n\nCurrent news context (use for title and opening hook):\n{format_news_bundle_for_llm(news_bundle)}"
-        if seo_headline:
+        if seo_headline and not athlete:
             news_block += f"\n\nRequired SEO title (use as h1): {seo_headline}"
 
     competitor_lines = []
@@ -2572,20 +3216,33 @@ async def _generate_celebrity_biography_summary(
     _year = _bio_date.today().year
     _suggested_hook = pick_biography_title_hook(name, _year)
     _hook_options = format_biography_hook_options_for_prompt(_year)
-    title_rule = (
-        f'h1: "[{name}] [Specific news] — [ONE biography hook]". Suggested hook: {_suggested_hook}. '
-        f'Vary endings across articles — choose from: {_hook_options.replace(chr(10), "; ")}. '
-        f'Examples: "— Her Full Life Story", "— Biography, Family & Net Worth", "— Who Is He Really?", '
-        f'"— Age, Religion, Net Worth & More", "— Full Biography & Untold Facts". '
-        f'NEVER use vague social tails like "fans praise" only.'
-        if news_bundle
-        else f'h1 pattern: "Who Is {name}? Full Biography & Career Highlights" or similar SEO title.'
-    )
-    summary_rule = (
-        "summary: 2-4 sentences; LEAD with the current news event, then preview the biography."
-        if news_bundle
-        else f"summary: 2-4 sentences about who {name} is and why readers should care."
-    )
+    if athlete:
+        title_rule = (
+            f'h1: MUST be a stable biography title like "{name}: Career, Stats, and Timeline" '
+            f'or "Who Is {name}? Career & WNBA Timeline". '
+            f"News belongs in the opening dek only — NEVER put game scores or news into h1. "
+            f"NEVER stuff religion, age, or net worth into the h1."
+        )
+        summary_rule = (
+            "summary: 2-4 sentences about who they are as an athlete; news may lead but title stays stable."
+            if news_bundle
+            else f"summary: 2-4 sentences about who {name} is as an athlete."
+        )
+    else:
+        title_rule = (
+            f'h1: "[{name}] [Specific news] — [ONE biography hook]". Suggested hook: {_suggested_hook}. '
+            f'Vary endings across articles — choose from: {_hook_options.replace(chr(10), "; ")}. '
+            f'Examples: "— Her Full Life Story", "— Biography, Family & Net Worth", "— Who Is He Really?", '
+            f'"— Age, Religion, Net Worth & More", "— Full Biography & Untold Facts". '
+            f'NEVER use vague social tails like "fans praise" only.'
+            if news_bundle
+            else f'h1 pattern: "Who Is {name}? Full Biography & Career Highlights" or similar SEO title.'
+        )
+        summary_rule = (
+            "summary: 2-4 sentences; LEAD with the current news event, then preview the biography."
+            if news_bundle
+            else f"summary: 2-4 sentences about who {name} is and why readers should care."
+        )
 
     prompt = f"""You are an SEO strategist for a celebrity biography article about "{name}".
 
@@ -2660,11 +3317,21 @@ Return ONLY valid JSON."""
         h1 = (data.get("h1") or "").strip()
         if not h1:
             h1 = fallback["h1"]
-        if seo_headline:
+        if athlete:
+            league = "WNBA" if re.search(r"\bwnba\b", research_text, re.I) else (
+                "NBA" if re.search(r"\bnba\b", research_text, re.I) else "Career"
+            )
+            if league in ("WNBA", "NBA"):
+                h1 = f"{name}: Career, Stats, and {league} Timeline"
+            else:
+                h1 = f"{name}: Career, Stats, and Timeline"
+        elif seo_headline:
             h1 = seo_headline
         elif news_bundle and is_weak_biography_title(h1, name):
             h1 = await generate_biography_news_seo_title(name, news_bundle, research_text)
-        h1 = ensure_biography_seo_title(h1, name)
+            h1 = ensure_biography_seo_title(h1, name)
+        else:
+            h1 = ensure_biography_seo_title(h1, name)
 
         seo_meta: Optional[str] = None
         if news_bundle or seo_headline:
@@ -2672,6 +3339,13 @@ Return ONLY valid JSON."""
             seo_meta = await generate_biography_news_meta_description(
                 name, h1, research_text, news_context=news_ctx
             )
+            if athlete and seo_meta and re.search(r"\breligion\b", seo_meta, re.I):
+                seo_meta = re.sub(
+                    r",?\s*religion\b",
+                    "",
+                    seo_meta,
+                    flags=re.I,
+                )
 
         base = {
             "summary": (data.get("summary") or "").strip() or fallback["summary"],
@@ -2688,7 +3362,7 @@ Return ONLY valid JSON."""
             "section_notes": section_notes or None,
             "category": CELEBRITY_CATEGORY,
             "celebrity_content_type": "biography",
-            "outline_template": CELEBRITY_BIOGRAPHY_TEMPLATE_ID,
+            "outline_template": template_id,
         }
         base.update(
             _news_fields_from_bundle(
@@ -2884,7 +3558,7 @@ The article outline headings are FIXED (already chosen). Section slugs: {slug_li
 
 Return ONLY a JSON object with these keys (no outline key — headings are fixed):
 - summary: string (2-4 sentences; MUST open with {name}'s net worth figure or range with as-of year {year}, then name primary income sources)
-- h1: string (SEO title MUST include "{name} Net Worth" and {year}, e.g. "{name} Net Worth {year}: How She Built Her $5M Fortune" — use research-backed figure when available)
+- h1: string (SEO title MUST include "{name} Net Worth" and {year}, e.g. "{name} Net Worth {year}: Salary, Endorsements & Earnings". NEVER use "How She/He Built Her/His $XM Fortune". Dollar amounts in H1 only if they are documented salary/contract/NIL from research — never an invented private fortune)
 - section_notes: object mapping each slug listed above to an array of exactly 3-4 UNIQUE research bullets (specific figures, brands, salary, prize money — intro and income slugs are highest priority)
 - key_topics: array of 5-8 strings
 - subtopics: array of 5-10 strings
@@ -2962,6 +3636,160 @@ Return ONLY valid JSON."""
         return _fallback_celebrity_net_worth_summary(query, results)
 
 
+def _fallback_cluster_hub_summary(
+    query: str,
+    results: Dict[str, Any],
+    cluster_subs: Optional[List[str]] = None,
+    category: Optional[str] = None,
+) -> Dict[str, Any]:
+    from datetime import date
+    from app.services.cluster_hub_templates import (
+        CLUSTER_HUB_INTENT,
+        CLUSTER_HUB_TEMPLATE_ID,
+        build_cluster_hub_outline,
+        get_cluster_hub_section_slugs,
+        normalize_cluster_members,
+    )
+
+    members = normalize_cluster_members(cluster_subs)
+    year = date.today().year
+    answer = (results.get("answer") or "").strip() if isinstance(results, dict) else ""
+    summary = (
+        answer[:500]
+        if answer
+        else f"Pillar hub outline for {query} ({year}). Compare {', '.join(members[:5]) or 'the listed members'}."
+    )
+    slugs = get_cluster_hub_section_slugs(members)
+    section_notes = {slug: [f"Cover {slug} using research for {query}."] * 3 for slug in slugs[:6]}
+    return {
+        "summary": summary,
+        "h1": f"{query.strip()} {year}" if str(year) not in (query or "") else query.strip(),
+        "outline": build_cluster_hub_outline(query, members),
+        "key_topics": [query, f"{query} {year}", "net worth comparison"],
+        "subtopics": members[:10],
+        "core_content_recommendations": [
+            "Lead with who is in the set and how they compare",
+            "Comparison table: Name, Role, Estimated net worth",
+            "One section per cluster member; omit unknown figures",
+        ],
+        "seo_suggestions": [f'Use focus keyword "{query}" in title and first paragraph'],
+        "topical_coverage": [],
+        "target_keywords": [query, *[f"{n} net worth" for n in members[:6]]],
+        "section_notes": section_notes,
+        "category": category,
+        "content_intent": CLUSTER_HUB_INTENT,
+        "outline_template": CLUSTER_HUB_TEMPLATE_ID,
+    }
+
+
+async def _generate_cluster_hub_summary(
+    query: str,
+    results: Dict[str, Any],
+    topical_mapping: Optional[Dict[str, Any]] = None,
+    competitors: Optional[List[Dict[str, Any]]] = None,
+    opportunities: Optional[List[Dict[str, Any]]] = None,
+    category: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    import json
+    from datetime import date
+    from app.services.cluster_hub_templates import (
+        CLUSTER_HUB_INTENT,
+        CLUSTER_HUB_TEMPLATE_ID,
+        build_cluster_hub_outline,
+        format_cluster_members_block,
+        get_cluster_hub_format_rules,
+        get_cluster_hub_quality_rules,
+        get_cluster_hub_section_slugs,
+        normalize_cluster_members,
+    )
+    from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
+
+    members = normalize_cluster_members(cluster_subs)
+    year = date.today().year
+    outline = build_cluster_hub_outline(query, members)
+    slugs = get_cluster_hub_section_slugs(members)
+    research_text = format_research_context(results) or ""
+    topical_block = format_topical_mapping_block(topical_mapping)
+
+    prompt = f"""You are an SEO strategist for a pillar hub listicle about "{query}".
+
+{format_cluster_members_block(members)}
+
+Research context:
+{research_text[:3000]}
+{topical_block}
+
+The article outline headings are FIXED. Section slugs: {", ".join(slugs)}
+
+{get_cluster_hub_quality_rules()}
+
+{get_cluster_hub_format_rules()}
+
+Return ONLY a JSON object with these keys (no outline key):
+- summary: string (2-4 sentences; MUST open by answering the pillar query for {year} and naming the set)
+- h1: string (MUST include the pillar topic and {year})
+- section_notes: object mapping each slug listed above to an array of exactly 3-4 UNIQUE research bullets
+- key_topics: array of 5-8 strings
+- subtopics: array of 5-10 strings
+- core_content_recommendations: array of 3-8 items
+- seo_suggestions: array of 5-8 strings
+- topical_coverage: array of 5-8 strings
+- target_keywords: array of 8-12 strings (include the pillar query)
+
+Return ONLY valid JSON."""
+
+    try:
+        result = await generate_content(prompt, max_tokens=1400, temperature=0.4, timeout_seconds=120.0)
+        data = json.loads(_clean_json_response(result))
+        if not isinstance(data, dict):
+            raise ValueError("Expected JSON object")
+
+        raw_notes = data.get("section_notes") or {}
+        section_notes: Dict[str, List[str]] = {}
+        if isinstance(raw_notes, dict):
+            for slug in slugs:
+                val = raw_notes.get(slug)
+                if isinstance(val, list):
+                    section_notes[slug] = [str(x).strip() for x in val if str(x).strip()][:4]
+
+        fallback = _fallback_cluster_hub_summary(query, results, members, category)
+        h1 = (data.get("h1") or "").strip() or fallback["h1"]
+        if query.lower().split()[0] not in h1.lower() and query.lower() not in h1.lower():
+            h1 = fallback["h1"]
+
+        topical = [str(x).strip() for x in (data.get("topical_coverage") or []) if str(x).strip()]
+        topical = merge_topical_mapping_terms(topical, topical_mapping, limit=12)
+        merged_kw = [query]
+        seen = {query.lower()}
+        for kw in [*(data.get("target_keywords") or []), *[f"{n} net worth" for n in members[:6]]]:
+            s = str(kw).strip() if kw else ""
+            if s and s.lower() not in seen:
+                merged_kw.append(s)
+                seen.add(s.lower())
+        merged_kw = merge_topical_mapping_terms(merged_kw, topical_mapping, limit=15)
+
+        return {
+            "summary": (data.get("summary") or "").strip() or fallback["summary"],
+            "h1": h1,
+            "outline": outline,
+            "key_topics": [str(x).strip() for x in (data.get("key_topics") or []) if str(x).strip()],
+            "subtopics": [str(x).strip() for x in (data.get("subtopics") or []) if str(x).strip()] or members,
+            "core_content_recommendations": [
+                str(x).strip() for x in (data.get("core_content_recommendations") or []) if str(x).strip()
+            ],
+            "seo_suggestions": [str(x).strip() for x in (data.get("seo_suggestions") or []) if str(x).strip()],
+            "topical_coverage": topical,
+            "target_keywords": merged_kw[:15],
+            "section_notes": section_notes or None,
+            "category": category,
+            "content_intent": CLUSTER_HUB_INTENT,
+            "outline_template": CLUSTER_HUB_TEMPLATE_ID,
+        }
+    except (json.JSONDecodeError, Exception):
+        return _fallback_cluster_hub_summary(query, results, cluster_subs, category)
+
+
 async def generate_research_content_summary(
     query: str,
     results: Dict[str, Any],
@@ -2970,6 +3798,8 @@ async def generate_research_content_summary(
     opportunities: Optional[List[Dict[str, Any]]] = None,
     category: Optional[str] = None,
     celebrity_content_type: Optional[str] = None,
+    content_intent: Optional[str] = None,
+    cluster_subs: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Generate structured research summary and content outline for blog generation."""
     import json
@@ -2978,7 +3808,13 @@ async def generate_research_content_summary(
         is_celebrity_net_worth_summary,
         is_celebrity_religious_summary,
     )
+    from app.services.cluster_hub_templates import is_cluster_hub_request
     from app.services.research_context import format_research_context, format_topical_mapping_block, merge_topical_mapping_terms
+
+    if is_cluster_hub_request(content_intent):
+        return await _generate_cluster_hub_summary(
+            query, results, topical_mapping, competitors, opportunities, category, cluster_subs
+        )
 
     if is_celebrity_religious_summary(category, celebrity_content_type):
         return await _generate_celebrity_religion_summary(
@@ -3238,17 +4074,21 @@ When uncertain, use false."""
 CONTENT_INTENT_PROMPTS = {
     "parent_overview": """This article is the OVERVIEW/PARENT: focus on who the person is, why they are famous or trending, career highlights, and general background and public interest. When research provides a news hook, title pattern: "[Full Name] [Specific news] — [varied biography hook]" e.g. Her Full Life Story; Biography, Family & Net Worth; Who Is He Really?; Age, Religion, Net Worth & More; Full Biography & Untold Facts; Biography, Age & Net Worth [year]. Vary the hook — do not use the same ending every time. Never use vague social-only tails (e.g. "fans praise"). Otherwise: "Who Is [Name]? Career, Fame, and Public Influence". News-hook titles may exceed 60 characters.""",
     "religion": """This article is the RELIGION/SPIRITUAL BELIEFS child for whatreligionisinfo.com: open with a direct answer to what religion the person practices or was raised in; include a "5 Key Facts" section; use research-backed specifics (quotes, interviews, upbringing), not vague speculation. Title pattern: "What Religion Is [Name]? 5 Key Facts About Their Spiritual Beliefs".""",
-    "net_worth": """This article is the NET WORTH/FINANCIAL child: focus on net worth, compensation, assets, and liabilities—not religion or personal beliefs. Title pattern: "[Name] Net Worth: Income, Endorsements & Assets" or similar. Do not mention faith, church, or spirituality here. The religion and net worth articles must stay separate.""",
+    "net_worth": """This article is the NET WORTH/FINANCIAL child: focus on net worth, compensation, assets, and liabilities—not religion or personal beliefs. Title pattern: "[Name] Net Worth: Income, Endorsements & Assets" or similar. Do not mention faith, church, or spirituality here. The religion and net worth articles must stay separate. Do not include FAQ headings or Q/A pairs in the article body — FAQs are generated separately.""",
+    "cluster_hub": """This article is a PILLAR HUB / LISTICLE: compare the named cluster members for the pillar keyword. Title pattern: the pillar topic plus the current year. Do not write a single-person biography. Do not include FAQ headings in the body.""",
+    "news_timeline": """This is a NEWS TIMELINE article. Title pattern: "[Name] [Event] — Complete Timeline [Year]". Open with what happened (who, what, when) in the first 2 sentences — NOT a biography opening. Write one H3 per date/event from the news sources provided. Do NOT write Early Life, Career Overview, or First Leading Role sections. Cite news outlets by name in plain text.""",
+    "news_explainer": """This is an EXPLAINER / GUIDE article. Title pattern: "[Topic] Explained: [Plain English Hook] [Year]". Open with a direct answer to the core question in the first 2 sentences. Include a Key Terms markdown table. Use plain language throughout. Cite named examples with dates from the research context. Do NOT write a biography.""",
+    "news_opinion": """This is a NEWS REACTION / OPINION article. Title pattern: "[Name] [Action]: What Really Happened & Why It Matters". Open with a hook paragraph (NO H2 heading) drawn from the news hook provided. Use What Happened / The Reaction / Context / Why It Won't Go Away / Our Take structure. The Our Take section MUST be labeled "Editorial opinion:" and kept to 60-80 words. Attribute every reaction to a named person or organisation.""",
 }
 
 async def _categorize_with_groq(prompt: str) -> str:
-    """Categorize using Groq API with llama-4-scout model."""
+    """Categorize using Groq production gpt-oss-20b (Llama 4 Scout was retired)."""
     if not settings.groq_api_key:
         raise ValueError("Groq API key not configured")
     return await _groq_chat_completion(
         messages=[{"role": "user", "content": prompt}],
         model=KEYWORD_CATEGORIZATION_MODEL_GROQ,
-        max_tokens=50,
+        max_tokens=256,
         temperature=0.3,
         timeout_seconds=60.0,
     )
@@ -3287,7 +4127,7 @@ def _validate_category(category: str) -> Optional[str]:
 
 async def categorize_keyword(keyword: str) -> Optional[str]:
     """
-    Categorize a keyword using Groq (meta-llama/llama-4-scout-17b-16e-instruct).
+    Categorize a keyword using Groq (openai/gpt-oss-20b).
     """
     if not settings.groq_api_key:
         raise ValueError("No LLM API key configured (set GROQ_API_KEY)")

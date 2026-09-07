@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, wordpress, trending, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm
+from app.api import auth, wordpress, trending, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm, settings_blog, website_audit
 from app.middleware import (
     http_exception_handler,
     validation_exception_handler,
@@ -52,6 +52,8 @@ app.include_router(ai_humanizer.router, prefix="/api/ai-humanizer", tags=["ai-hu
 app.include_router(search_console.router, prefix="/api/search-console", tags=["search-console"])
 app.include_router(authority.router, prefix="/api/authority", tags=["authority"])
 app.include_router(settings_llm.router, prefix="/api/settings", tags=["settings"])
+app.include_router(settings_blog.router, prefix="/api/settings", tags=["settings"])
+app.include_router(website_audit.router, prefix="/api/website-audit", tags=["website-audit"])
 
 
 @app.on_event("startup")

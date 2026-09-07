@@ -29,8 +29,20 @@ SECTION_HEADINGS: Dict[str, List[Tuple[str, List[str]]]] = {
         ("public_image", ["Public Image & Legacy", "Public Image"]),
     ],
     "net_worth": [
-        ("career", ["Career & Achievements", "Career Earnings"]),
-        ("personal_life", ["Personal Life"]),
+        ("career", ["Career & Achievements", "Career Earnings", "Career Timeline"]),
+        ("personal_life", ["Personal Life", "Assets, Lifestyle"]),
+    ],
+    "news_timeline": [
+        ("timeline", ["Timeline of Events", "What Happened"]),
+        ("reactions", ["Reactions & Responses", "The Reaction"]),
+    ],
+    "news_explainer": [
+        ("explainer", ["How It Works", "Background", "The Details"]),
+        ("examples", ["Real-World Examples", "Real Examples"]),
+    ],
+    "news_opinion": [
+        ("reaction", ["What Happened", "The Reaction"]),
+        ("context", ["Context: The Bigger Picture", "Context"]),
     ],
 }
 
@@ -95,15 +107,28 @@ def _normalize_image_url(url: str) -> str:
     return u
 
 
+def is_rejected_image_url(url: str) -> bool:
+    """Reject Google thumbnail hotlinks that break on WordPress."""
+    u = (url or "").lower()
+    return (
+        "encrypted-tbn" in u
+        or "gstatic.com/images" in u
+        or "googleusercontent.com/images" in u
+    )
+
+
 def _candidate_url_fields(candidate: Dict[str, Any]) -> List[str]:
-    """Prefer thumbnail (hotlink-friendly), then original, then link."""
+    """Prefer original, then link; reject gstatic/encrypted-tbn thumbs."""
     seen: Set[str] = set()
     out: List[str] = []
-    for key in ("thumbnail", "original", "link"):
+    for key in ("original", "link", "thumbnail"):
         val = _normalize_image_url(str(candidate.get(key) or ""))
-        if val and val not in seen:
-            seen.add(val)
-            out.append(val)
+        if not val or val in seen:
+            continue
+        if is_rejected_image_url(val):
+            continue
+        seen.add(val)
+        out.append(val)
     return out
 
 
@@ -230,13 +255,30 @@ async def pick_from_pool(
     return None
 
 
+def _markdown_heading_level(line: str) -> int:
+    if line.startswith("### "):
+        return 3
+    if line.startswith("## "):
+        return 2
+    return 0
+
+
+def _markdown_heading_text(line: str) -> str:
+    level = _markdown_heading_level(line)
+    if level == 3:
+        return line[4:].strip()
+    if level == 2:
+        return line[3:].strip()
+    return ""
+
+
 def insert_image_after_section(
     body: str,
     heading_patterns: List[str],
     img_url: str,
     alt: str,
 ) -> str:
-    """Insert an HTML img tag after the first paragraph of a matching H2 section."""
+    """Insert an HTML img tag after the first paragraph of a matching ## or ### heading."""
     if not body or not img_url:
         return body
     lines = body.split("\n")
@@ -244,23 +286,23 @@ def insert_image_after_section(
     img_line = f'<img src="{img_url}" alt="{alt}" class="max-w-full h-auto rounded-md my-4" />'
 
     for i, line in enumerate(lines):
-        if not line.startswith("## "):
+        if _markdown_heading_level(line) not in (2, 3):
             continue
-        h2_text = line[3:].strip().lower()
-        if not any(pat in h2_text for pat in lowered_patterns):
+        heading_text = _markdown_heading_text(line).lower()
+        if not any(pat in heading_text for pat in lowered_patterns):
             continue
 
         j = i + 1
         while j < len(lines) and not lines[j].strip():
             j += 1
 
-        if j >= len(lines) or lines[j].startswith("##"):
+        if j >= len(lines) or _markdown_heading_level(lines[j]) > 0:
             insert_at = i + 1
         else:
             insert_at = j
             k = j
             while k < len(lines):
-                if lines[k].startswith("##"):
+                if _markdown_heading_level(lines[k]) > 0:
                     insert_at = k
                     break
                 if k > j and lines[k].strip() == "":
@@ -391,6 +433,16 @@ async def apply_auto_images_to_workflow(
     if workflow_state.status != WorkflowStatus.COMPLETED:
         raise ValueError("Workflow must be completed before auto-images")
 
+    auto_featured = True
+    try:
+        from app.models.user_blog_settings import UserBlogSettings as _UBS
+
+        _s = db.query(_UBS).filter(_UBS.user_id == user_id).first()
+        if _s is not None and _s.auto_featured_image is False:
+            auto_featured = False
+    except Exception:
+        pass
+
     if exclude_urls:
         for u in exclude_urls:
             if u and str(u).strip():
@@ -419,47 +471,114 @@ async def apply_auto_images_to_workflow(
         warnings.append("No images available from search pool")
 
     featured_image = None
-    if pool:
+    if pool and auto_featured:
         featured_image = await pick_from_pool(
             pool, used_urls, title, meta, pick_slot=slot_counter[0]
         )
         slot_counter[0] += 1
-    if not featured_image:
+    if not featured_image and auto_featured:
         warnings.append("No unused featured image found")
 
-    sections = SECTION_HEADINGS.get(content_type, [])
-    for section_id, heading_patterns in sections:
-        section_present = any(
-            line.startswith("## ")
-            and any(pat.lower() in line[3:].lower() for pat in heading_patterns)
-            for line in body.split("\n")
+    if content_type == "cluster_hub":
+        from app.services.cluster_hub_templates import (
+            member_heading_slug,
+            normalize_cluster_members,
         )
-        if not section_present:
-            warnings.append(f"Section not found: {section_id}")
-            continue
 
-        context = f"{title} - {heading_patterns[0]}"
-        picked = None
-        if pool:
-            picked = await pick_from_pool(
-                pool, used_urls, context, meta, pick_slot=slot_counter[0]
+        members = normalize_cluster_members(state_data.get("cluster_subs"))
+        for idx, member_name in enumerate(members):
+            section_present = any(
+                _markdown_heading_level(line) in (2, 3)
+                and member_name.lower() in _markdown_heading_text(line).lower()
+                for line in body.split("\n")
             )
-            slot_counter[0] += 1
-        if not picked:
-            warnings.append(f"No image for section: {section_id}")
-            continue
+            if not section_present:
+                warnings.append(f"Section not found: {member_name}")
+                continue
 
-        body = insert_image_after_section(
-            body,
-            heading_patterns,
-            picked["url"],
-            picked.get("alt") or seo_alt_from_title(context),
+            member_pool = await _fetch_image_pool(db, user_id, member_name)
+            context = f"{title} - {member_name}"
+            picked = None
+            if member_pool:
+                picked = await pick_from_pool(
+                    member_pool, used_urls, context, meta, pick_slot=0
+                )
+            if not picked:
+                warnings.append(f"No image for section: {member_name}")
+                continue
+
+            body = insert_image_after_section(
+                body,
+                [member_name],
+                picked["url"],
+                picked.get("alt") or seo_alt_from_title(member_name),
+            )
+            section_images.append({
+                "section": member_heading_slug(member_name, idx),
+                "url": picked["url"],
+                "alt": picked.get("alt") or member_name,
+            })
+    else:
+        from app.services.blog_generation_config import (
+            image_heading_slots,
+            load_template_payload,
         )
-        section_images.append({
-            "section": section_id,
-            "url": picked["url"],
-            "alt": picked.get("alt") or "",
-        })
+
+        type_map = {
+            "biography": "biography",
+            "net_worth": "net_worth",
+            "news_timeline": "news_timeline",
+            "news_explainer": "news_explainer",
+            "news_opinion": "news_opinion",
+        }
+        article_type = type_map.get(content_type, content_type)
+        max_images = 3
+        try:
+            from app.models.user_blog_settings import UserBlogSettings
+
+            srow = db.query(UserBlogSettings).filter(UserBlogSettings.user_id == user_id).first()
+            if srow and srow.max_section_images is not None:
+                max_images = int(srow.max_section_images)
+        except Exception:
+            pass
+        tmpl = load_template_payload(db, user_id, article_type if article_type in (
+            "biography", "net_worth", "news_timeline", "news_explainer", "news_opinion",
+            "athlete_biography", "religion", "generic",
+        ) else "biography")
+        custom_slots = image_heading_slots(tmpl.get("sections") or [], title)
+        sections = custom_slots[:max_images] if custom_slots else SECTION_HEADINGS.get(content_type, [])
+        for section_id, heading_patterns in sections:
+            section_present = any(
+                _markdown_heading_level(line) == 2
+                and any(pat.lower() in _markdown_heading_text(line).lower() for pat in heading_patterns)
+                for line in body.split("\n")
+            )
+            if not section_present:
+                warnings.append(f"Section not found: {section_id}")
+                continue
+
+            context = f"{title} - {heading_patterns[0]}"
+            picked = None
+            if pool:
+                picked = await pick_from_pool(
+                    pool, used_urls, context, meta, pick_slot=slot_counter[0]
+                )
+                slot_counter[0] += 1
+            if not picked:
+                warnings.append(f"No image for section: {section_id}")
+                continue
+
+            body = insert_image_after_section(
+                body,
+                heading_patterns,
+                picked["url"],
+                picked.get("alt") or seo_alt_from_title(context),
+            )
+            section_images.append({
+                "section": section_id,
+                "url": picked["url"],
+                "alt": picked.get("alt") or "",
+            })
 
     _persist_article(state_data, blog_key, body, featured_image)
     workflow_state.state_data = state_data

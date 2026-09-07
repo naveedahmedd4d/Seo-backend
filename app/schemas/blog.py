@@ -28,6 +28,16 @@ class BlogGenerateRequest(BaseModel):
     suggested_meta_description: Optional[str] = None
     news_context: Optional[str] = None  # Pre-formatted news sources block for citations
     model: Optional[str] = None  # Allowlisted model id override for this run (or "default")
+    content_intent: Optional[Literal["cluster_hub", "news_timeline", "news_explainer", "news_opinion"]] = None
+    cluster_subs: Optional[List[str]] = None
+    cluster_member_facts: Optional[List[Dict[str, Any]]] = None
+    target_word_count: Optional[int] = None
+    faq_count: Optional[int] = None
+    related_query_count: Optional[int] = None
+    include_site_cta: Optional[bool] = None
+    auto_images: Optional[bool] = None
+    creativity: Optional[Literal["factual", "balanced", "expressive"]] = None
+    template_article_type: Optional[str] = None
 
     @field_validator("celebrity_content_type")
     @classmethod
@@ -134,7 +144,7 @@ class WorkflowPublishStatus(BaseModel):
 
 
 class BlogAutoImagesRequest(BaseModel):
-    content_type: Literal["biography", "net_worth"]
+    content_type: Literal["biography", "net_worth", "cluster_hub", "news_timeline", "news_explainer", "news_opinion"]
     blog_key: Optional[str] = "parent"
     exclude_urls: Optional[List[str]] = None
 
@@ -175,5 +185,33 @@ class BlogAutoImagesBatchResultItem(BaseModel):
 
 class BlogAutoImagesBatchResponse(BaseModel):
     results: List[BlogAutoImagesBatchResultItem]
+
+
+class ClusterHubLinkItem(BaseModel):
+    name: str
+    path: str
+
+
+class ClusterHubLinksRequest(BaseModel):
+    links: List[ClusterHubLinkItem]
+
+
+class ClusterHubLinksResponse(BaseModel):
+    workflow_id: int
+    body_content: str
+    injected: int = 0
+    warnings: List[str] = []
     used_urls: List[str] = []
+
+
+class SiblingLinksRequest(BaseModel):
+    biography_workflow_id: int
+    net_worth_workflow_id: int
+
+
+class SiblingLinksResponse(BaseModel):
+    biography_workflow_id: int
+    net_worth_workflow_id: int
+    injected: int = 0
+    warnings: List[str] = []
 

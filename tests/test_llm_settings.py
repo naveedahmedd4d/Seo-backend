@@ -132,7 +132,7 @@ def test_resolve_model_override(db_session, monkeypatch):
 
     upsert_settings(db_session, user.id, preferred_provider="groq")
     creds = resolve_llm_credentials(db_session, user.id, model_override="llama-3.1-8b-instant")
-    assert creds.model == "llama-3.1-8b-instant"
+    assert creds.model == "openai/gpt-oss-20b"
 
 
 def test_resolve_rejects_unknown_model(db_session, monkeypatch):
@@ -212,7 +212,8 @@ def test_models_allowlist(client, auth_headers):
     assert res.status_code == 200
     ids = [m["id"] for m in res.json()["models"]]
     assert "default" in ids
-    assert "llama-3.3-70b-versatile" in ids
+    assert "openai/gpt-oss-120b" in ids
+    assert "openai/gpt-oss-20b" in ids
 
 
 @pytest.mark.asyncio

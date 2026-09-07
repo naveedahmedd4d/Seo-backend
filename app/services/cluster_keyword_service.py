@@ -19,7 +19,10 @@ def _has_completed_blog_workflow(k: TrendingKeywords) -> bool:
 
 def _keyword_to_dict(k: TrendingKeywords, include_subs: bool = False) -> Dict[str, Any]:
     keyword_data = k.data if isinstance(k.data, dict) else {}
-    bio_id = k.bio_blog_workflow_id if k.bio_blog_workflow_id is not None else k.blog_workflow_id
+    is_main = k.parent_id is None
+    bio_id = k.bio_blog_workflow_id
+    if bio_id is None and not is_main:
+        bio_id = k.blog_workflow_id
     result: Dict[str, Any] = {
         "id": k.id,
         "keyword": k.keyword,
@@ -28,6 +31,7 @@ def _keyword_to_dict(k: TrendingKeywords, include_subs: bool = False) -> Dict[st
         "fetched_at": k.fetched_at.isoformat() if k.fetched_at else None,
         "bio_blog_workflow_id": bio_id,
         "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
+        "blog_workflow_id": k.blog_workflow_id,
         "source": k.source,
         "parent_id": k.parent_id,
         "kd": k.kd,

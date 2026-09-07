@@ -6,6 +6,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.trending_keywords import TrendingKeywords
 from app.services.serpapi_service import (
+    ALLOWED_TREND_HOURS,
     fetch_trending_keywords,
     get_trending_keywords_from_db,
     get_used_trending_keywords_from_db,
@@ -55,6 +56,28 @@ from app.services.keyword_coverage_service import (
 router = APIRouter()
 
 
+def _coerce_int(value) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) or None
+    if isinstance(value, str):
+        digits = value.replace(",", "").strip()
+        if digits.isdigit():
+            return int(digits) or None
+    return None
+
+
+def _pick_search_volume(data: dict, fallback=None) -> Optional[int]:
+    """Best available numeric search volume: Mangools SV → SerpAPI value/search_volume."""
+    if isinstance(data, dict):
+        for key in ("mangools_sv", "value", "search_volume"):
+            got = _coerce_int(data.get(key))
+            if got:
+                return got
+    return _coerce_int(fallback)
+
+
 def _build_keyword_dict(k: dict, coverage_by_id: Optional[dict] = None) -> dict:
     keyword_data = k.get("data", {}) if isinstance(k.get("data"), dict) else {}
     coverage_by_id = coverage_by_id or {}
@@ -71,13 +94,22 @@ def _build_keyword_dict(k: dict, coverage_by_id: Optional[dict] = None) -> dict:
                 TrendingKeywordResponse(
                     id=sub_id,
                     keyword=s.get("keyword", ""),
-                    value=s.get("value"),
+                    value=_pick_search_volume(
+                        s.get("data") if isinstance(s.get("data"), dict) else s,
+                        s.get("value"),
+                    ),
+                    increase_percentage=_coerce_int(
+                        (s.get("data") or {}).get("increase_percentage")
+                        if isinstance(s.get("data"), dict)
+                        else s.get("increase_percentage")
+                    ),
                     timestamp=s.get("timestamp"),
                     fetched_at=s.get("fetched_at"),
                     category=s.get("category"),
                     kd=s.get("kd"),
                     bio_blog_workflow_id=s.get("bio_blog_workflow_id"),
                     net_worth_blog_workflow_id=s.get("net_worth_blog_workflow_id"),
+                    blog_workflow_id=s.get("blog_workflow_id"),
                     source=s.get("source"),
                     parent_id=s.get("parent_id"),
                     coverage=sub_cov,
@@ -87,13 +119,19 @@ def _build_keyword_dict(k: dict, coverage_by_id: Optional[dict] = None) -> dict:
     cov = coverage_to_dict(coverage_by_id.get(kid)) if kid else None
     keyword_response = TrendingKeywordResponse(
         keyword=k.get("keyword", ""),
-        value=keyword_data.get("value") if isinstance(keyword_data, dict) else k.get("value"),
+        value=_pick_search_volume(keyword_data, k.get("value")),
+        increase_percentage=_coerce_int(
+            keyword_data.get("increase_percentage")
+            if isinstance(keyword_data, dict)
+            else k.get("increase_percentage")
+        ),
         timestamp=keyword_data.get("timestamp") if isinstance(keyword_data, dict) else k.get("timestamp"),
         fetched_at=k.get("fetched_at"),
         category=k.get("category"),
         kd=k.get("kd"),
         bio_blog_workflow_id=k.get("bio_blog_workflow_id"),
         net_worth_blog_workflow_id=k.get("net_worth_blog_workflow_id"),
+        blog_workflow_id=k.get("blog_workflow_id"),
         source=k.get("source"),
         parent_id=k.get("parent_id"),
         subs=subs,
@@ -104,6 +142,7 @@ def _build_keyword_dict(k: dict, coverage_by_id: Optional[dict] = None) -> dict:
     keyword_dict["kd"] = k.get("kd")
     keyword_dict["bio_blog_workflow_id"] = k.get("bio_blog_workflow_id")
     keyword_dict["net_worth_blog_workflow_id"] = k.get("net_worth_blog_workflow_id")
+    keyword_dict["blog_workflow_id"] = k.get("blog_workflow_id")
     keyword_dict["source"] = k.get("source")
     keyword_dict["parent_id"] = k.get("parent_id")
     keyword_dict["coverage"] = cov
@@ -199,6 +238,11 @@ async def get_trending_keywords(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="wordpress_site_id is required when filtering by coverage_status",
+        )
+    if source == SOURCE_TRENDING and not completed_only and hours not in ALLOWED_TREND_HOURS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"hours must be one of {', '.join(str(h) for h in ALLOWED_TREND_HOURS)}",
         )
     try:
         if source == SOURCE_MANUAL:
@@ -526,7 +570,7 @@ async def estimate_keyword_difficulty(
         if mangools_sv is not None:
             data = dict(row.data) if isinstance(row.data, dict) else {}
             data["mangools_sv"] = mangools_sv
-            if data.get("value") is None:
+            if not data.get("value"):
                 data["value"] = mangools_sv
             row.data = data
         scored_rows.append(row)
@@ -572,6 +616,7 @@ async def estimate_keyword_difficulty(
                     "kd": r.kd,
                     "bio_blog_workflow_id": r.bio_blog_workflow_id,
                     "net_worth_blog_workflow_id": r.net_worth_blog_workflow_id,
+                    "blog_workflow_id": r.blog_workflow_id,
                     "source": r.source,
                     "parent_id": r.parent_id,
                 }
@@ -588,6 +633,11 @@ async def fetch_keywords(
     db: Session = Depends(get_db)
 ):
     """Fetch trending keywords from SerpAPI and return from database (last N hours)"""
+    if hours not in ALLOWED_TREND_HOURS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"hours must be one of {', '.join(str(h) for h in ALLOWED_TREND_HOURS)}",
+        )
     try:
         serp_key = resolve_api_key(db, current_user, "serpapi")
         groq_fb = resolve_api_key_optional(db, current_user, "trending_fallback_groq") or resolve_api_key_optional(
@@ -628,6 +678,8 @@ async def set_keyword_blog_workflow(
         )
     if body.content_type == "biography":
         keyword.bio_blog_workflow_id = body.workflow_id
+    elif body.content_type == "cluster_hub":
+        keyword.blog_workflow_id = body.workflow_id
     else:
         keyword.net_worth_blog_workflow_id = body.workflow_id
     db.commit()
@@ -728,6 +780,7 @@ async def categorize_keywords(
                     "category": k.category,
                     "bio_blog_workflow_id": k.bio_blog_workflow_id,
                     "net_worth_blog_workflow_id": k.net_worth_blog_workflow_id,
+                    "blog_workflow_id": k.blog_workflow_id,
                     "source": k.source,
                 })
                 categorized_keywords.append(keyword_dict)

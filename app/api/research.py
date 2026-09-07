@@ -117,6 +117,8 @@ async def generate_research_summary_endpoint(
             opportunities=opportunities,
             category=request.category,
             celebrity_content_type=request.celebrity_content_type,
+            content_intent=request.content_intent,
+            cluster_subs=request.cluster_subs,
         )
         outline = [HeadingNode(**node) for node in data.get("outline") or []]
         news_sources_raw = data.get("news_sources") or []

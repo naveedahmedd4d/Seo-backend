@@ -65,6 +65,7 @@ def test_generate_blog_content_uses_fallback_key_after_primary_429():
             mock_settings.groq_api_key = "primary"
             mock_settings.blog_fallback_groq_api_key = "fallback"
             mock_settings.trending_fallback_groq_api_key = None
+            mock_settings.openrouter_api_key = None
             mock_settings.groq_blog_delay_seconds = 0
             with patch(
                 "app.services.openrouter_service.httpx.AsyncClient",
@@ -112,6 +113,7 @@ def test_generate_blog_content_same_model_on_fallback():
             mock_settings.groq_api_key = "primary"
             mock_settings.blog_fallback_groq_api_key = "fallback"
             mock_settings.trending_fallback_groq_api_key = None
+            mock_settings.openrouter_api_key = None
             mock_settings.groq_blog_delay_seconds = 0
             with patch(
                 "app.services.openrouter_service.httpx.AsyncClient",
