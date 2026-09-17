@@ -3975,6 +3975,49 @@ Return ONLY the JSON object, no other text."""
         return {"primary": topic, "secondary": [], "lsi": [], "paa": [], "long_tail": []}
 
 
+async def generate_github_repo_ideas(
+    repo_name: str,
+    description: Optional[str],
+    language: Optional[str],
+    topics: Optional[List[str]] = None,
+) -> Dict[str, List[str]]:
+    """Given a trending GitHub repo, suggest blog titles, content angles, and SEO keywords."""
+    import json
+    topics_text = ", ".join(topics) if topics else "none listed"
+    prompt = f"""A GitHub repository is trending today. Suggest blog content ideas for an SEO/tech blog covering it.
+
+Repo: {repo_name}
+Language: {language or "unknown"}
+Description: {description or "(no description provided)"}
+Topics: {topics_text}
+
+Return ONLY a JSON object with this exact shape:
+{{"titles": ["title1", "title2", "title3"], "angles": ["angle1", "angle2", "angle3"], "keywords": ["kw1", "kw2"]}}
+
+Requirements:
+- titles: 3 candidate SEO blog titles (50-70 chars each), explaining what the tool/project is and why it's trending.
+- angles: 3 distinct content angles/hooks (1 sentence each) a writer could take (e.g. "Compare it to X", "Tutorial: getting started", "Why developers are switching").
+- keywords: 5-8 SEO keywords/phrases relevant to this repo and its use case.
+
+Return ONLY valid JSON, no markdown fences or other text."""
+
+    result = await generate_blog_seo_content(prompt, max_tokens=500, temperature=0.7)
+    text = (result or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+    try:
+        parsed = json.loads(text.strip())
+        return {
+            "titles": [str(t).strip() for t in (parsed.get("titles") or [])][:3],
+            "angles": [str(a).strip() for a in (parsed.get("angles") or [])][:3],
+            "keywords": [str(k).strip() for k in (parsed.get("keywords") or [])][:8],
+        }
+    except (json.JSONDecodeError, Exception):
+        return {"titles": [], "angles": [], "keywords": []}
+
+
 def get_available_models() -> List[Dict[str, Any]]:
     """Get list of available models (simplified)"""
     return [

@@ -8,6 +8,7 @@ class TrendingKeywords(Base):
     __tablename__ = "trending_keywords"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     keyword = Column(String, nullable=False, index=True)
     data = Column(JSON, nullable=True)
     fetched_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
@@ -30,3 +31,4 @@ class TrendingKeywords(Base):
         backref=backref("subs", cascade="all, delete-orphan"),
         foreign_keys=[parent_id],
     )
+    user = relationship("User", backref=backref("trending_keywords", cascade="all, delete-orphan"))

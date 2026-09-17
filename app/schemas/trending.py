@@ -10,6 +10,18 @@ class KeywordCoverageInfo(BaseModel):
     compared_at: Optional[str] = None
 
 
+class GithubRepoInfo(BaseModel):
+    description: Optional[str] = None
+    url: Optional[str] = None
+    language: Optional[str] = None
+    stars_today: Optional[int] = None
+    forks: Optional[int] = None
+    topics: Optional[List[str]] = None
+    suggested_titles: Optional[List[str]] = None
+    suggested_angles: Optional[List[str]] = None
+    suggested_keywords: Optional[List[str]] = None
+
+
 class TrendingKeywordResponse(BaseModel):
     id: Optional[int] = None
     keyword: str
@@ -26,11 +38,15 @@ class TrendingKeywordResponse(BaseModel):
     parent_id: Optional[int] = None
     subs: Optional[List["TrendingKeywordResponse"]] = None
     coverage: Optional[KeywordCoverageInfo] = None
+    repo: Optional[GithubRepoInfo] = None
 
 
 class SetBlogWorkflowRequest(BaseModel):
     workflow_id: int
-    content_type: Literal["biography", "net_worth", "cluster_hub"]
+    content_type: Literal[
+        "biography", "net_worth", "cluster_hub",
+        "news_timeline", "news_explainer", "news_opinion",
+    ]
 
 
 class AddManualKeywordsRequest(BaseModel):
@@ -84,7 +100,7 @@ class EstimateKdResponse(BaseModel):
 
 class SyncCoverageRequest(BaseModel):
     wordpress_site_id: int
-    source: Literal["trending", "manual", "cluster"] = "trending"
+    source: Literal["trending", "manual", "cluster", "github"] = "trending"
 
 
 class SyncCoverageResponse(BaseModel):
@@ -100,6 +116,17 @@ class SyncCoverageResponse(BaseModel):
 class TrendingKeywordsResponse(BaseModel):
     keywords: List[TrendingKeywordResponse]
     count: int
+
+
+class GenerateGithubIdeasRequest(BaseModel):
+    keyword_ids: List[int]
+
+
+class GenerateGithubIdeasResponse(BaseModel):
+    processed: int
+    failed: int
+    message: str
+    keywords: List[TrendingKeywordResponse] = []
 
 
 TrendingKeywordResponse.model_rebuild()

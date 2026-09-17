@@ -38,8 +38,10 @@ def create_manual_keywords(
     db: Session,
     keywords: List[str],
     category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> tuple[List[Dict[str, Any]], int, int]:
-    """Insert manual keywords. Returns (created rows, added count, skipped duplicates)."""
+    """Insert manual keywords for a single account. Returns (created rows, added count, skipped duplicates)."""
     normalized: List[str] = []
     seen: set[str] = set()
     for raw in keywords:
@@ -58,7 +60,10 @@ def create_manual_keywords(
     existing = {
         row.keyword.lower()
         for row in db.query(TrendingKeywords.keyword)
-        .filter(TrendingKeywords.source == SOURCE_MANUAL)
+        .filter(
+            TrendingKeywords.source == SOURCE_MANUAL,
+            TrendingKeywords.user_id == user_id,
+        )
         .all()
     }
 
@@ -73,6 +78,7 @@ def create_manual_keywords(
             data={},
             category=category,
             source=SOURCE_MANUAL,
+            user_id=user_id,
         )
         db.add(row)
         created.append(row)
@@ -90,10 +96,13 @@ def get_manual_keywords_from_db(
     db: Session,
     completed_only: bool = False,
     category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
-    """Get manual keywords with no time window."""
+    """Get manual keywords for one account, with no time window."""
     query = db.query(TrendingKeywords).filter(
-        TrendingKeywords.source == SOURCE_MANUAL
+        TrendingKeywords.source == SOURCE_MANUAL,
+        TrendingKeywords.user_id == user_id,
     )
     if completed_only:
         query = query.filter(

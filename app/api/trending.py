@@ -23,7 +23,13 @@ from app.services.cluster_keyword_service import (
     create_cluster_subs,
     get_cluster_keywords_from_db,
 )
-from app.services.openrouter_service import categorize_keyword
+from app.services.github_trending_service import (
+    GITHUB_LANGUAGES,
+    SOURCE_GITHUB,
+    fetch_github_trending,
+    get_github_trending_from_db,
+)
+from app.services.openrouter_service import categorize_keyword, generate_github_repo_ideas
 from app.services.mangools_service import (
     MangoolsError,
     SOFT_BATCH_CAP,
@@ -43,6 +49,8 @@ from app.schemas.trending import (
     MangoolsLimitsResponse,
     SyncCoverageRequest,
     SyncCoverageResponse,
+    GenerateGithubIdeasRequest,
+    GenerateGithubIdeasResponse,
 )
 from app.services.keyword_coverage_service import (
     STATUS_EXISTING,
@@ -146,6 +154,18 @@ def _build_keyword_dict(k: dict, coverage_by_id: Optional[dict] = None) -> dict:
     keyword_dict["source"] = k.get("source")
     keyword_dict["parent_id"] = k.get("parent_id")
     keyword_dict["coverage"] = cov
+    if k.get("source") == SOURCE_GITHUB and isinstance(keyword_data, dict):
+        keyword_dict["repo"] = {
+            "description": keyword_data.get("description"),
+            "url": keyword_data.get("url"),
+            "language": keyword_data.get("language"),
+            "stars_today": keyword_data.get("increase_percentage"),
+            "forks": keyword_data.get("forks"),
+            "topics": keyword_data.get("topics"),
+            "suggested_titles": keyword_data.get("suggested_titles"),
+            "suggested_angles": keyword_data.get("suggested_angles"),
+            "suggested_keywords": keyword_data.get("suggested_keywords"),
+        }
     return keyword_dict
 
 
@@ -218,16 +238,17 @@ async def get_trending_keywords(
     category: Optional[str] = None,
     completed_only: bool = False,
     source: str = SOURCE_TRENDING,
+    language: str = "all",
     wordpress_site_id: Optional[int] = None,
     coverage_status: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get trending, manual, or cluster keywords, optionally filtered by category."""
-    if source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER):
+    """Get trending, manual, cluster, or GitHub keywords, optionally filtered by category."""
+    if source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_GITHUB):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="source must be 'trending', 'manual', or 'cluster'",
+            detail="source must be 'trending', 'manual', 'cluster', or 'github'",
         )
     if coverage_status is not None and coverage_status not in (STATUS_EXISTING, STATUS_NEW):
         raise HTTPException(
@@ -246,21 +267,28 @@ async def get_trending_keywords(
         )
     try:
         if source == SOURCE_MANUAL:
-            cached_data = get_manual_keywords_from_db(db, completed_only, category)
+            cached_data = get_manual_keywords_from_db(db, completed_only, category, user_id=current_user.id)
             keywords = _attach_coverage_and_filter(
                 db, current_user, cached_data, wordpress_site_id, coverage_status
             )
             return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
 
         if source == SOURCE_CLUSTER:
-            cached_data = get_cluster_keywords_from_db(db, completed_only, category)
+            cached_data = get_cluster_keywords_from_db(db, completed_only, category, user_id=current_user.id)
+            keywords = _attach_coverage_and_filter(
+                db, current_user, cached_data, wordpress_site_id, coverage_status
+            )
+            return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
+
+        if source == SOURCE_GITHUB:
+            cached_data = get_github_trending_from_db(db, language, user_id=current_user.id)
             keywords = _attach_coverage_and_filter(
                 db, current_user, cached_data, wordpress_site_id, coverage_status
             )
             return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
 
         if completed_only:
-            cached_data = get_used_trending_keywords_from_db(db, category)
+            cached_data = get_used_trending_keywords_from_db(db, category, user_id=current_user.id)
             keywords = _attach_coverage_and_filter(
                 db, current_user, cached_data, wordpress_site_id, coverage_status
             )
@@ -272,9 +300,9 @@ async def get_trending_keywords(
                 db, current_user, "groq"
             )
             keywords_data = await fetch_trending_keywords(
-                db, hours, api_key=serp_key, groq_fallback_key=groq_fb
+                db, hours, api_key=serp_key, groq_fallback_key=groq_fb, user_id=current_user.id
             )
-            cached_data = get_trending_keywords_from_db(db, hours, category)
+            cached_data = get_trending_keywords_from_db(db, hours, category, user_id=current_user.id)
             keyword_id_map = {k.get("keyword"): k.get("id") for k in cached_data if k.get("keyword")}
 
             raw_keywords = []
@@ -286,7 +314,7 @@ async def get_trending_keywords(
                 db, current_user, raw_keywords, wordpress_site_id, coverage_status
             )
         else:
-            cached_data = get_trending_keywords_from_db(db, hours, category)
+            cached_data = get_trending_keywords_from_db(db, hours, category, user_id=current_user.id)
             keywords = _attach_coverage_and_filter(
                 db, current_user, cached_data, wordpress_site_id, coverage_status
             )
@@ -349,7 +377,7 @@ async def add_manual_keywords(
 ):
     """Add one or more manual keywords (one per list item)."""
     try:
-        created, added, skipped = create_manual_keywords(db, body.keywords, body.category)
+        created, added, skipped = create_manual_keywords(db, body.keywords, body.category, user_id=current_user.id)
         if added == 0 and skipped > 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -374,7 +402,7 @@ async def add_cluster_main_keywords(
 ):
     """Add one or more cluster main (pillar) keywords."""
     try:
-        created, added, skipped = create_cluster_mains(db, body.keywords, body.category)
+        created, added, skipped = create_cluster_mains(db, body.keywords, body.category, user_id=current_user.id)
         if added == 0 and skipped > 0:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -401,7 +429,7 @@ async def add_cluster_sub_keywords(
     """Add sub-keywords under a cluster main keyword."""
     try:
         _parent, created, added, skipped, error = create_cluster_subs(
-            db, keyword_id, body.keywords
+            db, keyword_id, body.keywords, user_id=current_user.id
         )
         if error == "not_found":
             raise HTTPException(
@@ -514,6 +542,7 @@ async def estimate_keyword_difficulty(
     query = db.query(TrendingKeywords).filter(
         TrendingKeywords.source == body.source,
         TrendingKeywords.id.in_(body.keyword_ids),
+        TrendingKeywords.user_id == current_user.id,
     )
     if not body.force:
         query = query.filter(TrendingKeywords.kd.is_(None))
@@ -644,7 +673,7 @@ async def fetch_keywords(
             db, current_user, "groq"
         )
         keywords_data = await fetch_trending_keywords(
-            db, hours, api_key=serp_key, groq_fallback_key=groq_fb
+            db, hours, api_key=serp_key, groq_fallback_key=groq_fb, user_id=current_user.id
         )
         keywords = [_build_keyword_dict(k) for k in keywords_data]
         return TrendingKeywordsResponse(
@@ -662,6 +691,102 @@ async def fetch_keywords(
         )
 
 
+@router.post("/keywords/github/fetch", response_model=TrendingKeywordsResponse)
+async def fetch_github_keywords(
+    language: str = "all",
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Scrape github.com/trending (daily view only) and return cached repos."""
+    valid_languages = {code for code, _ in GITHUB_LANGUAGES}
+    if language not in valid_languages:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"language must be one of {sorted(valid_languages)}",
+        )
+    try:
+        keywords_data = await fetch_github_trending(db, language, user_id=current_user.id)
+        keywords = [_build_keyword_dict(k) for k in keywords_data]
+        return TrendingKeywordsResponse(keywords=keywords, count=len(keywords))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error fetching GitHub trending: {str(e)}",
+        )
+
+
+@router.post("/keywords/github/generate-ideas", response_model=GenerateGithubIdeasResponse)
+async def generate_github_ideas(
+    body: GenerateGithubIdeasRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Generate LLM-derived blog titles, angles, and keywords for selected GitHub repos."""
+    if not body.keyword_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select one or more repos first.",
+        )
+    rows = (
+        db.query(TrendingKeywords)
+        .filter(
+            TrendingKeywords.source == SOURCE_GITHUB,
+            TrendingKeywords.id.in_(body.keyword_ids),
+            TrendingKeywords.user_id == current_user.id,
+        )
+        .all()
+    )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No matching repos found.")
+
+    processed = 0
+    failed = 0
+    updated_rows: list[TrendingKeywords] = []
+    for row in rows:
+        data = dict(row.data) if isinstance(row.data, dict) else {}
+        try:
+            ideas = await generate_github_repo_ideas(
+                row.keyword, data.get("description"), data.get("language"), data.get("topics"),
+            )
+            data["suggested_titles"] = ideas["titles"]
+            data["suggested_angles"] = ideas["angles"]
+            data["suggested_keywords"] = ideas["keywords"]
+            row.data = data
+            processed += 1
+            updated_rows.append(row)
+        except Exception:
+            failed += 1
+
+    if updated_rows:
+        db.commit()
+        for r in updated_rows:
+            db.refresh(r)
+
+    return GenerateGithubIdeasResponse(
+        processed=processed,
+        failed=failed,
+        message=(
+            f"Generated ideas for {processed} repo{'' if processed == 1 else 's'}."
+            + (f" {failed} failed." if failed else "")
+        ),
+        keywords=[
+            _build_keyword_dict({
+                "id": r.id,
+                "keyword": r.keyword,
+                "data": r.data if isinstance(r.data, dict) else {},
+                "fetched_at": r.fetched_at.isoformat() if r.fetched_at else None,
+                "category": r.category,
+                "kd": r.kd,
+                "bio_blog_workflow_id": r.bio_blog_workflow_id,
+                "net_worth_blog_workflow_id": r.net_worth_blog_workflow_id,
+                "blog_workflow_id": r.blog_workflow_id,
+                "source": r.source,
+            })
+            for r in updated_rows
+        ],
+    )
+
+
 @router.patch("/keywords/{keyword_id}/blog-workflow")
 async def set_keyword_blog_workflow(
     keyword_id: int,
@@ -670,7 +795,10 @@ async def set_keyword_blog_workflow(
     db: Session = Depends(get_db),
 ):
     """Set the blog workflow ID for a trending keyword (mark as completed)."""
-    keyword = db.query(TrendingKeywords).filter(TrendingKeywords.id == keyword_id).first()
+    keyword = db.query(TrendingKeywords).filter(
+        TrendingKeywords.id == keyword_id,
+        TrendingKeywords.user_id == current_user.id,
+    ).first()
     if not keyword:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -700,7 +828,10 @@ async def delete_keyword(
 ):
     """Delete a trending keyword"""
     try:
-        keyword = db.query(TrendingKeywords).filter(TrendingKeywords.id == keyword_id).first()
+        keyword = db.query(TrendingKeywords).filter(
+            TrendingKeywords.id == keyword_id,
+            TrendingKeywords.user_id == current_user.id,
+        ).first()
         if not keyword:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -728,12 +859,14 @@ async def categorize_keywords(
     try:
         if recategorize:
             keywords = db.query(TrendingKeywords).filter(
-                TrendingKeywords.source == SOURCE_TRENDING
+                TrendingKeywords.source == SOURCE_TRENDING,
+                TrendingKeywords.user_id == current_user.id,
             ).all()
         else:
             keywords = db.query(TrendingKeywords).filter(
                 TrendingKeywords.category.is_(None),
                 TrendingKeywords.source == SOURCE_TRENDING,
+                TrendingKeywords.user_id == current_user.id,
             ).all()
 
         if not keywords:
@@ -809,7 +942,7 @@ async def get_keyword_history(
 ):
     """Get keyword history"""
     try:
-        cached_data = get_trending_keywords_from_db(db, hours)
+        cached_data = get_trending_keywords_from_db(db, hours, user_id=current_user.id)
         return {
             "keywords": cached_data,
             "count": len(cached_data)

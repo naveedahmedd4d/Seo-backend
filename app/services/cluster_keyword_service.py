@@ -67,8 +67,10 @@ def create_cluster_mains(
     db: Session,
     keywords: List[str],
     category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> Tuple[List[Dict[str, Any]], int, int]:
-    """Insert cluster main keywords (parent_id NULL). Returns (created, added, skipped)."""
+    """Insert cluster main keywords (parent_id NULL) for one account. Returns (created, added, skipped)."""
     normalized = _normalize_keywords(keywords)
     if not normalized:
         return [], 0, 0
@@ -79,6 +81,7 @@ def create_cluster_mains(
         .filter(
             TrendingKeywords.source == SOURCE_CLUSTER,
             TrendingKeywords.parent_id.is_(None),
+            TrendingKeywords.user_id == user_id,
         )
         .all()
     }
@@ -95,6 +98,7 @@ def create_cluster_mains(
             category=category,
             source=SOURCE_CLUSTER,
             parent_id=None,
+            user_id=user_id,
         )
         db.add(row)
         created.append(row)
@@ -112,13 +116,19 @@ def create_cluster_subs(
     db: Session,
     parent_id: int,
     keywords: List[str],
+    *,
+    user_id: int,
 ) -> Tuple[Optional[TrendingKeywords], List[Dict[str, Any]], int, int, Optional[str]]:
     """
-    Insert sub-keywords under a cluster main.
+    Insert sub-keywords under a cluster main owned by the caller's account.
     Returns (parent, created_dicts, added, skipped, error_code).
     error_code: None | 'not_found' | 'not_main'
     """
-    parent = db.query(TrendingKeywords).filter(TrendingKeywords.id == parent_id).first()
+    parent = (
+        db.query(TrendingKeywords)
+        .filter(TrendingKeywords.id == parent_id, TrendingKeywords.user_id == user_id)
+        .first()
+    )
     if not parent:
         return None, [], 0, 0, "not_found"
     if parent.source != SOURCE_CLUSTER or parent.parent_id is not None:
@@ -134,6 +144,7 @@ def create_cluster_subs(
         .filter(
             TrendingKeywords.source == SOURCE_CLUSTER,
             TrendingKeywords.parent_id == parent_id,
+            TrendingKeywords.user_id == user_id,
         )
         .all()
     }
@@ -150,6 +161,7 @@ def create_cluster_subs(
             category=parent.category,
             source=SOURCE_CLUSTER,
             parent_id=parent_id,
+            user_id=user_id,
         )
         db.add(row)
         created.append(row)
@@ -167,11 +179,14 @@ def get_cluster_keywords_from_db(
     db: Session,
     completed_only: bool = False,
     category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
-    """Get cluster main keywords with nested subs. No time window."""
+    """Get cluster main keywords with nested subs for one account. No time window."""
     query = db.query(TrendingKeywords).filter(
         TrendingKeywords.source == SOURCE_CLUSTER,
         TrendingKeywords.parent_id.is_(None),
+        TrendingKeywords.user_id == user_id,
     )
     if completed_only:
         query = query.filter(

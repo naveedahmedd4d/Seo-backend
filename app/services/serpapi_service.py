@@ -55,6 +55,7 @@ async def _fetch_trending_keywords_via_groq(
     hours: int,
     *,
     groq_api_key: Optional[str] = None,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
     """Fallback: generate trending-style keywords via Groq when SerpAPI is rate limited."""
     api_key = _get_groq_fallback_key(groq_api_key)
@@ -119,11 +120,12 @@ Examples: AI news, weather today, election results, sports scores."""
             TrendingKeywords.keyword == keyword,
             TrendingKeywords.fetched_at >= cutoff_time,
             TrendingKeywords.source == "trending",
+            TrendingKeywords.user_id == user_id,
         ).first()
         if not existing:
-            db.add(TrendingKeywords(keyword=keyword, data=keyword_data, source="trending"))
+            db.add(TrendingKeywords(keyword=keyword, data=keyword_data, source="trending", user_id=user_id))
     db.commit()
-    return get_trending_keywords_from_db(db, hours)
+    return get_trending_keywords_from_db(db, hours, user_id=user_id)
 
 
 _TRAFFIC_MULTIPLIERS = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}
@@ -204,6 +206,7 @@ async def fetch_trending_keywords(
     *,
     api_key: Optional[str] = None,
     groq_fallback_key: Optional[str] = None,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
     """Fetch trending keywords from SerpAPI (last N hours)."""
     serp_key = (api_key or settings.serpapi_key or "").strip()
@@ -237,7 +240,7 @@ async def fetch_trending_keywords(
                 except Exception:
                     error_msg = error_data
                 if _is_serpapi_rate_limit(response.status_code, error_msg) and _get_groq_fallback_key(groq_fallback_key):
-                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key)
+                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key, user_id=user_id)
                 raise Exception(f"SerpAPI returned {response.status_code}: {error_msg}")
             
             data = response.json()
@@ -246,7 +249,7 @@ async def fetch_trending_keywords(
             if "error" in data:
                 err_msg = data["error"]
                 if _is_serpapi_rate_limit(200, err_msg) and _get_groq_fallback_key(groq_fallback_key):
-                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key)
+                    return await _fetch_trending_keywords_via_groq(db, hours, groq_api_key=groq_fallback_key, user_id=user_id)
                 raise Exception(f"SerpAPI error: {err_msg}")
             
             # Extract trending keywords from response
@@ -282,22 +285,24 @@ async def fetch_trending_keywords(
                         TrendingKeywords.keyword == keyword,
                         TrendingKeywords.fetched_at >= cutoff_time,
                         TrendingKeywords.source == "trending",
+                        TrendingKeywords.user_id == user_id,
                     ).first()
-                    
+
                     # Only add if it doesn't exist in the current window
                     if not existing:
                         trending = TrendingKeywords(
                             keyword=keyword,
                             data=keyword_data,
                             source="trending",
+                            user_id=user_id,
                         )
                         db.add(trending)
-            
+
             db.commit()
-            
+
             # Return keywords from database for the last N hours (not raw API response)
             # This ensures we get accurate "last N hours" data from stored records
-            return get_trending_keywords_from_db(db, hours)
+            return get_trending_keywords_from_db(db, hours, user_id=user_id)
             
     except httpx.HTTPError as e:
         raise Exception(f"SerpAPI request failed: {str(e)}")
@@ -504,13 +509,16 @@ async def search_images(
 def get_trending_keywords_from_db(
     db: Session,
     hours: int = 4,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
-    """Get trending keywords from database cache, optionally filtered by category"""
+    """Get trending keywords from database cache for one account, optionally filtered by category"""
     cutoff_time = datetime.utcnow() - timedelta(hours=hours)
     query = db.query(TrendingKeywords).filter(
         TrendingKeywords.fetched_at >= cutoff_time,
         TrendingKeywords.source == "trending",
+        TrendingKeywords.user_id == user_id,
     )
     
     # Filter by category if provided
@@ -687,9 +695,11 @@ async def fetch_topical_mapping(
 
 def get_used_trending_keywords_from_db(
     db: Session,
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    *,
+    user_id: int,
 ) -> List[Dict[str, Any]]:
-    """Get all trending keywords that have a blog generated (no time limit)."""
+    """Get all trending keywords for one account that have a blog generated (no time limit)."""
     query = db.query(TrendingKeywords).filter(
         (
             (TrendingKeywords.bio_blog_workflow_id.isnot(None))
@@ -697,6 +707,7 @@ def get_used_trending_keywords_from_db(
             | (TrendingKeywords.blog_workflow_id.isnot(None))
         ),
         TrendingKeywords.source == "trending",
+        TrendingKeywords.user_id == user_id,
     )
     if category:
         query = query.filter(TrendingKeywords.category == category)
