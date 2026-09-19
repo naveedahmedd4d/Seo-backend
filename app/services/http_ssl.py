@@ -13,21 +13,32 @@ T = TypeVar("T")
 
 
 def httpx_verify() -> Union[bool, ssl.SSLContext]:
-    """TLS verification for httpx — prefers OS trust store (Windows/corporate CA)."""
+    """Return an SSL context that trusts both public and OS-installed CAs.
+
+    Certifi is the most predictable source for public roots, while the operating
+    system store is where Windows and managed machines keep locally installed
+    proxy/corporate issuers. Loading both into a regular ``SSLContext`` avoids
+    certificate-chain failures without disabling verification.
+    """
     if not settings.groq_ssl_verify:
         return False
-    try:
-        import truststore
 
-        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    except ImportError:
-        pass
     try:
         import certifi
 
-        return ssl.create_default_context(cafile=certifi.where())
+        context = ssl.create_default_context(cafile=certifi.where())
     except Exception:
-        return True
+        context = ssl.create_default_context()
+
+    # Passing ``cafile`` replaces, rather than augments, Python's defaults. Add
+    # the platform defaults explicitly so locally installed root CAs (common
+    # with Windows antivirus/VPN/TLS inspection) remain trusted.
+    try:
+        context.load_default_certs(ssl.Purpose.SERVER_AUTH)
+    except Exception as exc:  # The certifi roots above are still usable.
+        logger.warning("Could not load OS certificate store: %s", exc)
+
+    return context
 
 
 _RETRYABLE_ERRORS = (ssl.SSLError, httpx.ConnectError, httpx.ReadTimeout, httpx.TransportError)
