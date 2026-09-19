@@ -5,7 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from app.services.gsc_service import encode_site_url
-from app.services.http_ssl import httpx_verify
+from app.services.http_ssl import httpx_verify, with_ssl_retry
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +33,15 @@ def sitemap_feedpath(sitemap_url: str) -> str:
 async def list_sitemaps(access_token: str, site_url: str) -> list[dict[str, Any]]:
     encoded = encode_site_url(site_url)
     url = f"{GSC_WEBMASTERS_BASE}/sites/{encoded}/sitemaps"
-    async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.get(
-            url,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+
+    async def _fetch() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
+            return await client.get(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+    response = await with_ssl_retry(_fetch)
     if response.status_code >= 400:
         logger.error("GSC list sitemaps failed: %s", response.text)
         response.raise_for_status()
@@ -49,11 +53,15 @@ async def submit_sitemap(access_token: str, site_url: str, feedpath: str) -> dic
     encoded_site = encode_site_url(site_url)
     encoded_feed = quote(feedpath, safe="")
     url = f"{GSC_WEBMASTERS_BASE}/sites/{encoded_site}/sitemaps/{encoded_feed}"
-    async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.put(
-            url,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+
+    async def _put() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
+            return await client.put(
+                url,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+    response = await with_ssl_retry(_put)
     if response.status_code == 403:
         return {
             "success": False,

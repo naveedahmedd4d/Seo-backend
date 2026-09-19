@@ -70,8 +70,9 @@ def auth_headers(db_session):
     )
     db_session.add(user)
     db_session.commit()
+    db_session.refresh(user)
     token = create_access_token({"sub": user.email})
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}"}, user
 
 
 def test_normalize_cluster_members_dedupes():
@@ -191,17 +192,19 @@ def test_cluster_sub_still_falls_back_legacy_blog_id(db_session):
 
 
 def test_patch_blog_workflow_cluster_hub(client, auth_headers, db_session):
+    headers, user = auth_headers
     row = TrendingKeywords(
         keyword="WNBA Net Worth 2026",
         data={},
         source="cluster",
+        user_id=user.id,
     )
     db_session.add(row)
     db_session.commit()
 
     response = client.patch(
         f"/api/trending/keywords/{row.id}/blog-workflow",
-        headers=auth_headers,
+        headers=headers,
         json={"workflow_id": 303, "content_type": "cluster_hub"},
     )
     assert response.status_code == 200

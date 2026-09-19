@@ -47,7 +47,13 @@ FRONTEND_URL=http://localhost:3000
 # FACEBOOK_REDIRECT_URI=http://localhost:8000/api/social-accounts/facebook/callback
 # INSTAGRAM_REDIRECT_URI=http://localhost:8000/api/social-accounts/instagram/callback
 
-# Google Search Console OAuth
+# Google Search Console OAuth — platform-wide client (optional).
+# When set, every user gets a one-click "Connect Google Search Console" with no
+# Google Cloud Console setup of their own (requires this OAuth client's consent
+# screen to be verified for the openid/email/webmasters.readonly scopes once
+# published beyond a handful of test users). If unset, each user falls back to
+# bringing their own OAuth Client ID/Secret via the in-app dialog — a user's own
+# saved credentials always take priority over these even when both are set.
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
 # GOOGLE_GSC_REDIRECT_URI=http://localhost:8000/api/search-console/oauth/callback

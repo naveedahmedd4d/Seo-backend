@@ -59,14 +59,16 @@ def auth_headers(db_session):
     )
     db_session.add(user)
     db_session.commit()
+    db_session.refresh(user)
     token = create_access_token({"sub": user.email})
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}"}, user
 
 
 def test_add_cluster_mains(client, auth_headers, db_session):
+    headers, _ = auth_headers
     response = client.post(
         "/api/trending/keywords/cluster",
-        headers=auth_headers,
+        headers=headers,
         json={
             "keywords": ["Tyla", "Chappell Roan"],
             "category": "Celebrities & Public Figures",
@@ -82,17 +84,19 @@ def test_add_cluster_mains(client, auth_headers, db_session):
 
 
 def test_duplicate_cluster_main_skipped(client, auth_headers):
+    headers, _ = auth_headers
     payload = {"keywords": ["Duplicate Pillar"], "category": "Sports"}
-    first = client.post("/api/trending/keywords/cluster", headers=auth_headers, json=payload)
+    first = client.post("/api/trending/keywords/cluster", headers=headers, json=payload)
     assert first.status_code == 200
-    second = client.post("/api/trending/keywords/cluster", headers=auth_headers, json=payload)
+    second = client.post("/api/trending/keywords/cluster", headers=headers, json=payload)
     assert second.status_code == 409
 
 
 def test_add_subs_under_main(client, auth_headers, db_session):
+    headers, _ = auth_headers
     create = client.post(
         "/api/trending/keywords/cluster",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Tyla"], "category": "Celebrities & Public Figures"},
     )
     assert create.status_code == 200
@@ -100,7 +104,7 @@ def test_add_subs_under_main(client, auth_headers, db_session):
 
     subs = client.post(
         f"/api/trending/keywords/{main_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Tyla career", "Tyla personal life"]},
     )
     assert subs.status_code == 200
@@ -108,7 +112,7 @@ def test_add_subs_under_main(client, auth_headers, db_session):
 
     listed = client.get(
         "/api/trending/keywords?source=cluster",
-        headers=auth_headers,
+        headers=headers,
     )
     assert listed.status_code == 200
     mains = listed.json()["keywords"]
@@ -124,68 +128,73 @@ def test_add_subs_under_main(client, auth_headers, db_session):
 
 
 def test_reject_subs_under_non_main(client, auth_headers, db_session):
-    manual = TrendingKeywords(keyword="Not Cluster", data={}, source="manual")
+    headers, user = auth_headers
+    manual = TrendingKeywords(keyword="Not Cluster", data={}, source="manual", user_id=user.id)
     db_session.add(manual)
     db_session.commit()
 
     response = client.post(
         f"/api/trending/keywords/{manual.id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Child"]},
     )
     assert response.status_code == 400
 
 
 def test_reject_subs_under_sub(client, auth_headers):
+    headers, _ = auth_headers
     create = client.post(
         "/api/trending/keywords/cluster",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Main Pillar"]},
     )
     main_id = create.json()["keywords"][0]["id"]
     subs = client.post(
         f"/api/trending/keywords/{main_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Sub One"]},
     )
     sub_id = subs.json()["keywords"][0]["id"]
 
     nested = client.post(
         f"/api/trending/keywords/{sub_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Too Deep"]},
     )
     assert nested.status_code == 400
 
 
 def test_duplicate_sub_skipped(client, auth_headers):
+    headers, _ = auth_headers
     create = client.post(
         "/api/trending/keywords/cluster",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Main"]},
     )
     main_id = create.json()["keywords"][0]["id"]
     payload = {"keywords": ["Same Sub"]}
     first = client.post(
         f"/api/trending/keywords/{main_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json=payload,
     )
     assert first.status_code == 200
     second = client.post(
         f"/api/trending/keywords/{main_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json=payload,
     )
     assert second.status_code == 409
 
 
 def test_cluster_completed_only_filters_mains(client, auth_headers, db_session):
-    pending = TrendingKeywords(keyword="Pending Main", data={}, source="cluster")
+    headers, user = auth_headers
+    pending = TrendingKeywords(keyword="Pending Main", data={}, source="cluster", user_id=user.id)
     done = TrendingKeywords(
         keyword="Done Main",
         data={},
         source="cluster",
+        user_id=user.id,
         bio_blog_workflow_id=10,
     )
     db_session.add_all([pending, done])
@@ -196,6 +205,7 @@ def test_cluster_completed_only_filters_mains(client, auth_headers, db_session):
         keyword="Sub Of Pending",
         data={},
         source="cluster",
+        user_id=user.id,
         parent_id=pending.id,
         bio_blog_workflow_id=99,
     )
@@ -204,7 +214,7 @@ def test_cluster_completed_only_filters_mains(client, auth_headers, db_session):
 
     pending_resp = client.get(
         "/api/trending/keywords?source=cluster&completed_only=false",
-        headers=auth_headers,
+        headers=headers,
     )
     assert pending_resp.status_code == 200
     assert [k["keyword"] for k in pending_resp.json()["keywords"]] == ["Pending Main"]
@@ -212,40 +222,43 @@ def test_cluster_completed_only_filters_mains(client, auth_headers, db_session):
 
     completed_resp = client.get(
         "/api/trending/keywords?source=cluster&completed_only=true",
-        headers=auth_headers,
+        headers=headers,
     )
     assert completed_resp.status_code == 200
     assert [k["keyword"] for k in completed_resp.json()["keywords"]] == ["Done Main"]
 
 
 def test_delete_main_cascades_subs(client, auth_headers, db_session):
+    headers, _ = auth_headers
     create = client.post(
         "/api/trending/keywords/cluster",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Cascade Main"]},
     )
     main_id = create.json()["keywords"][0]["id"]
     client.post(
         f"/api/trending/keywords/{main_id}/subs",
-        headers=auth_headers,
+        headers=headers,
         json={"keywords": ["Cascade Sub"]},
     )
     assert db_session.query(TrendingKeywords).count() == 2
 
     deleted = client.delete(
         f"/api/trending/keywords/{main_id}",
-        headers=auth_headers,
+        headers=headers,
     )
     assert deleted.status_code == 200
     assert db_session.query(TrendingKeywords).count() == 0
 
 
 def test_cluster_excludes_manual(client, auth_headers, db_session):
+    headers, user = auth_headers
     db_session.add(
         TrendingKeywords(
             keyword="Manual Row",
             data={},
             source="manual",
+            user_id=user.id,
             fetched_at=datetime.utcnow(),
         )
     )
@@ -254,10 +267,11 @@ def test_cluster_excludes_manual(client, auth_headers, db_session):
             keyword="Cluster Row",
             data={},
             source="cluster",
+            user_id=user.id,
             fetched_at=datetime.utcnow(),
         )
     )
     db_session.commit()
 
-    cluster = client.get("/api/trending/keywords?source=cluster", headers=auth_headers)
+    cluster = client.get("/api/trending/keywords?source=cluster", headers=headers)
     assert [k["keyword"] for k in cluster.json()["keywords"]] == ["Cluster Row"]

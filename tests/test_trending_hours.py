@@ -101,7 +101,7 @@ def test_fetch_keywords_rejects_bad_window(client, auth_headers):
 def test_fetch_keywords_passes_allowed_window(client, auth_headers, monkeypatch):
     captured = {}
 
-    async def fake_fetch(db, hours, *, api_key=None, groq_fallback_key=None):
+    async def fake_fetch(db, hours, *, api_key=None, groq_fallback_key=None, user_id=None):
         captured["hours"] = hours
         return []
 

@@ -19,6 +19,7 @@ ActionSeverity = Literal["critical", "warning", "info"]
 
 class GscOAuthStatusResponse(BaseModel):
     connected: bool
+    account_email: Optional[str] = None
 
 
 class GscOAuthSetupInfoResponse(BaseModel):
@@ -26,11 +27,13 @@ class GscOAuthSetupInfoResponse(BaseModel):
     has_app_credentials: bool
     client_id: Optional[str] = None
     developer_portal_url: str = "https://console.cloud.google.com/apis/credentials"
+    platform_available: bool = False
 
 
 class GscOAuthConnectRequest(BaseModel):
-    client_id: str
-    client_secret: str
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+    flow: Literal["popup", "redirect"] = "redirect"
 
 
 class GscOAuthSetupResponse(BaseModel):

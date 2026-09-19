@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 import httpx
 
-from app.services.http_ssl import httpx_verify
+from app.services.http_ssl import httpx_verify, with_ssl_retry
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +87,18 @@ async def inspect_url(access_token: str, site_url: str, inspection_url: str) -> 
         "siteUrl": site_url,
         "languageCode": "en-US",
     }
-    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        response = await client.post(
-            INSPECTION_URL,
-            json=body,
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+
+    async def _post() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
+            return await client.post(
+                INSPECTION_URL,
+                json=body,
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+    # This runs once per URL in an audit batch, so it's the call site with the
+    # most cumulative exposure to a rare transient SSL/handshake hiccup.
+    response = await with_ssl_retry(_post)
     if response.status_code >= 400:
         logger.error("GSC URL inspection failed for %s: %s", inspection_url, response.text)
         response.raise_for_status()

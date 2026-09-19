@@ -258,22 +258,45 @@ def get_blogger_app_credentials(
     )
 
 
+def gsc_platform_app_available() -> bool:
+    """Whether a platform-wide (shared, app-owned) Google OAuth client is configured.
+
+    When set, new users don't need to bring their own Google Cloud OAuth client —
+    they just click Connect and consent. Per-user BYO credentials (if a user has
+    saved their own) still take priority, so existing BYO users are unaffected.
+    """
+    from app.config import settings
+
+    return bool(settings.google_client_id and settings.google_client_secret)
+
+
 def get_gsc_app_credentials(
     db: Session,
     user_id: int,
     *,
     redirect_uri: Optional[str] = None,
 ) -> Optional[OAuthAppCredentials]:
+    from app.config import settings
     from app.services.gsc_oauth_service import get_gsc_redirect_uri
 
+    resolved_redirect_uri = redirect_uri or get_gsc_redirect_uri()
+
     row = get_user_platform_app(db, user_id, "gsc")
-    if not row:
-        return None
-    return OAuthAppCredentials(
-        client_id=row.client_id,
-        client_secret=decrypt_api_key(row.client_secret),
-        redirect_uri=redirect_uri or get_gsc_redirect_uri(),
-    )
+    if row:
+        return OAuthAppCredentials(
+            client_id=row.client_id,
+            client_secret=decrypt_api_key(row.client_secret),
+            redirect_uri=resolved_redirect_uri,
+        )
+
+    if settings.google_client_id and settings.google_client_secret:
+        return OAuthAppCredentials(
+            client_id=settings.google_client_id,
+            client_secret=settings.google_client_secret,
+            redirect_uri=resolved_redirect_uri,
+        )
+
+    return None
 
 
 def get_reddit_app_credentials(

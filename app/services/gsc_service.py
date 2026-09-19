@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 import httpx
 
-from app.services.http_ssl import httpx_verify
+from app.services.http_ssl import httpx_verify, with_ssl_retry
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,14 @@ def encode_site_url(site_url: str) -> str:
 
 
 async def list_sites(access_token: str) -> list[dict[str, Any]]:
-    async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.get(
-            f"{GSC_BASE}/sites",
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
+    async def _fetch() -> httpx.Response:
+        async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
+            return await client.get(
+                f"{GSC_BASE}/sites",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+    response = await with_ssl_retry(_fetch)
     if response.status_code >= 400:
         logger.error("GSC list sites failed: %s", response.text)
         response.raise_for_status()
@@ -47,46 +50,54 @@ async def query_search_analytics(
 ) -> list[dict[str, Any]]:
     encoded = encode_site_url(site_url)
     url = f"{GSC_BASE}/sites/{encoded}/searchAnalytics/query"
-    all_rows: list[dict[str, Any]] = []
-    start_row = 0
 
-    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        while True:
-            body = {
-                "startDate": start_date.isoformat(),
-                "endDate": end_date.isoformat(),
-                "dimensions": dimensions,
-                "rowLimit": row_limit,
-                "startRow": start_row,
-            }
-            response = await client.post(
-                url,
-                json=body,
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if response.status_code >= 400:
-                logger.error("GSC searchAnalytics failed: %s", response.text)
-                response.raise_for_status()
+    async def _fetch_all() -> list[dict[str, Any]]:
+        all_rows: list[dict[str, Any]] = []
+        start_row = 0
 
-            rows = response.json().get("rows") or []
-            if not rows:
-                break
-
-            for row in rows:
-                keys = row.get("keys") or []
-                entry: dict[str, Any] = {
-                    "clicks": int(row.get("clicks") or 0),
-                    "impressions": int(row.get("impressions") or 0),
-                    "ctr": float(row.get("ctr") or 0.0),
-                    "position": float(row.get("position") or 0.0),
+        async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
+            while True:
+                body = {
+                    "startDate": start_date.isoformat(),
+                    "endDate": end_date.isoformat(),
+                    "dimensions": dimensions,
+                    "rowLimit": row_limit,
+                    "startRow": start_row,
                 }
-                for idx, dim in enumerate(dimensions):
-                    if idx < len(keys):
-                        entry[dim] = keys[idx]
-                all_rows.append(entry)
+                response = await client.post(
+                    url,
+                    json=body,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+                if response.status_code >= 400:
+                    logger.error("GSC searchAnalytics failed: %s", response.text)
+                    response.raise_for_status()
 
-            if len(rows) < row_limit:
-                break
-            start_row += row_limit
+                rows = response.json().get("rows") or []
+                if not rows:
+                    break
 
-    return all_rows
+                for row in rows:
+                    keys = row.get("keys") or []
+                    entry: dict[str, Any] = {
+                        "clicks": int(row.get("clicks") or 0),
+                        "impressions": int(row.get("impressions") or 0),
+                        "ctr": float(row.get("ctr") or 0.0),
+                        "position": float(row.get("position") or 0.0),
+                    }
+                    for idx, dim in enumerate(dimensions):
+                        if idx < len(keys):
+                            entry[dim] = keys[idx]
+                    all_rows.append(entry)
+
+                if len(rows) < row_limit:
+                    break
+                start_row += row_limit
+
+        return all_rows
+
+    # Retrying re-runs the whole paginated fetch (fresh client/SSLContext) rather
+    # than resuming mid-page -- a transient SSL/handshake failure almost always
+    # hits the first request anyway, so this keeps the retry logic simple and
+    # correct rather than trying to resume an interrupted pagination.
+    return await with_ssl_retry(_fetch_all)

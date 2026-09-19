@@ -149,8 +149,8 @@ def test_match_no_match():
 
 @pytest.mark.asyncio
 async def test_sync_coverage_upsert(db_session, user, wp_site, monkeypatch):
-    kw_existing = TrendingKeywords(keyword="Elon Musk", source="manual", data={})
-    kw_new = TrendingKeywords(keyword="Unknown Person", source="manual", data={})
+    kw_existing = TrendingKeywords(keyword="Elon Musk", source="manual", data={}, user_id=user.id)
+    kw_new = TrendingKeywords(keyword="Unknown Person", source="manual", data={}, user_id=user.id)
     db_session.add_all([kw_existing, kw_new])
     db_session.commit()
     db_session.refresh(kw_existing)
@@ -227,7 +227,7 @@ async def test_sync_rejects_other_users_site(db_session, user, monkeypatch):
 
 
 def test_sync_endpoint_and_list_coverage(client, auth_headers, db_session, user, wp_site, monkeypatch):
-    kw = TrendingKeywords(keyword="Elon Musk", source="manual", data={})
+    kw = TrendingKeywords(keyword="Elon Musk", source="manual", data={}, user_id=user.id)
     db_session.add(kw)
     db_session.commit()
     db_session.refresh(kw)

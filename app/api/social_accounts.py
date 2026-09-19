@@ -1,4 +1,3 @@
-import re
 from typing import List
 from urllib.parse import urlencode
 
@@ -10,6 +9,7 @@ from app.api.auth import get_current_user
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.services.oauth_utils import sanitize_oauth_error
 from app.schemas.social_account import (
     ApiKeyConnectRequest,
     ApiKeyConnectResponse,
@@ -146,31 +146,11 @@ def _account_to_response(account) -> SocialAccountResponse:
     )
 
 
-_SECRET_QUERY_PATTERN = re.compile(
-    r"(client_secret|access_token|fb_exchange_token|code|refresh_token)=[^&\s\"']+",
-    re.IGNORECASE,
-)
-
-
-def _sanitize_oauth_error(message: str | None) -> str:
-    """Strip anything that could carry a secret before it reaches the browser.
-
-    Callback errors land in the frontend URL, browser history, and a toast, so a
-    raw exception string (which may embed a request URL with client_secret / the
-    OAuth code / an access token) must never be forwarded verbatim.
-    """
-    if not message:
-        return "connection_failed"
-    cleaned = _SECRET_QUERY_PATTERN.sub(r"\1=REDACTED", message)
-    cleaned = re.sub(r"https?://\S+", "[url]", cleaned)
-    return cleaned.strip()[:300] or "connection_failed"
-
-
 def _oauth_callback_redirect(platform: str, *, error: str | None = None) -> RedirectResponse:
     frontend = settings.frontend_url.rstrip("/")
     if error:
         params = urlencode(
-            {"social_error": _sanitize_oauth_error(error), "platform": platform}
+            {"social_error": sanitize_oauth_error(error), "platform": platform}
         )
     else:
         params = urlencode({"connected": platform})

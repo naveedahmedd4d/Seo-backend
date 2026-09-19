@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 from app.models.wordpress_site import WordPressSite
 from app.config import settings
-from app.services.http_ssl import httpx_verify
+from app.services.http_ssl import httpx_verify, with_ssl_retry
 import base64
 import hashlib
 import logging
@@ -660,24 +660,28 @@ async def _fetch_wp_content_page(
 
 async def list_published_content(site: WordPressSite, site_url: str) -> list[dict]:
     """List all published WordPress posts and pages with normalized URLs."""
-    all_items: list[dict] = []
-    seen_urls: set[str] = set()
 
-    async with httpx.AsyncClient(verify=httpx_verify(), timeout=60.0) as client:
-        for endpoint in ("posts", "pages"):
-            page = 1
-            total_pages = 1
-            while page <= total_pages:
-                batch, total_pages = await _fetch_wp_content_page(client, site, endpoint, page)
-                for item in batch:
-                    normalized = normalize_url_for_gsc(item["url"], site_url)
-                    if normalized in seen_urls:
-                        continue
-                    seen_urls.add(normalized)
-                    all_items.append({**item, "url": normalized})
-                page += 1
+    async def _fetch_all() -> list[dict]:
+        all_items: list[dict] = []
+        seen_urls: set[str] = set()
 
-    return all_items
+        async with httpx.AsyncClient(verify=httpx_verify(), timeout=60.0) as client:
+            for endpoint in ("posts", "pages"):
+                page = 1
+                total_pages = 1
+                while page <= total_pages:
+                    batch, total_pages = await _fetch_wp_content_page(client, site, endpoint, page)
+                    for item in batch:
+                        normalized = normalize_url_for_gsc(item["url"], site_url)
+                        if normalized in seen_urls:
+                            continue
+                        seen_urls.add(normalized)
+                        all_items.append({**item, "url": normalized})
+                    page += 1
+
+        return all_items
+
+    return await with_ssl_retry(_fetch_all)
 
 
 def _wp_rest_endpoint(post_type: str) -> str:

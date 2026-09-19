@@ -65,8 +65,9 @@ def auth_headers(db_session):
     )
     db_session.add(user)
     db_session.commit()
+    db_session.refresh(user)
     token = create_access_token({"sub": user.email})
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}"}, user
 
 
 def test_map_keyword_import_item_seo_to_kd():
@@ -114,12 +115,13 @@ def test_parse_quota_caps_free_inflated_pool():
 
 
 def test_estimate_kd_requires_selection(client, auth_headers, monkeypatch):
+    headers, _ = auth_headers
     monkeypatch.setattr(
         "app.services.mangools_service.settings.mangools_api_token", "test-token"
     )
     response = client.post(
         "/api/trending/keywords/estimate-kd",
-        headers=auth_headers,
+        headers=headers,
         json={"source": "trending", "keyword_ids": []},
     )
     assert response.status_code == 400
@@ -127,10 +129,11 @@ def test_estimate_kd_requires_selection(client, auth_headers, monkeypatch):
 
 
 def test_estimate_kd_missing_token(client, auth_headers, monkeypatch):
+    headers, _ = auth_headers
     monkeypatch.setattr("app.services.mangools_service.settings.mangools_api_token", None)
     response = client.post(
         "/api/trending/keywords/estimate-kd",
-        headers=auth_headers,
+        headers=headers,
         json={"source": "trending", "keyword_ids": [1]},
     )
     assert response.status_code == 503
@@ -140,6 +143,7 @@ def test_estimate_kd_missing_token(client, auth_headers, monkeypatch):
 def test_estimate_kd_scores_selected_missing_only(
     client, auth_headers, db_session, monkeypatch
 ):
+    headers, user = auth_headers
     monkeypatch.setattr(
         "app.services.mangools_service.settings.mangools_api_token", "test-token"
     )
@@ -147,12 +151,14 @@ def test_estimate_kd_scores_selected_missing_only(
         keyword="Need KD",
         data={},
         source="trending",
+        user_id=user.id,
         fetched_at=datetime.utcnow(),
     )
     already = TrendingKeywords(
         keyword="Has KD",
         data={},
         source="trending",
+        user_id=user.id,
         kd=55,
         fetched_at=datetime.utcnow(),
     )
@@ -160,6 +166,7 @@ def test_estimate_kd_scores_selected_missing_only(
         keyword="Not Selected",
         data={},
         source="trending",
+        user_id=user.id,
         fetched_at=datetime.utcnow(),
     )
     db_session.add_all([pending, already, other])
@@ -184,7 +191,7 @@ def test_estimate_kd_scores_selected_missing_only(
 
     response = client.post(
         "/api/trending/keywords/estimate-kd",
-        headers=auth_headers,
+        headers=headers,
         json={"source": "trending", "keyword_ids": [pending.id, already.id]},
     )
     assert response.status_code == 200
@@ -203,11 +210,12 @@ def test_estimate_kd_scores_selected_missing_only(
 def test_estimate_kd_respects_keyword_ids_and_cap(
     client, auth_headers, db_session, monkeypatch
 ):
+    headers, user = auth_headers
     monkeypatch.setattr(
         "app.services.mangools_service.settings.mangools_api_token", "test-token"
     )
     rows = [
-        TrendingKeywords(keyword=f"Kw {i}", data={}, source="manual")
+        TrendingKeywords(keyword=f"Kw {i}", data={}, source="manual", user_id=user.id)
         for i in range(5)
     ]
     db_session.add_all(rows)
@@ -230,7 +238,7 @@ def test_estimate_kd_respects_keyword_ids_and_cap(
 
     response = client.post(
         "/api/trending/keywords/estimate-kd",
-        headers=auth_headers,
+        headers=headers,
         json={"source": "manual", "keyword_ids": selected},
     )
     assert response.status_code == 200
@@ -243,10 +251,11 @@ def test_estimate_kd_respects_keyword_ids_and_cap(
 def test_estimate_kd_null_seo_does_not_set_kd(
     client, auth_headers, db_session, monkeypatch
 ):
+    headers, user = auth_headers
     monkeypatch.setattr(
         "app.services.mangools_service.settings.mangools_api_token", "test-token"
     )
-    row = TrendingKeywords(keyword="No Seo", data={}, source="manual")
+    row = TrendingKeywords(keyword="No Seo", data={}, source="manual", user_id=user.id)
     db_session.add(row)
     db_session.commit()
 
@@ -262,7 +271,7 @@ def test_estimate_kd_null_seo_does_not_set_kd(
 
     response = client.post(
         "/api/trending/keywords/estimate-kd",
-        headers=auth_headers,
+        headers=headers,
         json={"source": "manual", "keyword_ids": [row.id]},
     )
     assert response.status_code == 200
@@ -272,6 +281,7 @@ def test_estimate_kd_null_seo_does_not_set_kd(
 
 
 def test_mangools_limits_endpoint(client, auth_headers, monkeypatch):
+    headers, _ = auth_headers
     monkeypatch.setattr(
         "app.services.mangools_service.settings.mangools_api_token", "test-token"
     )
@@ -289,7 +299,7 @@ def test_mangools_limits_endpoint(client, auth_headers, monkeypatch):
     )
     response = client.get(
         "/api/trending/keywords/mangools-limits",
-        headers=auth_headers,
+        headers=headers,
     )
     assert response.status_code == 200
     data = response.json()

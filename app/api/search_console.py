@@ -1,9 +1,11 @@
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -34,12 +36,14 @@ from app.schemas.search_console import (
     GscIndexAuditStatusResponse,
     IndexingQueueResponse,
 )
-from app.services.auth_service import create_oauth_state_token, get_user_from_oauth_state
+from app.services.auth_service import create_oauth_state_token, decode_oauth_state, get_user_by_email
 from app.services.gsc_analysis_service import build_overview
 from app.services.gsc_oauth_service import (
     build_authorization_url,
+    decode_id_token_email,
     delete_gsc_tokens,
     exchange_code_for_tokens,
+    get_gsc_oauth_token,
     get_gsc_redirect_uri,
     is_gsc_connected,
     save_gsc_tokens,
@@ -53,11 +57,12 @@ from app.services.gsc_index_audit_service import (
     has_running_audit,
 )
 from app.services.index_fix_service import bg_apply_index_fix
+from app.services.oauth_utils import sanitize_oauth_error
 from app.services.social_platform_app_service import (
     get_gsc_app_credentials,
     get_user_platform_app,
+    gsc_platform_app_available,
     upsert_user_platform_app,
-    user_has_gsc_app,
 )
 
 router = APIRouter()
@@ -134,8 +139,51 @@ def _trigger_index_fix_if_needed(
 def _oauth_redirect(*, error: str | None = None) -> RedirectResponse:
     frontend = settings.frontend_url.rstrip("/")
     if error:
-        return RedirectResponse(f"{frontend}/dashboard/search-console?error={error}")
+        return RedirectResponse(f"{frontend}/dashboard/search-console?error={sanitize_oauth_error(error)}")
     return RedirectResponse(f"{frontend}/dashboard/search-console?connected=gsc")
+
+
+def _frontend_origin() -> str:
+    parsed = urlsplit(settings.frontend_url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _oauth_popup_response(*, ok: bool, error: str | None = None) -> HTMLResponse:
+    """Self-closing popup landing page: posts the outcome back to window.opener.
+
+    If window.opener is missing/closed (stale link, non-popup navigation, browser
+    quirk), falls back to a normal redirect to the same URL the non-popup flow
+    would use -- there is no dead-end page.
+    """
+    frontend = settings.frontend_url.rstrip("/")
+    if error:
+        fallback_url = f"{frontend}/dashboard/search-console?error={sanitize_oauth_error(error)}"
+    else:
+        fallback_url = f"{frontend}/dashboard/search-console?connected=gsc"
+
+    payload: dict = {"source": "oauth_popup", "platform": "gsc", "ok": ok}
+    if error:
+        payload["error"] = sanitize_oauth_error(error)
+
+    html = f"""<!doctype html>
+<html><head><meta charset="utf-8"><title>Google Search Console</title></head>
+<body>
+<script>
+(function () {{
+  var payload = {json.dumps(payload)};
+  var targetOrigin = {json.dumps(_frontend_origin())};
+  var fallbackUrl = {json.dumps(fallback_url)};
+  if (window.opener && !window.opener.closed) {{
+    try {{ window.opener.postMessage(payload, targetOrigin); }} catch (e) {{}}
+    setTimeout(function () {{ window.close(); }}, 200);
+  }} else {{
+    window.location.href = fallbackUrl;
+  }}
+}})();
+</script>
+<noscript>You can close this window and return to the app.</noscript>
+</body></html>"""
+    return HTMLResponse(content=html)
 
 
 def _get_user_property(db: Session, user_id: int, property_id: int) -> GscProperty:
@@ -154,7 +202,11 @@ async def oauth_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return GscOAuthStatusResponse(connected=is_gsc_connected(db, current_user.id))
+    token = get_gsc_oauth_token(db, current_user.id)
+    return GscOAuthStatusResponse(
+        connected=is_gsc_connected(db, current_user.id),
+        account_email=token.account_email if token else None,
+    )
 
 
 @router.get("/oauth/setup", response_model=GscOAuthSetupInfoResponse)
@@ -165,8 +217,9 @@ async def oauth_setup(
     app_row = get_user_platform_app(db, current_user.id, "gsc")
     return GscOAuthSetupInfoResponse(
         redirect_uri=get_gsc_redirect_uri(),
-        has_app_credentials=user_has_gsc_app(db, current_user.id),
+        has_app_credentials=app_row is not None,
         client_id=app_row.client_id if app_row else None,
+        platform_available=gsc_platform_app_available(),
     )
 
 
@@ -176,26 +229,35 @@ async def oauth_connect(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        upsert_user_platform_app(
-            db,
-            current_user.id,
-            "gsc",
-            body.client_id,
-            body.client_secret,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # BYO: only touch the user's saved app credentials when both fields are
+    # actually provided. A platform-connect request (no client_id/secret) must
+    # never overwrite an existing BYO row, and must never be rejected just for
+    # omitting fields that don't apply to it.
+    if body.client_id and body.client_secret:
+        try:
+            upsert_user_platform_app(
+                db,
+                current_user.id,
+                "gsc",
+                body.client_id,
+                body.client_secret,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     redirect_uri = get_gsc_redirect_uri()
     credentials = get_gsc_app_credentials(db, current_user.id, redirect_uri=redirect_uri)
     if not credentials:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save Google Search Console app credentials",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "No Google OAuth credentials available. Paste your own Google Cloud "
+                "OAuth Client ID/Secret, or ask an admin to configure platform-wide "
+                "GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET."
+            ),
         )
 
-    state = create_oauth_state_token(current_user, "gsc")
+    state = create_oauth_state_token(current_user, "gsc", extra={"flow": body.flow})
     return GscOAuthSetupResponse(
         authorization_url=build_authorization_url(state, credentials),
     )
@@ -208,32 +270,48 @@ async def oauth_callback(
     error: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    if error:
-        return _oauth_redirect(error=error)
-    if not code or not state:
-        return _oauth_redirect(error="missing_code")
+    user_payload, extra = decode_oauth_state(state, "gsc") if state else (None, None)
+    is_popup = bool(extra and extra.get("flow") == "popup")
 
-    user = get_user_from_oauth_state(state, db, "gsc")
+    def respond(*, ok: bool, error_msg: str | None = None):
+        if is_popup:
+            return _oauth_popup_response(ok=ok, error=error_msg)
+        return _oauth_redirect() if ok else _oauth_redirect(error=error_msg)
+
+    if error:
+        return respond(ok=False, error_msg=error)
+    if not code or not state:
+        return respond(ok=False, error_msg="missing_code")
+    if not user_payload:
+        return respond(ok=False, error_msg="invalid_state")
+
+    user = get_user_by_email(db, user_payload["email"])
     if not user:
-        return _oauth_redirect(error="invalid_state")
+        return respond(ok=False, error_msg="invalid_state")
 
     credentials = get_gsc_app_credentials(db, user.id, redirect_uri=get_gsc_redirect_uri())
     if not credentials:
-        return _oauth_redirect(error="missing_app_credentials")
+        return respond(ok=False, error_msg="missing_app_credentials")
 
     try:
         data = await exchange_code_for_tokens(code, credentials)
+        account_email = (
+            decode_id_token_email(data["id_token"], expected_client_id=credentials.client_id)
+            if data.get("id_token")
+            else None
+        )
         save_gsc_tokens(
             db,
             user.id,
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token"),
             expires_in=data.get("expires_in"),
+            account_email=account_email,
         )
     except Exception as exc:
-        return _oauth_redirect(error=str(exc))
+        return respond(ok=False, error_msg=str(exc))
 
-    return _oauth_redirect()
+    return respond(ok=True)
 
 
 @router.delete("/oauth/disconnect")
