@@ -38,6 +38,15 @@ def httpx_verify() -> Union[bool, ssl.SSLContext]:
     except Exception as exc:  # The certifi roots above are still usable.
         logger.warning("Could not load OS certificate store: %s", exc)
 
+    # Python 3.13 enables OpenSSL's X509 strict mode in
+    # ``create_default_context``. Some otherwise valid OS-managed/corporate
+    # issuer certificates predate the requirement that Basic Constraints be
+    # marked critical, which makes strict mode reject the chain. Keep normal
+    # certificate and hostname verification, but allow those legacy issuers.
+    strict_flag = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    if strict_flag:
+        context.verify_flags &= ~strict_flag
+
     return context
 
 
