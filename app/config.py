@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # Apify API key (YouTube scraper, AI humanizer, etc.)
     apify_api_key: Optional[str] = None
     apify_humanizer_actor_id: str = "akash9078~ai-content-humanizer"
+    apify_reddit_actor_id: str = "fatihtahta~reddit-scraper-search-fast"
+    reddit_trends_run_timeout_seconds: int = 600
+    reddit_trends_poll_interval_seconds: float = 5.0
     # Seconds to wait between blog-generation LLM calls to avoid Groq TPM rate limit (default 4)
     groq_blog_delay_seconds: float = 4.0
     # TLS verify for outbound httpx (Groq, Tavily, SerpAPI, etc.). Uses OS trust store via truststore, then certifi. Set false only for local dev.
@@ -84,4 +87,3 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-

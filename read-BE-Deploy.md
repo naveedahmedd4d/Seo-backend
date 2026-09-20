@@ -60,7 +60,8 @@ pip install -r requirements.txt
 | `SERPAPI_KEY` | SerpAPI key |
 | `TAVILY_API_KEY` | Tavily key |
 | `GROQ_API_KEY` | Groq key |
-| `APIFY_API_KEY` | Apify key (humanizer, etc.) |
+| `APIFY_API_KEY` | Platform-owner fallback for Apify. Normal Reddit Trends requests use the encrypted per-user key saved in dashboard Settings. |
+| `APIFY_REDDIT_ACTOR_ID` | Optional Reddit Actor override; defaults to `fatihtahta~reddit-scraper-search-fast` |
 | `API_PUBLIC_URL` | Optional fallback when request host headers are unavailable (e.g. background jobs). Social post `media_url` is derived from the incoming request (`Host` / `X-Forwarded-*`) when possible. |
 | `FRONTEND_URL` | `https://launchtrendai.vercel.app` — OAuth callback redirects |
 
@@ -88,6 +89,16 @@ alembic upgrade head
 ```
 
 Use Render Shell or run locally with production `DATABASE_URL`.
+
+### Reddit Trends scheduled collection
+
+Create a Render Cron Job that uses the same repository, environment variables, and database as the web service:
+
+```bash
+python -m app.jobs.reddit_trends
+```
+
+Run it every six hours (`0 */6 * * *`). The job reads each account's saved 6- or 12-hour interval, skips accounts that are not due, prevents overlapping runs, and uses the encrypted Apify key already configured for that account. Manual collection and cached/force-refresh behavior remain available from the Reddit Trends tab even without the cron job.
 
 ### Verify deployment
 

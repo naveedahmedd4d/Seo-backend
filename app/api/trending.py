@@ -62,6 +62,7 @@ from app.services.keyword_coverage_service import (
 )
 
 router = APIRouter()
+SOURCE_REDDIT = "reddit"
 
 
 def _coerce_int(value) -> Optional[int]:
@@ -497,10 +498,10 @@ async def estimate_keyword_difficulty(
     Score Mangools KD for selected keywords only (free-tier safe).
     Requires keyword_ids. Caps batch by remaining Mangools keyword lookups.
     """
-    if body.source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER):
+    if body.source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_REDDIT):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="source must be 'trending', 'manual', or 'cluster'",
+            detail="source must be 'trending', 'manual', 'cluster', or 'reddit'",
         )
 
     if not body.keyword_ids:
@@ -806,7 +807,7 @@ async def set_keyword_blog_workflow(
         )
     if body.content_type == "biography":
         keyword.bio_blog_workflow_id = body.workflow_id
-    elif body.content_type == "cluster_hub":
+    elif body.content_type in ("cluster_hub", "news_timeline", "news_explainer", "news_opinion"):
         keyword.blog_workflow_id = body.workflow_id
     else:
         keyword.net_worth_blog_workflow_id = body.workflow_id

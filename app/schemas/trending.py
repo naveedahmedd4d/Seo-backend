@@ -74,7 +74,7 @@ class AddClusterSubsRequest(BaseModel):
 
 class EstimateKdRequest(BaseModel):
     keyword_ids: List[int]
-    source: Literal["trending", "manual", "cluster"] = "trending"
+    source: Literal["trending", "manual", "cluster", "reddit"] = "trending"
     force: bool = False
 
 
@@ -100,7 +100,7 @@ class EstimateKdResponse(BaseModel):
 
 class SyncCoverageRequest(BaseModel):
     wordpress_site_id: int
-    source: Literal["trending", "manual", "cluster", "github"] = "trending"
+    source: Literal["trending", "manual", "cluster", "github", "reddit"] = "trending"
 
 
 class SyncCoverageResponse(BaseModel):

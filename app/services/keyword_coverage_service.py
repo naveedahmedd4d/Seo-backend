@@ -17,6 +17,8 @@ from app.models.wordpress_site import WordPressSite
 from app.services.cluster_keyword_service import SOURCE_CLUSTER
 from app.services.github_trending_service import SOURCE_GITHUB
 from app.services.manual_keyword_service import SOURCE_MANUAL, SOURCE_TRENDING
+
+SOURCE_REDDIT = "reddit"
 from app.services.wordpress_service import list_published_content
 
 STATUS_EXISTING = "existing"
@@ -103,7 +105,7 @@ def match_keyword(
 
 def _load_keywords_for_source(db: Session, source: str, user_id: int) -> List[TrendingKeywords]:
     """Load keyword ORM rows for coverage sync, scoped to one account (cluster includes mains + subs)."""
-    if source in (SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_TRENDING, SOURCE_GITHUB):
+    if source in (SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_TRENDING, SOURCE_GITHUB, SOURCE_REDDIT):
         return (
             db.query(TrendingKeywords)
             .filter(
@@ -115,7 +117,7 @@ def _load_keywords_for_source(db: Session, source: str, user_id: int) -> List[Tr
         )
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="source must be 'trending', 'manual', 'cluster', or 'github'",
+        detail="source must be 'trending', 'manual', 'cluster', 'github', or 'reddit'",
     )
 
 
@@ -176,10 +178,10 @@ async def sync_coverage_for_site(
     Fetch WP published content and upsert coverage for all keywords of `source`.
     Returns {existing, new, compared_at, total}.
     """
-    if source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_GITHUB):
+    if source not in (SOURCE_TRENDING, SOURCE_MANUAL, SOURCE_CLUSTER, SOURCE_GITHUB, SOURCE_REDDIT):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="source must be 'trending', 'manual', 'cluster', or 'github'",
+            detail="source must be 'trending', 'manual', 'cluster', 'github', or 'reddit'",
         )
 
     site = get_site_for_user(db, user, wordpress_site_id)

@@ -37,6 +37,14 @@ from app.models.website_audit_issue import WebsiteAuditIssue
 from app.models.blog_content_audit_run import BlogContentAuditRun
 from app.models.blog_content_audit import BlogContentAudit
 from app.models.blog_content_audit_fix import BlogContentAuditFix
+from app.models.reddit_trends import (
+    RedditActorRun,
+    RedditPost,
+    RedditTrend,
+    RedditTrendPost,
+    RedditTrendRun,
+    RedditTrendSettings,
+)
 
 __all__ = [
     "User",
@@ -80,5 +88,11 @@ __all__ = [
     "BlogContentAuditRun",
     "BlogContentAudit",
     "BlogContentAuditFix",
+    "RedditActorRun",
+    "RedditPost",
+    "RedditTrend",
+    "RedditTrendPost",
+    "RedditTrendRun",
+    "RedditTrendSettings",
 ]
 

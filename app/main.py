@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, wordpress, trending, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm, settings_blog, website_audit
+from app.api import auth, wordpress, trending, reddit_trends, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm, settings_blog, website_audit
 from app.middleware import (
     http_exception_handler,
     validation_exception_handler,
@@ -42,6 +42,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(wordpress.router, prefix="/api/wordpress", tags=["wordpress"])
 app.include_router(trending.router, prefix="/api/trending", tags=["trending"])
+app.include_router(reddit_trends.router, prefix="/api/trending/reddit", tags=["reddit-trends"])
 app.include_router(research.router, prefix="/api/research", tags=["research"])
 app.include_router(images.router, prefix="/api/images", tags=["images"])
 app.include_router(blog.router, prefix="/api/blog", tags=["blog"])

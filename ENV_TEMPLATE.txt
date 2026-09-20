@@ -27,6 +27,12 @@ GROQ_API_KEY=your-groq-key
 # BLOG_FALLBACK_GROQ_API_KEY=your-second-groq-key
 # GROQ_BLOG_DELAY_SECONDS=4
 
+# Apify (users normally save an encrypted key in dashboard Settings)
+APIFY_API_KEY=your-apify-token
+APIFY_REDDIT_ACTOR_ID=fatihtahta~reddit-scraper-search-fast
+REDDIT_TRENDS_RUN_TIMEOUT_SECONDS=600
+REDDIT_TRENDS_POLL_INTERVAL_SECONDS=5
+
 # CORS
 CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]
 
