@@ -1827,6 +1827,33 @@ async def generate_blog_body(
             prompt, **_llm_gen_kwargs(blog_config, 5000, 0.6)
         )
     
+    focus_keyword_requirement = (
+        "1. Focus Keyword: use it naturally in the opening and in descriptive headings where it helps the reader. "
+        "Prioritize clarity and search intent; do not target a mechanical keyword density or repeat awkward variants."
+        if category == TECHNOLOGY_AI_CATEGORY
+        else "1. Focus Keyword: use it in the first 1-2 sentences (beginning of content), in at least 2-3 H2/H3 subheadings, and naturally in the body. Aim for ~1% keyword density (about once per 100 words)."
+    )
+    heading_requirement = (
+        "3. Use a logical ## / ### hierarchy with specific, answer-led headings. Include the Focus Keyword in a heading only when natural; never force it."
+        if category == TECHNOLOGY_AI_CATEGORY
+        else '3. Use proper heading hierarchy: ## for H2, ### for H3; include 3-5 main sections. Use the Focus Keyword in at least 2 subheadings (e.g. "H2: [Keyword] Overview").'
+    )
+    introduction_requirement = (
+        "9. Begin with a specific, research-supported statistic, benchmark, launch, event, or finding, then explain immediately why it matters now. Never invent a number merely to create a hook."
+        if category == TECHNOLOGY_AI_CATEGORY
+        else "9. Include a compelling introduction that hooks the reader."
+    )
+    conclusion_requirement = (
+        "10. End with a meaningful conclusion that synthesizes the implications and gives the reader a relevant next step or call to action."
+        if category == TECHNOLOGY_AI_CATEGORY
+        else "10. End with a strong conclusion that summarizes key points."
+    )
+    table_accuracy_requirement = (
+        "Use only data supported by the supplied context or clearly established facts. Never use merely plausible, inferred, or fabricated values; omit an unsupported row or mark it as not available."
+        if category == TECHNOLOGY_AI_CATEGORY
+        else 'Use only accurate, plausible data; if uncertain, use "—" or "N/A" for that cell.'
+    )
+
     prompt = f"""Write a comprehensive, SEO-optimized blog post on the following topic.
 
 Topic: "{topic}"{description_text}
@@ -1838,16 +1865,16 @@ Writing Style Guidelines:
 {category_style}
 
 Rank Math SEO Requirements (all required):
-1. Focus Keyword: use it in the first 1-2 sentences (beginning of content), in at least 2-3 H2/H3 subheadings, and naturally in the body. Aim for ~1% keyword density (about once per 100 words).
+{focus_keyword_requirement}
 2. Include LSI (related) keywords naturally throughout.
-3. Use proper heading hierarchy: ## for H2, ### for H3; include 3-5 main sections. Use the Focus Keyword in at least 2 subheadings (e.g. "H2: [Keyword] Overview").
+{heading_requirement}
 4. Keep paragraphs short (2-4 sentences max; Rank Math flags long paragraphs).
 5. Do not add a Table of Contents.
 6. Include at least one image with Focus Keyword in the alt text: e.g. ![Topic or Keyword description](image-url).
 7. Use bullet points and numbered lists where appropriate.
 8. Write at least {blog_config.target_word_count if blog_config else 1000} words for comprehensive coverage ({(blog_config.min_words if blog_config else 800)} minimum).
-9. Include a compelling introduction that hooks the reader.
-10. End with a strong conclusion that summarizes key points.
+{introduction_requirement}
+{conclusion_requirement}
 
 Information Table (required):
 Include exactly one markdown table with 4-5 rows. The table has two columns: the first lists keywords/labels (e.g. "Religion", "Date of Birth"), the second lists the corresponding data. Use accurate, relevant data based on the topic and research context.
@@ -1861,7 +1888,7 @@ Format the table in standard markdown:
 |----------------|------|
 | Row 1 label    | Row 1 value |
 | Row 2 label    | Row 2 value |
-(4-5 rows total). Place the table in a logical place (e.g. after an early section that introduces the subject). Use only accurate, plausible data; if uncertain, use "—" or "N/A" for that cell.
+(4-5 rows total). Place the table in a logical place (e.g. after an early section that introduces the subject). {table_accuracy_requirement}
 
 Format the content in clean markdown. Do not include the title (it will be added separately).
 Start directly with the introduction paragraph.
@@ -1899,13 +1926,21 @@ async def generate_single_blog_batch(
     power = ""
     if blog_config is None or blog_config.seo_power_words:
         power = " Include a number in the title. Use one power word (e.g. Ultimate, Essential, Best, Guide, Top). Use positive or negative sentiment."
+    # Technology & AI has a longer evidence/answer-engine brief. Keep the legacy
+    # 400-character excerpt for every other category so their prompts and output
+    # behavior remain unchanged.
+    metadata_style = (
+        category_style
+        if category == TECHNOLOGY_AI_CATEGORY
+        else category_style[:400]
+    )
     prompt_meta = f"""Generate SEO fields for ONE blog post in a single JSON object. Return ONLY valid JSON, no markdown.
 
 Topic: "{topic}"{description_text}
 Keywords: {keywords_text}
 Category: {category}{research_block}
 
-Style: {category_style[:400]}
+Style: {metadata_style}
 
 Rank Math: Put Focus Keyword (topic/primary keyword) in title near the beginning.{power}
 
@@ -4026,11 +4061,13 @@ def get_available_models() -> List[Dict[str, Any]]:
 
 
 # Predefined categories for keyword categorization
+TECHNOLOGY_AI_CATEGORY = "Technology & AI"
+
 KEYWORD_CATEGORIES = [
     "Celebrities & Public Figures",
     "Sports",
     "Finance & Economy",
-    "Technology & AI",
+    TECHNOLOGY_AI_CATEGORY,
     "News & Politics",
     "Weather & Local Conditions",
     "Games & Entertainment",
@@ -4054,10 +4091,23 @@ Use clear, precise language that conveys expertise while remaining accessible. I
 market context, economic indicators, and practical implications. Maintain objectivity while 
 providing actionable insights for readers.""",
     
-    "Technology & AI": """Write in a technical yet accessible style that educates and informs. 
-Explain complex concepts clearly without oversimplifying. Include practical applications, 
-industry trends, and future implications. Balance technical depth with readability for 
-both experts and newcomers to the topic.""",
+    TECHNOLOGY_AI_CATEGORY: """Write an original, timely Technology & AI article for informed readers, while keeping technical ideas clear enough for newcomers.
+
+Editorial and evidence requirements:
+- Open with the strongest specific data point, benchmark, product release, research finding, or current event supported by the supplied material. In the next sentences, explain why the topic matters now. If no numerical evidence is supplied, use the strongest verified concrete fact instead; never manufacture a statistic or trend.
+- Treat the provided research, trend data, keywords, and source material as inputs to synthesize, not text to copy. Use relevant facts, statistics, dates, examples, expert insights, and real-world applications from those inputs.
+- Attribute time-sensitive, numerical, quoted, or disputed claims to the named source when source information is available. Distinguish established fact from analysis, forecast, marketing claim, and speculation. If the material does not support a claim, omit it or state the limitation. Never invent a source, citation, quote, study, date, benchmark, or product capability.
+- Explain mechanisms and technical terms in plain language without flattening important nuance. Connect developments to practical effects for users, developers, businesses, policy, security, or the wider industry as relevant.
+
+Structure and engagement requirements:
+- Avoid generic scene-setting, dictionary-style openings, repetition, filler, hype, and unsupported superlatives. Every section must add a fact, explanation, comparison, example, implication, or useful takeaway.
+- Use descriptive headings, short paragraphs, and smooth transitions. Put a concise direct answer near the start of each section, then add evidence and nuance.
+- End with a conclusion that synthesizes what the evidence means, what readers should watch next, and a relevant call to action.
+
+SEO, AEO, and GEO requirements:
+- Satisfy the likely search intent directly. Use the focus keyword, secondary keywords, synonyms, named entities, and related concepts naturally; never stuff or mechanically repeat keywords.
+- Make key definitions and answers self-contained and easy for search engines, answer engines, and generative systems to quote accurately. Include concrete entities, dates, units, comparisons, and source attribution where supported.
+- Prefer original synthesis and precise language over formulaic SEO phrasing. This category brief overrides any generic instruction that permits merely plausible data or mechanical keyword-density targets.""",
     
     "News & Politics": """Write in a neutral, factual tone that prioritizes accuracy and balance. 
 Present multiple perspectives where relevant without bias. Include context, background information, 

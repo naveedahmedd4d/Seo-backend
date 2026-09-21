@@ -45,6 +45,15 @@ from app.models.reddit_trends import (
     RedditTrendRun,
     RedditTrendSettings,
 )
+from app.models.bot_automation import (
+    AutomationApproval,
+    AutomationBot,
+    AutomationEvent,
+    AutomationExecution,
+    AutomationNodeExecution,
+    AutomationNotification,
+    AutomationTemplate,
+)
 
 __all__ = [
     "User",
@@ -94,5 +103,12 @@ __all__ = [
     "RedditTrendPost",
     "RedditTrendRun",
     "RedditTrendSettings",
+    "AutomationApproval",
+    "AutomationBot",
+    "AutomationEvent",
+    "AutomationExecution",
+    "AutomationNodeExecution",
+    "AutomationNotification",
+    "AutomationTemplate",
 ]
 

@@ -100,6 +100,16 @@ python -m app.jobs.reddit_trends
 
 Run it every six hours (`0 */6 * * *`). The job reads each account's saved 6- or 12-hour interval, skips accounts that are not due, prevents overlapping runs, and uses the encrypted Apify key already configured for that account. Manual collection and cached/force-refresh behavior remain available from the Reddit Trends tab even without the cron job.
 
+### Bot Automation scheduler
+
+Run the due-bot worker once per minute from the platform scheduler:
+
+```bash
+python -m app.jobs.bot_automation
+```
+
+The worker only queues active bots whose `next_run_at` has passed. Per-schedule idempotency keys prevent a due slot from being executed twice.
+
 ### Verify deployment
 
 ```bash

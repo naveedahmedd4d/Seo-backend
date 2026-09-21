@@ -1,6 +1,7 @@
 import logging
 from datetime import date, datetime, timedelta, timezone
 
+from sqlalchemy import insert as sqlalchemy_insert
 from sqlalchemy.orm import Session
 
 from app.models.gsc_page_metric import GscPageMetric
@@ -15,56 +16,82 @@ logger = logging.getLogger(__name__)
 SYNC_DAYS = 28
 PRIOR_DAYS = 28
 MAX_QUERY_ROWS = 50000
+BULK_UPSERT_SIZE = 500
 
 
 def _parse_date(value: str) -> date:
     return date.fromisoformat(value)
 
 
+def _upsert_in_batches(
+    db: Session,
+    model,
+    records: list[dict],
+    conflict_columns: list[str],
+) -> None:
+    """Upsert metric rows without one database round trip per Google row."""
+    dialect = db.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        insert = sqlalchemy_insert
+
+    for offset in range(0, len(records), BULK_UPSERT_SIZE):
+        batch = records[offset : offset + BULK_UPSERT_SIZE]
+        statement = insert(model).values(batch)
+        if not hasattr(statement, "on_conflict_do_update"):
+            # Search Console is deployed on Postgres; this fallback keeps the
+            # helper usable with less common SQLAlchemy test/dev dialects.
+            db.bulk_insert_mappings(model, batch)
+            continue
+        statement = statement.on_conflict_do_update(
+            index_elements=conflict_columns,
+            set_={
+                "clicks": statement.excluded.clicks,
+                "impressions": statement.excluded.impressions,
+                "ctr": statement.excluded.ctr,
+                "position": statement.excluded.position,
+            },
+        )
+        db.execute(statement)
+
+
 def _upsert_page_metrics(db: Session, property_id: int, rows: list[dict]) -> int:
     if not rows:
         return 0
-    count = 0
+    records_by_key: dict[tuple[date, str], dict] = {}
     for row in rows:
         page = row.get("page")
         dt = row.get("date")
         if not page or not dt:
             continue
         metric_date = _parse_date(dt) if isinstance(dt, str) else dt
-        existing = (
-            db.query(GscPageMetric)
-            .filter(
-                GscPageMetric.property_id == property_id,
-                GscPageMetric.date == metric_date,
-                GscPageMetric.page == page,
-            )
-            .first()
-        )
-        if existing:
-            existing.clicks = row["clicks"]
-            existing.impressions = row["impressions"]
-            existing.ctr = row["ctr"]
-            existing.position = row["position"]
-        else:
-            db.add(
-                GscPageMetric(
-                    property_id=property_id,
-                    date=metric_date,
-                    page=page,
-                    clicks=row["clicks"],
-                    impressions=row["impressions"],
-                    ctr=row["ctr"],
-                    position=row["position"],
-                )
-            )
-        count += 1
-    return count
+        records_by_key[(metric_date, page)] = {
+            "property_id": property_id,
+            "date": metric_date,
+            "page": page,
+            "clicks": row["clicks"],
+            "impressions": row["impressions"],
+            "ctr": row["ctr"],
+            "position": row["position"],
+        }
+
+    records = list(records_by_key.values())
+    _upsert_in_batches(
+        db,
+        GscPageMetric,
+        records,
+        ["property_id", "date", "page"],
+    )
+    return len(records)
 
 
 def _upsert_query_metrics(db: Session, property_id: int, rows: list[dict]) -> int:
     if not rows:
         return 0
-    count = 0
+    records_by_key: dict[tuple[date, str, str], dict] = {}
     for row in rows[:MAX_QUERY_ROWS]:
         query = row.get("query")
         page = row.get("page")
@@ -72,36 +99,25 @@ def _upsert_query_metrics(db: Session, property_id: int, rows: list[dict]) -> in
         if not query or not page or not dt:
             continue
         metric_date = _parse_date(dt) if isinstance(dt, str) else dt
-        existing = (
-            db.query(GscQueryMetric)
-            .filter(
-                GscQueryMetric.property_id == property_id,
-                GscQueryMetric.date == metric_date,
-                GscQueryMetric.query == query,
-                GscQueryMetric.page == page,
-            )
-            .first()
-        )
-        if existing:
-            existing.clicks = row["clicks"]
-            existing.impressions = row["impressions"]
-            existing.ctr = row["ctr"]
-            existing.position = row["position"]
-        else:
-            db.add(
-                GscQueryMetric(
-                    property_id=property_id,
-                    date=metric_date,
-                    query=query,
-                    page=page,
-                    clicks=row["clicks"],
-                    impressions=row["impressions"],
-                    ctr=row["ctr"],
-                    position=row["position"],
-                )
-            )
-        count += 1
-    return count
+        records_by_key[(metric_date, query, page)] = {
+            "property_id": property_id,
+            "date": metric_date,
+            "query": query,
+            "page": page,
+            "clicks": row["clicks"],
+            "impressions": row["impressions"],
+            "ctr": row["ctr"],
+            "position": row["position"],
+        }
+
+    records = list(records_by_key.values())
+    _upsert_in_batches(
+        db,
+        GscQueryMetric,
+        records,
+        ["property_id", "date", "query", "page"],
+    )
+    return len(records)
 
 
 async def sync_property(db: Session, user_id: int, property_id: int) -> dict:
@@ -148,6 +164,16 @@ async def sync_property(db: Session, user_id: int, property_id: int) -> dict:
         prior_start,
         prior_end,
         ["date", "query", "page"],
+    )
+
+    logger.info(
+        "GSC fetched property=%s current_pages=%s prior_pages=%s "
+        "current_queries=%s prior_queries=%s",
+        property_id,
+        len(page_rows),
+        len(prior_page_rows),
+        len(query_rows),
+        len(prior_query_rows),
     )
 
     page_count = _upsert_page_metrics(db, property_id, page_rows)
