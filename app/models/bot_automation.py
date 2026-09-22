@@ -26,7 +26,7 @@ class AutomationBot(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     wordpress_site_id = Column(
-        Integer, ForeignKey("wordpress_sites.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer, ForeignKey("wordpress_sites.id", ondelete="CASCADE"), nullable=True, index=True
     )
     name = Column(String(160), nullable=False)
     description = Column(Text, nullable=True)
@@ -63,7 +63,7 @@ class AutomationExecution(Base):
     )
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     wordpress_site_id = Column(
-        Integer, ForeignKey("wordpress_sites.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("wordpress_sites.id", ondelete="CASCADE"), nullable=True
     )
     trigger_type = Column(String(24), nullable=False, server_default="manual")
     status = Column(String(32), nullable=False, server_default="queued")

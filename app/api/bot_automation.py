@@ -90,7 +90,8 @@ def create_bot(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    ensure_site(db, current_user.id, body.wordpress_site_id)
+    if body.wordpress_site_id is not None:
+        ensure_site(db, current_user.id, body.wordpress_site_id)
     graph = (body.workflow_definition.model_dump(mode="json") if body.workflow_definition else default_workflow_definition())
     validate_workflow(graph)
     bot = AutomationBot(
@@ -123,7 +124,7 @@ def update_bot(
 ):
     bot = _bot(db, current_user.id, bot_id)
     changes = body.model_dump(exclude_unset=True)
-    if "wordpress_site_id" in changes:
+    if changes.get("wordpress_site_id") is not None:
         ensure_site(db, current_user.id, changes["wordpress_site_id"])
     if body.workflow_definition is not None:
         changes["workflow_definition"] = body.workflow_definition.model_dump(mode="json")
@@ -374,7 +375,8 @@ def create_bot_from_template(
     ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    ensure_site(db, current_user.id, body.wordpress_site_id)
+    if body.wordpress_site_id is not None:
+        ensure_site(db, current_user.id, body.wordpress_site_id)
     bot = AutomationBot(
         user_id=current_user.id,
         wordpress_site_id=body.wordpress_site_id,

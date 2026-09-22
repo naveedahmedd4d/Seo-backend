@@ -109,6 +109,29 @@ def test_bots_are_isolated_by_user_and_website(client, db_session):
     assert [item["name"] for item in client.get("/api/bot-automation/bots", headers=owner_headers).json()["items"]] == ["Owner bot"]
 
 
+def test_bot_can_be_created_without_wordpress_site(client, db_session):
+    user = User(
+        email="site-free-bot@test.com",
+        password_hash=get_password_hash("password123"),
+        full_name="Site-free Bot Tester",
+    )
+    db_session.add(user)
+    db_session.commit()
+    token = create_access_token({"sub": user.email})
+
+    response = client.post(
+        "/api/bot-automation/bots",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"name": "Generate-only bot"},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["wordpress_site_id"] is None
+    bot = db_session.query(AutomationBot).filter_by(id=response.json()["id"]).one()
+    execution = create_execution(db_session, bot)
+    assert execution.wordpress_site_id is None
+
+
 def test_restart_execution_reuses_successful_checkpoints(db_session):
     user, site, _ = make_user_and_site(db_session, "checkpoint@test.com")
     bot = AutomationBot(

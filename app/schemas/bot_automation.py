@@ -43,7 +43,7 @@ class WorkflowDefinition(BaseModel):
 class BotCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     description: Optional[str] = None
-    wordpress_site_id: int
+    wordpress_site_id: Optional[int] = None
     workflow_definition: Optional[WorkflowDefinition] = None
     settings: Dict[str, Any] = Field(default_factory=dict)
     schedule_config: Dict[str, Any] = Field(default_factory=dict)
@@ -69,7 +69,7 @@ class BotResponse(BaseModel):
 
     id: int
     user_id: int
-    wordpress_site_id: int
+    wordpress_site_id: Optional[int]
     name: str
     description: Optional[str]
     status: str
@@ -132,7 +132,7 @@ class ExecutionResponse(BaseModel):
     id: int
     bot_id: int
     user_id: int
-    wordpress_site_id: int
+    wordpress_site_id: Optional[int]
     trigger_type: str
     status: str
     current_node_id: Optional[str]
@@ -181,4 +181,4 @@ class TemplateResponse(BaseModel):
 class TemplateBotCreate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=160)
     description: Optional[str] = None
-    wordpress_site_id: int
+    wordpress_site_id: Optional[int] = None

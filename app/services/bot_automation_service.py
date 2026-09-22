@@ -466,6 +466,8 @@ async def _run_blog(
         db.commit()
 
     publication_mode = config.get("publication_mode", "draft")
+    if execution.wordpress_site_id is None:
+        return {"articles": articles, "count": len(articles), "published": []}
     if (execution.settings_snapshot or {}).get("approval_required") and publication_mode in {"publish", "schedule"}:
         publication_mode = "approval"
     if publication_mode == "approval":
@@ -659,7 +661,8 @@ async def run_execution(execution_id: int) -> None:
         user = db.query(User).filter(User.id == execution.user_id).first()
         if not user:
             raise ValueError("Execution owner no longer exists")
-        ensure_site(db, execution.user_id, execution.wordpress_site_id)
+        if execution.wordpress_site_id is not None:
+            ensure_site(db, execution.user_id, execution.wordpress_site_id)
         ordered = validate_workflow(execution.graph_snapshot)
         definitions = {str(node["id"]): node for node in ordered}
         execution.status = "running"
