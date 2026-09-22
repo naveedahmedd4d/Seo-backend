@@ -36,6 +36,7 @@ class SocialPostHistorySaveRequest(BaseModel):
     hashtags: Optional[List[str]] = None
     settings_snapshot: Optional[dict[str, Any]] = None
     news_results: Optional[List[dict[str, Any]]] = None
+    related_published_post_id: Optional[int] = None
 
 
 class SocialPostHistoryItemResponse(BaseModel):
@@ -52,6 +53,7 @@ class SocialPostHistoryItemResponse(BaseModel):
     publish_status: Optional[str] = "draft"
     published_at: Optional[str] = None
     platforms_published: Optional[List[str]] = None
+    related_published_post_id: Optional[int] = None
     created_at: str
     updated_at: Optional[str] = None
 

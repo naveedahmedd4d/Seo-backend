@@ -78,6 +78,7 @@ class Settings(BaseSettings):
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
     google_gsc_redirect_uri: Optional[str] = None
+    google_ga_redirect_uri: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),

@@ -63,4 +63,5 @@ FRONTEND_URL=http://localhost:3000
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
 # GOOGLE_GSC_REDIRECT_URI=http://localhost:8000/api/search-console/oauth/callback
+# GOOGLE_GA_REDIRECT_URI=http://localhost:8000/api/google-analytics/oauth/callback
 

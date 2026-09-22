@@ -54,6 +54,16 @@ from app.models.bot_automation import (
     AutomationNotification,
     AutomationTemplate,
 )
+from app.models.content_analytics import (
+    AnalyticsSyncRun,
+    BlogPublicationAttempt,
+    GaOAuthToken,
+    GaPageMetric,
+    GaProperty,
+    SocialAccountMetricSnapshot,
+    SocialPostMetricSnapshot,
+    SocialPublicationAttempt,
+)
 
 __all__ = [
     "User",
@@ -110,5 +120,13 @@ __all__ = [
     "AutomationNodeExecution",
     "AutomationNotification",
     "AutomationTemplate",
+    "AnalyticsSyncRun",
+    "BlogPublicationAttempt",
+    "GaOAuthToken",
+    "GaPageMetric",
+    "GaProperty",
+    "SocialAccountMetricSnapshot",
+    "SocialPostMetricSnapshot",
+    "SocialPublicationAttempt",
 ]
 

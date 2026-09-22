@@ -19,6 +19,11 @@ class SocialPostHistory(Base):
     media_filename = Column(String(512), nullable=True)
     publish_status = Column(String(32), nullable=False, server_default="draft")
     published_at = Column(DateTime(timezone=True), nullable=True)
+    related_published_post_id = Column(
+        Integer,
+        ForeignKey("published_posts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -28,3 +33,4 @@ class SocialPostHistory(Base):
         back_populates="history",
         cascade="all, delete-orphan",
     )
+    related_published_post = relationship("PublishedPost")

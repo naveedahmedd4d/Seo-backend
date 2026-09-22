@@ -10,6 +10,7 @@ from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
+from app.models.published_post import PublishedPost
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 from app.services.news_research_service import (
     build_news_bundle,
@@ -77,6 +78,7 @@ def _history_item_response(
         publish_status=getattr(record, "publish_status", None) or "draft",
         published_at=record.published_at.isoformat() if getattr(record, "published_at", None) else None,
         platforms_published=platforms_published or None,
+        related_published_post_id=getattr(record, "related_published_post_id", None),
         created_at=record.created_at.isoformat() if record.created_at else "",
         updated_at=record.updated_at.isoformat() if getattr(record, "updated_at", None) else None,
     )
@@ -364,6 +366,17 @@ async def save_social_post_to_history(
 ):
     """Save a generated social post to history (for later preview and download)."""
     try:
+        if request.related_published_post_id is not None:
+            related_post = db.query(PublishedPost).filter(
+                PublishedPost.id == request.related_published_post_id,
+                PublishedPost.user_id == current_user.id,
+                PublishedPost.wp_status == "publish",
+            ).first()
+            if not related_post:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Related published blog not found",
+                )
         record = SocialPostHistory(
             user_id=current_user.id,
             query=request.query,
@@ -373,11 +386,14 @@ async def save_social_post_to_history(
             hashtags=request.hashtags,
             settings_snapshot=request.settings_snapshot,
             news_results=request.news_results,
+            related_published_post_id=request.related_published_post_id,
         )
         db.add(record)
         db.commit()
         db.refresh(record)
         return _history_item_response(record, http_request=http_request)
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         raise HTTPException(

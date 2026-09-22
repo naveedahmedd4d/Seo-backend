@@ -1,5 +1,6 @@
 import copy
 import re
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
@@ -83,6 +84,7 @@ from app.schemas.blog import (
 )
 from app.models.workflow_state import WorkflowState
 from app.models.published_post import PublishedPost
+from app.models.content_analytics import BlogPublicationAttempt
 from app.models.image_search_history import ImageSearchHistory
 from app.models.trending_keywords import TrendingKeywords
 from app.config import settings
@@ -2309,8 +2311,24 @@ async def publish_blog(
                 wp_link=result.get("link"),
                 wp_status=request.status,
                 title=title,
+                target_keyword=publish_focus_keyword,
+                source_category=source_category,
+                canonical_url=result.get("link"),
+                remote_status=request.status,
+                wordpress_published_at=datetime.now(timezone.utc) if request.status == "publish" else None,
             )
             db.add(record)
+            db.flush()
+
+            db.add(BlogPublicationAttempt(
+                user_id=current_user.id,
+                workflow_id=request.workflow_id,
+                wordpress_site_id=request.wordpress_site_id,
+                published_post_id=record.id,
+                blog_key=blog_key,
+                requested_status=request.status,
+                outcome="success",
+            ))
 
             # Also keep legacy state_data fields for backward compatibility
             if is_tree and blog_key in ("child_0", "child_1"):
@@ -2320,6 +2338,17 @@ async def publish_blog(
             else:
                 state_data["wordpress_post_id"] = result.get("post_id")
             workflow_state.state_data = state_data
+            db.commit()
+        else:
+            db.add(BlogPublicationAttempt(
+                user_id=current_user.id,
+                workflow_id=request.workflow_id,
+                wordpress_site_id=request.wordpress_site_id,
+                blog_key=blog_key,
+                requested_status=request.status,
+                outcome="failed",
+                error_message=result.get("message"),
+            ))
             db.commit()
 
         return BlogPublishResponse(

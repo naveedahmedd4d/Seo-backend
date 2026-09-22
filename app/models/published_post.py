@@ -22,6 +22,14 @@ class PublishedPost(Base):
     wp_link = Column(Text, nullable=True)
     wp_status = Column(String(20), nullable=False, default="draft")  # "draft" or "publish"
     title = Column(Text, nullable=True)
+    target_keyword = Column(String(512), nullable=True)
+    source_category = Column(String(255), nullable=True)
+    wp_author_id = Column(Integer, nullable=True)
+    wp_author_name = Column(String(255), nullable=True)
+    canonical_url = Column(Text, nullable=True)
+    remote_status = Column(String(32), nullable=True)
+    wordpress_published_at = Column(DateTime(timezone=True), nullable=True)
+    last_verified_at = Column(DateTime(timezone=True), nullable=True)
     published_at = Column(DateTime(timezone=True), server_default=func.now())
 
     # Prevent publishing same article to same site twice

@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
+from app.models.social_account import SocialAccount
+from app.models.content_analytics import SocialPublicationAttempt
 from app.schemas.social_post import SocialPostPublishResultItem, SocialPostPublishPlatformOptions
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
 from app.services.social_post_copy_service import publish_context_from_history
@@ -148,6 +150,11 @@ def record_publications(
 ) -> None:
     now = datetime.now(timezone.utc)
     for item in results:
+        account = (
+            db.query(SocialAccount)
+            .filter(SocialAccount.user_id == user_id, SocialAccount.platform == item.platform)
+            .first()
+        )
         existing = (
             db.query(SocialPostPublication)
             .filter(
@@ -162,11 +169,13 @@ def record_publications(
             existing.external_url = item.external_url
             existing.error = item.error
             existing.published_at = now
+            existing.social_account_id = account.id if account else None
+            publication = existing
         else:
-            db.add(
-                SocialPostPublication(
+            publication = SocialPostPublication(
                     user_id=user_id,
                     history_id=history_id,
+                    social_account_id=account.id if account else None,
                     platform=item.platform,
                     status="success" if item.success else "failed",
                     external_id=item.external_id,
@@ -174,7 +183,19 @@ def record_publications(
                     error=item.error,
                     published_at=now,
                 )
-            )
+            db.add(publication)
+        db.flush()
+        db.add(SocialPublicationAttempt(
+            user_id=user_id,
+            history_id=history_id,
+            social_account_id=account.id if account else None,
+            publication_id=publication.id,
+            platform=item.platform,
+            outcome="success" if item.success else "failed",
+            external_id=item.external_id,
+            error_message=item.error,
+            attempted_at=now,
+        ))
     db.commit()
 
 
