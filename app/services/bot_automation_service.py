@@ -287,8 +287,16 @@ async def _run_keywords(
             completed_only=False,
             source=source,
             language=str(config.get("language", "all")),
-            wordpress_site_id=execution.wordpress_site_id if config.get("coverage_status") else None,
-            coverage_status=config.get("coverage_status"),
+            wordpress_site_id=(
+                execution.wordpress_site_id
+                if execution.wordpress_site_id is not None and config.get("coverage_status")
+                else None
+            ),
+            coverage_status=(
+                config.get("coverage_status")
+                if execution.wordpress_site_id is not None
+                else None
+            ),
             current_user=user,
             db=db,
         )

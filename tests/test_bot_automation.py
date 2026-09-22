@@ -1,4 +1,5 @@
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from app.models.user import User
 from app.models.wordpress_site import WordPressSite
 from app.services.auth_service import create_access_token, get_password_hash
 from app.services.bot_automation_service import (
+    _run_blog,
     create_execution,
     default_workflow_definition,
     next_run_at,
@@ -130,6 +132,24 @@ def test_bot_can_be_created_without_wordpress_site(client, db_session):
     bot = db_session.query(AutomationBot).filter_by(id=response.json()["id"]).one()
     execution = create_execution(db_session, bot)
     assert execution.wordpress_site_id is None
+
+
+@pytest.mark.asyncio
+async def test_blog_generation_without_site_skips_wordpress_publish(db_session):
+    articles = [{"workflow_id": 42, "title": "Generated article"}]
+    execution = SimpleNamespace(wordpress_site_id=None, settings_snapshot={})
+    node = SimpleNamespace(output_data={"articles": articles})
+
+    result = await _run_blog(
+        db_session,
+        None,
+        execution,
+        node,
+        {},
+        {"publication_mode": "publish"},
+    )
+
+    assert result == {"articles": articles, "count": 1, "published": []}
 
 
 def test_restart_execution_reuses_successful_checkpoints(db_session):
