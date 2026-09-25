@@ -364,11 +364,15 @@ def strip_companion_article_links(body: str) -> str:
     return text.strip()
 
 
-def sanitize_blog_body(body: str) -> str:
-    """Strip TOC blocks, companion-article links, and external hyperlinks from stored body markdown."""
+def sanitize_blog_body(body: str, *, category: Optional[str] = None) -> str:
+    """Remove generated TOC/companion links and apply category publication policy."""
     text = strip_table_of_contents(body)
     text = strip_companion_article_links(text)
-    text = strip_external_markdown_links(text)
+    if category == "Technology & AI":
+        from app.services.technology_ai_publication import reader_content
+        text = reader_content(text)
+    else:
+        text = strip_external_markdown_links(text)
     return text
 
 

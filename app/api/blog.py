@@ -97,6 +97,11 @@ from app.services.research_context import (
     RESEARCH_CONTEXT_MAX_LENGTH,
     format_research_context,
 )
+from app.services.technology_ai_content import (
+    TECHNOLOGY_AI_CATEGORY, collect_evidence, evidence_context,
+    content_fingerprint, draft_issues,
+)
+from app.services.technology_ai_publication import clean_article_fields, reader_content
 
 
 def _keyword_row_for_workflow(db: Session, workflow_id: int) -> Optional[TrendingKeywords]:
@@ -235,13 +240,17 @@ def _state_data_without_toc(state_data: Optional[Dict[str, Any]]) -> Optional[Di
         return state_data
     sd = copy.deepcopy(state_data)
     if sd.get("body_content"):
-        sd["body_content"] = sanitize_blog_body(str(sd["body_content"]))
+        sd["body_content"] = sanitize_blog_body(str(sd["body_content"]), category=sd.get("category"))
     parent = sd.get("parent")
     if isinstance(parent, dict) and parent.get("body_content"):
-        parent["body_content"] = sanitize_blog_body(str(parent["body_content"]))
+        parent["body_content"] = sanitize_blog_body(str(parent["body_content"]), category=sd.get("category"))
     for ch in sd.get("children") or []:
         if isinstance(ch, dict) and ch.get("body_content"):
-            ch["body_content"] = sanitize_blog_body(str(ch["body_content"]))
+            ch["body_content"] = sanitize_blog_body(str(ch["body_content"]), category=sd.get("category"))
+    if sd.get("category") == TECHNOLOGY_AI_CATEGORY:
+        for article in [sd, sd.get("parent"), *(sd.get("children") or [])]:
+            if isinstance(article, dict):
+                clean_article_fields(article)
     return sd
 
 
@@ -484,8 +493,12 @@ def _resolve_workflow_blog_config(
     )
 
 
-def _apply_site_cta(body: str, cfg) -> str:
+def _apply_site_cta(body: str, cfg, *, category: Optional[str] = None) -> str:
     if cfg is None or not getattr(cfg, "include_site_cta", True):
+        return body or ""
+    if category == TECHNOLOGY_AI_CATEGORY and getattr(cfg, "cta_href", "/") in (None, "", "/"):
+        # The technology writer supplies a practical next step. Add a sales CTA
+        # only when the publisher has configured an actual destination.
         return body or ""
     return append_site_cta_markdown(
         body or "",
@@ -968,8 +981,15 @@ async def run_blog_workflow(
 
         # Step 0: Research via Tavily (if enabled and user has a key)
         research_context: Optional[str] = None
+        tech_sources: List[Dict[str, Any]] = []
+        tech_research_warnings: List[str] = []
+        is_technology = category == TECHNOLOGY_AI_CATEGORY
         from app.services.llm_settings_service import resolve_api_key_optional
         has_tavily = bool(resolve_api_key_optional(db, user_id, "tavily"))
+        if is_technology and (not include_research or not has_tavily):
+            tech_research_warnings.append(
+                "Research is disabled." if not include_research else "Research is enabled but no Tavily key is configured."
+            )
         if include_research and has_tavily:
             try:
                 query = topic
@@ -979,10 +999,16 @@ async def run_blog_workflow(
                     desc_snippet = description.strip()[:200]
                     query = f"{topic}. {desc_snippet}"
                 data = await research_keywords(db, query, user_id)
-                research_context = format_research_context(data)
+                if is_technology:
+                    tech_sources = collect_evidence(data, topic)
+                    research_context = evidence_context(tech_sources)
+                else:
+                    research_context = format_research_context(data)
             except Exception as e:
                 logger.warning("Research step failed, generating without research: %s", e)
                 research_context = None
+                if is_technology:
+                    tech_research_warnings.append("Research failed. Factual claims need source review before publishing.")
 
         # Step 0b: Research enrichment - if LLM says context insufficient, run extra Tavily queries (one round only)
         if include_research and research_context and has_tavily:
@@ -992,9 +1018,13 @@ async def run_blog_workflow(
                     for eq in extra_queries:
                         try:
                             extra_data = await research_keywords(db, eq, user_id)
-                            extra_formatted = format_research_context(extra_data)
-                            if extra_formatted and len(research_context) + len(extra_formatted) + 2 < RESEARCH_CONTEXT_MAX_LENGTH * 2:
-                                research_context = research_context + "\n\n" + extra_formatted
+                            if is_technology:
+                                tech_sources = collect_evidence(extra_data, topic, tech_sources)
+                                research_context = evidence_context(tech_sources)
+                            else:
+                                extra_formatted = format_research_context(extra_data)
+                                if extra_formatted and len(research_context) + len(extra_formatted) + 2 < RESEARCH_CONTEXT_MAX_LENGTH * 2:
+                                    research_context = research_context + "\n\n" + extra_formatted
                         except Exception as e:
                             logger.warning("Enrichment query failed: %s", e)
             except Exception as e:
@@ -1089,8 +1119,9 @@ async def run_blog_workflow(
             title = batch["title"]
             meta_description = batch["meta_description"]
             body_content = _apply_site_cta(
-                sanitize_blog_body(batch["body_content"] or ""),
+                sanitize_blog_body(batch["body_content"] or "", category=category),
                 generic_cfg,
+                category=category,
             )
             faqs = batch["faqs"]
             related_queries = batch["related_queries"]
@@ -1112,6 +1143,16 @@ async def run_blog_workflow(
             }
             if research_context:
                 state_data["research_summary"] = research_context[:500] + ("..." if len(research_context) > 500 else "")
+            if is_technology:
+                state_data["research_sources"] = tech_sources
+                state_data["research_context"] = research_context
+                state_data["editorial_plan"] = batch.get("editorial_plan", "")
+                review = dict(batch.get("quality_review") or {})
+                review["warnings"] = list(dict.fromkeys(review.get("warnings", []) + tech_research_warnings))
+                if review["warnings"]:
+                    review["status"] = "needs_revision"
+                review["body_fingerprint"] = content_fingerprint(body_content)
+                state_data["quality_review"] = review
             workflow_state.state_data = state_data
             workflow_state.status = WorkflowStatus.COMPLETED
             db.commit()
@@ -1617,7 +1658,7 @@ async def update_blog_workflow(
         )
     state_data = workflow_state.state_data or {}
     body_content = sanitize_blog_body(
-        rewrite_legacy_person_tree_paths(request.body_content)
+        rewrite_legacy_person_tree_paths(request.body_content), category=state_data.get("category")
     )
     if state_data.get("is_tree") and request.blog_key:
         key = request.blog_key
@@ -1659,6 +1700,18 @@ async def update_blog_workflow(
             state_data["featured_image"] = request.featured_image
         if request.slug is not None:
             state_data["slug"] = _normalize_user_slug(request.slug, request.title)
+    if state_data.get("category") == TECHNOLOGY_AI_CATEGORY:
+        for article in [state_data, state_data.get("parent"), *(state_data.get("children") or [])]:
+            if isinstance(article, dict):
+                clean_article_fields(article)
+        review = dict(state_data.get("quality_review") or {})
+        review.update({
+            "status": "needs_review", "review_completed": False,
+            "warnings": ["Content was edited. Review the updated article and metadata before publishing."]
+                        + draft_issues(body_content, state_data.get("research_context"), private_draft=False),
+            "claims": [], "body_fingerprint": content_fingerprint(body_content),
+        })
+        state_data["quality_review"] = review
     workflow_state.state_data = state_data
     flag_modified(workflow_state, "state_data")
     db.commit()
@@ -2152,7 +2205,11 @@ async def publish_blog(
             )
 
         # Get content from workflow state (tree: parent or child by blog_key)
-        state_data = workflow_state.state_data or {}
+        state_data = copy.deepcopy(workflow_state.state_data or {})
+        if state_data.get("category") == TECHNOLOGY_AI_CATEGORY:
+            for article in [state_data, state_data.get("parent"), *(state_data.get("children") or [])]:
+                if isinstance(article, dict):
+                    clean_article_fields(article, site.url or "")
         is_tree = state_data.get("is_tree")
 
         featured_image_for_publish = None
@@ -2244,16 +2301,17 @@ async def publish_blog(
                 "child_0": f"{path_prefix}/religion",
                 "child_1": f"{path_prefix}/net-worth",
             }
-        content = sanitize_blog_body(content or "")
+        content = sanitize_blog_body(content or "", category=state_data.get("category"))
         use_html = bool(request.body_content_html and request.body_content_html.strip())
 
         if use_html:
             # Single HTML pipeline: frontend sent body as HTML (same as preview); append FAQs, related queries, related articles, schema
             import html as html_module
-            content = append_site_cta_html(
-                rewrite_legacy_person_tree_paths(request.body_content_html.strip()),
-                href=base_url or "/",
-            )
+            content = rewrite_legacy_person_tree_paths(request.body_content_html.strip())
+            if state_data.get("category") == TECHNOLOGY_AI_CATEGORY:
+                content = reader_content(content, base_url)
+            if state_data.get("category") != TECHNOLOGY_AI_CATEGORY:
+                content = append_site_cta_html(content, href=base_url or "/")
             faqs_queries_html = _render_faqs_and_queries_html(faqs, related_queries)
             if faqs_queries_html:
                 content = content + "\n\n" + faqs_queries_html
@@ -2275,10 +2333,9 @@ async def publish_blog(
             )
         else:
             # Fallback: get content from state, append FAQs, related queries, related articles, schema as markdown
-            content = append_site_cta_markdown(
-                rewrite_legacy_person_tree_paths(content or ""),
-                href="/",
-            )
+            content = rewrite_legacy_person_tree_paths(content or "")
+            if state_data.get("category") != TECHNOLOGY_AI_CATEGORY:
+                content = append_site_cta_markdown(content, href="/")
             faqs_queries_md = _render_faqs_and_queries_markdown(faqs, related_queries)
             if faqs_queries_md:
                 content = content + faqs_queries_md

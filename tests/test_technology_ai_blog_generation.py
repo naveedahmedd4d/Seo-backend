@@ -1,5 +1,6 @@
 """Technology & AI prompt quality and category-isolation regression tests."""
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -43,7 +44,8 @@ async def test_technology_ai_body_prompt_uses_research_and_non_stuffing_rules():
     assert result == "Generated Technology & AI article"
     assert "Example Lab (2026)" in prompt
     assert "AI inference, edge AI" in prompt
-    assert "research-supported statistic" in prompt
+    assert "Research is private editorial evidence" in prompt
+    assert "Do not mention research publishers or competitors" in prompt
     assert "do not target a mechanical keyword density" in prompt
     assert "Never use merely plausible" in prompt
     assert "Aim for ~1% keyword density" not in prompt
@@ -51,7 +53,7 @@ async def test_technology_ai_body_prompt_uses_research_and_non_stuffing_rules():
 
 
 @pytest.mark.asyncio
-async def test_technology_ai_batch_metadata_receives_full_editorial_brief():
+async def test_technology_ai_metadata_is_derived_from_reviewed_body():
     metadata_json = (
         '{"title":"AI Inference Chips: Essential 2026 Guide",'
         '"meta_description":"AI inference chips explained with current evidence and practical takeaways for teams evaluating efficient AI infrastructure today.",'
@@ -61,7 +63,10 @@ async def test_technology_ai_batch_metadata_receives_full_editorial_brief():
         patch(
             "app.services.openrouter_service.generate_blog_seo_content",
             new_callable=AsyncMock,
-            side_effect=[metadata_json, "Body"],
+            side_effect=["Reader: infrastructure lead. Compare latency and cost.",
+                         "## Draft\n\nDraft body with an unsupported claim.",
+                         json.dumps({"body_content": "## Reviewed\n\nRevised body explains measurement and limitations.",
+                                     "issues": [], "claims": []}), metadata_json],
         ) as mock_gen,
         patch(
             "app.services.openrouter_service._blog_delay",
@@ -76,11 +81,12 @@ async def test_technology_ai_batch_metadata_receives_full_editorial_brief():
             "Source material from Example Lab.",
         )
 
-    metadata_prompt = mock_gen.await_args_list[0].args[0]
-    assert result["body_content"] == "Body"
-    # This text is near the end of the brief, beyond the old 400-character cutoff.
-    assert "easy for search engines, answer engines, and generative systems" in metadata_prompt
-    assert "Source material from Example Lab" in metadata_prompt
+    metadata_prompt = mock_gen.await_args_list[-1].args[0]
+    assert result["body_content"].startswith("## Reviewed")
+    assert "Revised body explains measurement" in metadata_prompt
+    assert "Draft body with an unsupported claim" not in metadata_prompt
+    assert mock_gen.await_count == 4
+    assert result["quality_review"]["status"] == "needs_revision"  # no traceable evidence
 
 
 @pytest.mark.asyncio
@@ -100,4 +106,3 @@ async def test_non_technology_body_keeps_legacy_prompt_rules():
     assert "Use only accurate, plausible data" in prompt
     assert "SEO, AEO, and GEO requirements" not in prompt
     assert "strongest specific data point" not in prompt
-
