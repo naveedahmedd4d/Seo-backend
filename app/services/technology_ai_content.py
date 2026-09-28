@@ -366,11 +366,16 @@ Topic: {topic}\nKeywords: {', '.join(keywords or [])}\nFinal article:\n{body}"""
     numerical = r"\$\s*\d[\d,.]*|\d[\d,.]*\s*(?:%|percent|billion|million)"
     if set(re.findall(numerical, answers, re.I)) - set(re.findall(numerical, body, re.I)):
         warnings.append("FAQ or related answers introduce numerical claims absent from the article. Verify or remove them.")
+    from app.services.technology_ai_infographics import add_infographics_to_article
+    body, infographic_warnings, featured_image = await add_infographics_to_article(
+        topic, body, generate, delay, source_title=meta.get("title") or topic
+    )
+    warnings.extend(infographic_warnings)
     warnings = list(dict.fromkeys(warnings))
     from app.services.technology_ai_publication import clean_article_fields
     public = {**meta, "body_content": body}
     clean_article_fields(public)
-    return {**public, "editorial_plan": plan,
+    return {**public, "editorial_plan": plan, "featured_image": featured_image,
             "quality_review": {"status": "needs_revision" if warnings else "ready_for_review",
                                "warnings": warnings, "claims": claims,
                                "review_completed": review_completed,

@@ -2,6 +2,7 @@ import copy
 import re
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Body
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from typing import Optional, Dict, Any, List
@@ -102,6 +103,7 @@ from app.services.technology_ai_content import (
     content_fingerprint, draft_issues,
 )
 from app.services.technology_ai_publication import clean_article_fields, reader_content
+from app.services.infographic_storage import resolve_infographic_path
 
 
 def _keyword_row_for_workflow(db: Session, workflow_id: int) -> Optional[TrendingKeywords]:
@@ -1153,6 +1155,8 @@ async def run_blog_workflow(
                     review["status"] = "needs_revision"
                 review["body_fingerprint"] = content_fingerprint(body_content)
                 state_data["quality_review"] = review
+                if batch.get("featured_image"):
+                    state_data["featured_image"] = batch["featured_image"]
             workflow_state.state_data = state_data
             workflow_state.status = WorkflowStatus.COMPLETED
             db.commit()
@@ -1899,6 +1903,16 @@ async def suggest_featured_image(
         "source": chosen.get("source") or "",
         "alt": alt,
     }
+
+
+@router.get("/infographics/{filename}")
+async def get_infographic(filename: str):
+    """Public image endpoint for auto-generated Technology & AI infographics (WordPress sideloads this)."""
+    try:
+        path = resolve_infographic_path(filename)
+    except FileNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Infographic not found")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.post("/workflows/{workflow_id}/auto-images", response_model=BlogAutoImagesResponse)

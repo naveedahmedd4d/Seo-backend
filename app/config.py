@@ -52,6 +52,15 @@ class Settings(BaseSettings):
     api_public_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
 
+    # Shared secret for the backend to call the Next.js infographic-rendering route
+    # (frontend_url + /api/infographic/render). Must match INFOGRAPHIC_RENDER_SECRET on Vercel.
+    infographic_render_secret: Optional[str] = None
+    # Branding for the 16:9 infographic frame. A site name adds a footer; a logo URL
+    # (https) adds a logo next to it.
+    infographic_brand_color: str = "#2563eb"
+    infographic_brand_name: Optional[str] = None
+    infographic_brand_logo_url: Optional[str] = None
+
     # Pinterest OAuth
     pinterest_client_id: Optional[str] = None
     pinterest_client_secret: Optional[str] = None

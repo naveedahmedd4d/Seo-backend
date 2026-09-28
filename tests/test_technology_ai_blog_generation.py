@@ -13,6 +13,13 @@ from app.services.openrouter_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_infographic_rendering(monkeypatch):
+    # Keep the pipeline hermetic: no calls to the infographic render service.
+    from app.config import settings
+    monkeypatch.setattr(settings, "infographic_render_secret", None)
+
+
 def test_technology_ai_editorial_brief_covers_requested_quality_rules():
     brief = CATEGORY_PROMPTS[TECHNOLOGY_AI_CATEGORY]
 
@@ -66,7 +73,8 @@ async def test_technology_ai_metadata_is_derived_from_reviewed_body():
             side_effect=["Reader: infrastructure lead. Compare latency and cost.",
                          "## Draft\n\nDraft body with an unsupported claim.",
                          json.dumps({"body_content": "## Reviewed\n\nRevised body explains measurement and limitations.",
-                                     "issues": [], "claims": []}), metadata_json],
+                                     "issues": [], "claims": []}), metadata_json,
+                         json.dumps({"infographics": []})],
         ) as mock_gen,
         patch(
             "app.services.openrouter_service._blog_delay",
@@ -81,11 +89,11 @@ async def test_technology_ai_metadata_is_derived_from_reviewed_body():
             "Source material from Example Lab.",
         )
 
-    metadata_prompt = mock_gen.await_args_list[-1].args[0]
+    metadata_prompt = mock_gen.await_args_list[3].args[0]
     assert result["body_content"].startswith("## Reviewed")
     assert "Revised body explains measurement" in metadata_prompt
     assert "Draft body with an unsupported claim" not in metadata_prompt
-    assert mock_gen.await_count == 4
+    assert mock_gen.await_count == 5
     assert result["quality_review"]["status"] == "needs_revision"  # no traceable evidence
 
 

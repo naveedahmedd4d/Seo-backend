@@ -14,6 +14,13 @@ from app.services.technology_ai_publication import reader_content, clean_article
 from app.services.research_context import format_research_context
 
 
+@pytest.fixture(autouse=True)
+def _no_infographic_rendering(monkeypatch):
+    # Keep the pipeline hermetic: no calls to the infographic render service.
+    from app.config import settings
+    monkeypatch.setattr(settings, "infographic_render_secret", None)
+
+
 URL = "https://example.org/research"
 BODY = "## Choose a workflow\n\nMeasure baseline latency and compare errors. [Study](https://example.org/research)."
 META = {"title": "Choosing a Workflow", "meta_description": "Compare a baseline with measured outcomes.",
@@ -88,12 +95,13 @@ async def test_pipeline_reviews_body_then_generates_metadata():
     generator = AsyncMock(side_effect=["Reader: CTO; compare workflows", BODY,
         json.dumps({"body_content": BODY, "issues": [], "claims": [
             {"claim": "Measure baseline", "source_url": URL, "status": "supported",
-             "evidence_quote": "Workflow latency evaluation requires baseline measurements."}]}), json.dumps(META)])
+             "evidence_quote": "Workflow latency evaluation requires baseline measurements."}]}), json.dumps(META),
+        json.dumps({"infographics": []})])
     result = await generate_article("workflow", "CTO", [], context, config(), generator, AsyncMock())
     assert result["quality_review"]["status"] == "ready_for_review"
     assert result["quality_review"]["review_completed"] is True
     assert result["quality_review"]["body_fingerprint"]
-    assert BODY in generator.await_args_list[-1].args[0]
+    assert BODY in generator.await_args_list[3].args[0]
     assert "CTO" in generator.await_args_list[1].args[0]
     assert URL not in result["body_content"]
     assert URL in result["quality_review"]["evidence_draft"]
@@ -104,7 +112,7 @@ async def test_pipeline_reviews_body_then_generates_metadata():
 @pytest.mark.parametrize("review", ["not json", json.dumps({"body_content": "Short", "issues": [], "claims": []}),
     json.dumps({"body_content": BODY, "issues": [], "claims": [{"claim": "invalid"}]})])
 async def test_bad_review_cannot_silently_pass(review):
-    generator = AsyncMock(side_effect=["Plan", BODY, review, json.dumps(META)])
+    generator = AsyncMock(side_effect=["Plan", BODY, review, json.dumps(META), json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], URL, config(), generator, AsyncMock())
     assert result["body_content"] == reader_content(BODY)
     assert result["quality_review"]["status"] == "needs_revision"
@@ -117,7 +125,7 @@ async def test_unverified_claim_and_invented_citation_are_flagged():
         "body_content": BODY, "issues": [], "claims": [
             {"claim": "ROI 5.8x", "source_url": "https://invented.org/", "status": "supported"},
             {"claim": "Safety improves 25%", "source_url": "", "status": "unverified"},
-        ]}), "invalid repair", json.dumps(META)])
+        ]}), "invalid repair", json.dumps(META), json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], URL, config(), generator, AsyncMock())
     assert result["quality_review"]["status"] == "needs_revision"
     assert any("ROI 5.8x" in w for w in result["quality_review"]["warnings"])
@@ -127,7 +135,7 @@ async def test_unverified_claim_and_invented_citation_are_flagged():
 @pytest.mark.asyncio
 async def test_no_research_and_metadata_failure_remain_visible():
     generator = AsyncMock(side_effect=[RuntimeError("planner unavailable"), BODY,
-        RuntimeError("review unavailable"), "invalid JSON"])
+        RuntimeError("review unavailable"), "invalid JSON", json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], None, config(), generator, AsyncMock())
     assert result["faqs"] == []
     assert result["meta_description"] == ""
@@ -146,7 +154,8 @@ def test_deterministic_review_flags_unknown_links_and_short_body():
 async def test_zero_faq_setting_is_respected():
     generator = AsyncMock(side_effect=["Plan", BODY,
         json.dumps({"body_content": BODY, "issues": [], "claims": []}),
-        json.dumps({**META, "faqs": [{"question": "Why?", "answer": "Because."}]})])
+        json.dumps({**META, "faqs": [{"question": "Why?", "answer": "Because."}]}),
+        json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], URL, config(faq_count=0), generator, AsyncMock())
     assert result["faqs"] == []
 
@@ -267,7 +276,8 @@ def test_wordpress_markdown_conversion_excludes_citations():
 async def test_metadata_cannot_silently_introduce_new_statistics():
     generator = AsyncMock(side_effect=["Plan", BODY,
         json.dumps({"body_content": BODY, "issues": [], "claims": []}),
-        json.dumps({**META, "faqs": [{"question": "ROI?", "answer": "Returns are 580%."}]})])
+        json.dumps({**META, "faqs": [{"question": "ROI?", "answer": "Returns are 580%."}]}),
+        json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], URL, config(), generator, AsyncMock())
     assert result["quality_review"]["status"] == "needs_revision"
     assert any("numerical claims" in w for w in result["quality_review"]["warnings"])
@@ -310,9 +320,10 @@ async def test_one_targeted_repair_can_resolve_missing_citations():
     uncited = BODY.replace(f"[Study]({URL})", "Study")
     generator = AsyncMock(side_effect=["Plan", uncited,
         json.dumps({"body_content": uncited, "issues": [], "claims": []}),
-        json.dumps({"body_content": BODY, "issues": [], "claims": []}), json.dumps(META)])
+        json.dumps({"body_content": BODY, "issues": [], "claims": []}), json.dumps(META),
+        json.dumps({"infographics": []})])
     result = await generate_article("workflow", None, [], context, config(), generator, AsyncMock())
-    assert generator.await_count == 5
+    assert generator.await_count == 6
     assert result["body_content"] == reader_content(BODY)
     assert result["quality_review"]["status"] == "ready_for_review"
 

@@ -63,7 +63,11 @@ pip install -r requirements.txt
 | `APIFY_API_KEY` | Platform-owner fallback for Apify. Normal Reddit Trends requests use the encrypted per-user key saved in dashboard Settings. |
 | `APIFY_REDDIT_ACTOR_ID` | Optional Reddit Actor override; defaults to `fatihtahta~reddit-scraper-search-fast` |
 | `API_PUBLIC_URL` | Optional fallback when request host headers are unavailable (e.g. background jobs). Social post `media_url` is derived from the incoming request (`Host` / `X-Forwarded-*`) when possible. |
-| `FRONTEND_URL` | `https://launchtrendai.vercel.app` — OAuth callback redirects |
+| `FRONTEND_URL` | `https://launchtrendai.vercel.app` — OAuth callback redirects, and the base URL for the Technology & AI infographic-rendering call |
+| `INFOGRAPHIC_RENDER_SECRET` | Shared secret sent as `x-infographic-secret` when calling `FRONTEND_URL + /api/infographic/render`. Must exactly match the same-named var on Vercel. If unset, Technology & AI articles just generate with 0 infographics (non-fatal). |
+| `INFOGRAPHIC_BRAND_COLOR` | Optional. Hex colour for the 16:9 infographic frame (default `#2563eb`). |
+| `INFOGRAPHIC_BRAND_NAME` | Optional. Site name shown in the infographic footer (e.g. `trendifypress.com`). No footer when unset. |
+| `INFOGRAPHIC_BRAND_LOGO_URL` | Optional. `https` logo URL shown next to the footer name. |
 
 See `ENV_TEMPLATE.txt` for the full list.
 

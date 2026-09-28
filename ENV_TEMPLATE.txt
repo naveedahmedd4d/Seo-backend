@@ -40,6 +40,14 @@ CORS_ORIGINS=["http://localhost:3000", "http://localhost:3001"]
 API_PUBLIC_URL=http://localhost:8000
 FRONTEND_URL=http://localhost:3000
 
+# Infographic rendering (Next.js SSR bridge) — Technology & AI articles only.
+# Must match INFOGRAPHIC_RENDER_SECRET set on the frontend's Vercel project.
+INFOGRAPHIC_RENDER_SECRET=
+# Infographic frame branding (optional). Name adds a footer; logo must be an https URL.
+INFOGRAPHIC_BRAND_COLOR=#2563eb
+# INFOGRAPHIC_BRAND_NAME=trendifypress.com
+# INFOGRAPHIC_BRAND_LOGO_URL=https://example.com/logo.png
+
 # Pinterest OAuth — optional server defaults (users enter their own App ID/secret in the UI)
 # PINTEREST_REDIRECT_URI=http://localhost:8000/api/social-accounts/pinterest/callback
 # If unset, redirect URI is derived from API_PUBLIC_URL + /api/social-accounts/pinterest/callback
