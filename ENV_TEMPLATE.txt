@@ -9,7 +9,8 @@ DATABASE_URL=postgresql://user:password@localhost/seo_automation
 SECRET_KEY=your-secret-key-here-change-in-production
 JWT_ALGORITHM=HS256
 JWT_EXPIRATION=3600
-# Only this account may use server .env API keys as platform defaults
+# This account is the platform admin. It alone sees integration setup controls
+# and may manage shared OAuth app credentials for all customers.
 PLATFORM_OWNER_EMAIL=
 
 # Use a long random value in production (required for secure JWT sessions).
@@ -60,6 +61,13 @@ INFOGRAPHIC_BRAND_COLOR=#2563eb
 # LINKEDIN_REDIRECT_URI=http://localhost:8000/api/social-accounts/linkedin/callback
 # FACEBOOK_REDIRECT_URI=http://localhost:8000/api/social-accounts/facebook/callback
 # INSTAGRAM_REDIRECT_URI=http://localhost:8000/api/social-accounts/instagram/callback
+
+# Meta app owned by this platform. Configure Facebook Login once in Meta for
+# Developers and add FACEBOOK_REDIRECT_URI (or API_PUBLIC_URL + the callback
+# path above) to Valid OAuth Redirect URIs. Customers then connect with one
+# click and never see these credentials.
+# META_APP_ID=
+# META_APP_SECRET=
 
 # Google Search Console OAuth — platform-wide client (optional).
 # When set, every user gets a one-click "Connect Google Search Console" with no

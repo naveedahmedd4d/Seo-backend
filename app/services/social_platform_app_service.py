@@ -5,6 +5,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from fastapi import Request
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.social_platform_app import SocialPlatformApp
@@ -152,7 +153,7 @@ def upsert_user_platform_app(
         validation_error = validate_x_app_credentials(client_id, client_secret)
     elif platform in {"blogger", "gsc"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
-    elif platform == "reddit":
+    elif platform in {"reddit", "facebook"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
     elif platform == "mastodon":
         validation_error = validate_mastodon_app_credentials(
@@ -337,13 +338,43 @@ def get_facebook_app_credentials(
     *,
     redirect_uri: Optional[str] = None,
 ) -> Optional[OAuthAppCredentials]:
-    row = get_user_platform_app(db, user_id, "facebook")
+    """Return the platform-owned Meta app used for every Facebook connection.
+
+    Customers authorize our Meta app and never provide or receive its secret.
+    ``db`` and ``user_id`` remain in the signature to keep OAuth call sites
+    uniform, but Facebook credentials are never resolved from a user's row.
+    """
+    from app.config import settings
+
+    resolved_redirect_uri = redirect_uri or get_facebook_redirect_uri()
+    if settings.meta_app_id and settings.meta_app_secret:
+        return OAuthAppCredentials(
+            client_id=settings.meta_app_id.strip(),
+            client_secret=settings.meta_app_secret.strip(),
+            redirect_uri=resolved_redirect_uri,
+        )
+
+    if not settings.platform_owner_email:
+        return None
+
+    # Admin-entered platform credentials are stored encrypted against the
+    # designated owner account, then shared only for server-side OAuth calls.
+    from app.models.user import User
+
+    owner = (
+        db.query(User)
+        .filter(func.lower(User.email) == settings.platform_owner_email.strip().casefold())
+        .first()
+    )
+    if not owner:
+        return None
+    row = get_user_platform_app(db, owner.id, "facebook")
     if not row:
         return None
     return OAuthAppCredentials(
         client_id=row.client_id,
         client_secret=decrypt_api_key(row.client_secret),
-        redirect_uri=redirect_uri or get_facebook_redirect_uri(),
+        redirect_uri=resolved_redirect_uri,
     )
 
 

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     secret_key: str = "your-secret-key-here"
     jwt_algorithm: str = "HS256"
     jwt_expiration: int = 3600
-    # Only this account may use server .env API keys as platform defaults
+    # Platform admin allowed to manage shared OAuth integrations.
     platform_owner_email: Optional[str] = None
 
     # External APIs
@@ -76,8 +76,8 @@ class Settings(BaseSettings):
     instagram_redirect_uri: Optional[str] = None
     reddit_user_agent: Optional[str] = None
 
-    # Optional server-wide social app creds (unused — users enter per-account creds in UI).
-    # Declared so placeholder values in .env do not break startup.
+    # Server-wide social app credentials. Meta powers the customer-facing,
+    # one-click Facebook OAuth flow and is never exposed to the browser.
     linkedin_client_id: Optional[str] = None
     linkedin_client_secret: Optional[str] = None
     meta_app_id: Optional[str] = None

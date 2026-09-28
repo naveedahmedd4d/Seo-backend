@@ -179,7 +179,79 @@ def test_linkedin_setup_returns_redirect_uri(client, auth_headers):
 def test_facebook_setup_returns_redirect_uri(client, auth_headers):
     response = client.get("/api/social-accounts/facebook/setup", headers=auth_headers)
     assert response.status_code == 200
-    assert "/api/social-accounts/facebook/callback" in response.json()["redirect_uri"]
+    data = response.json()
+    assert "/api/social-accounts/facebook/callback" in data["redirect_uri"]
+    assert data["client_id"] is None
+
+
+def test_facebook_connect_uses_platform_meta_app(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.meta_app_id", "platform-meta-app")
+    monkeypatch.setattr("app.config.settings.meta_app_secret", "platform-meta-secret")
+
+    response = client.post(
+        "/api/social-accounts/facebook/connect",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    assert "client_id=platform-meta-app" in authorization_url
+    assert "platform-meta-secret" not in authorization_url
+
+
+def test_facebook_connect_requires_platform_configuration(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.meta_app_id", None)
+    monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+
+    response = client.post(
+        "/api/social-accounts/facebook/connect",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Facebook connection is not configured. Contact your administrator."
+    )
+
+
+def test_facebook_admin_setup_is_owner_only(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.platform_owner_email", "owner@example.com")
+
+    response = client.get(
+        "/api/social-accounts/facebook/admin/setup",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 403
+
+
+def test_owner_can_save_shared_facebook_app(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.platform_owner_email", "social@test.com")
+    monkeypatch.setattr("app.config.settings.meta_app_id", None)
+    monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+
+    setup_response = client.put(
+        "/api/social-accounts/facebook/admin/setup",
+        headers=auth_headers,
+        json={"client_id": "shared-meta-app", "client_secret": "shared-meta-secret"},
+    )
+
+    assert setup_response.status_code == 200
+    assert setup_response.json()["configured"] is True
+    assert setup_response.json()["client_id"] == "shared-meta-app"
+    assert "client_secret" not in setup_response.json()
+
+    connect_response = client.post(
+        "/api/social-accounts/facebook/connect",
+        headers=auth_headers,
+        json={},
+    )
+    assert connect_response.status_code == 200
+    authorization_url = connect_response.json()["authorization_url"]
+    assert "client_id=shared-meta-app" in authorization_url
+    assert "shared-meta-secret" not in authorization_url
 
 
 def test_instagram_setup_returns_redirect_uri(client, auth_headers):

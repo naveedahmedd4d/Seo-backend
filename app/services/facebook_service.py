@@ -45,7 +45,7 @@ async def save_facebook_account_from_code(
 ) -> SocialAccount:
     credentials = get_facebook_app_credentials(db, user_id, redirect_uri=redirect_uri)
     if not credentials:
-        raise ValueError("Facebook app credentials not found. Connect again from Social accounts.")
+        raise ValueError("Facebook connection is not configured. Contact your administrator.")
 
     short = await exchange_code_for_user_token(credentials, code)
     short_token = short["access_token"]

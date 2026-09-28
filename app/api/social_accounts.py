@@ -26,6 +26,7 @@ from app.schemas.social_account import (
     InstagramAccountsResponse,
     MastodonConnectRequest,
     MastodonSetupResponse,
+    MetaAdminSetupResponse,
     OAuthConnectRequest,
     OAuthSetupResponse,
     PinterestAppCredentialsRequest,
@@ -132,6 +133,12 @@ from app.services.x_service import (
 )
 
 router = APIRouter()
+
+
+def _require_platform_owner(current_user: User) -> None:
+    owner_email = (settings.platform_owner_email or "").strip().casefold()
+    if not owner_email or current_user.email.strip().casefold() != owner_email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
 def _account_to_response(account) -> SocialAccountResponse:
@@ -929,30 +936,43 @@ async def linkedin_callback(
 # --- Facebook Pages ---
 
 
-@router.get("/facebook/setup", response_model=OAuthSetupResponse)
-async def facebook_setup(
+@router.get("/facebook/admin/setup", response_model=MetaAdminSetupResponse)
+async def facebook_admin_setup(
     http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _require_platform_owner(current_user)
+    environment_managed = bool(settings.meta_app_id and settings.meta_app_secret)
     app_row = get_user_platform_app(db, current_user.id, "facebook")
-    return OAuthSetupResponse(
+    return MetaAdminSetupResponse(
+        configured=environment_managed or app_row is not None,
+        client_id=(
+            settings.meta_app_id.strip()
+            if environment_managed and settings.meta_app_id
+            else app_row.client_id if app_row else None
+        ),
         redirect_uri=get_facebook_redirect_uri(http_request),
-        has_app_credentials=user_has_facebook_app(db, current_user.id),
-        client_id=app_row.client_id if app_row else None,
-        developer_portal_url="https://developers.facebook.com/apps/",
+        credentials_source=("environment" if environment_managed else "database" if app_row else None),
+        editable=not environment_managed,
     )
 
 
-@router.post("/facebook/connect", response_model=SocialAccountConnectResponse)
-async def facebook_connect(
+@router.put("/facebook/admin/setup", response_model=MetaAdminSetupResponse)
+async def update_facebook_admin_setup(
     request: OAuthConnectRequest,
     http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _require_platform_owner(current_user)
+    if settings.meta_app_id and settings.meta_app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meta credentials are managed by server environment variables.",
+        )
     try:
-        upsert_user_platform_app(
+        app_row = upsert_user_platform_app(
             db,
             current_user.id,
             "facebook",
@@ -962,14 +982,44 @@ async def facebook_connect(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
+    return MetaAdminSetupResponse(
+        configured=True,
+        client_id=app_row.client_id,
+        redirect_uri=get_facebook_redirect_uri(http_request),
+        credentials_source="database",
+        editable=True,
+    )
+
+
+@router.get("/facebook/setup", response_model=OAuthSetupResponse)
+async def facebook_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return OAuthSetupResponse(
+        redirect_uri=get_facebook_redirect_uri(http_request),
+        has_app_credentials=user_has_facebook_app(db, current_user.id),
+        # Platform credentials are never exposed to customer-facing clients.
+        client_id=None,
+        developer_portal_url="https://developers.facebook.com/apps/",
+    )
+
+
+@router.post("/facebook/connect", response_model=SocialAccountConnectResponse)
+async def facebook_connect(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     redirect_uri = get_facebook_redirect_uri(http_request)
     credentials = get_facebook_app_credentials(
         db, current_user.id, redirect_uri=redirect_uri
     )
     if not credentials:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save Facebook app credentials",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Facebook connection is not configured. Contact your administrator.",
         )
 
     state = create_oauth_state_token(current_user, "facebook")
@@ -1197,6 +1247,8 @@ async def disconnect_social_account(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
     platform = account.platform
     delete_social_account(db, account)
-    if platform not in CREDENTIAL_ONLY_PLATFORMS:
+    # Facebook uses one platform-owned Meta app. Disconnecting an admin's own
+    # Page must not delete the shared app credentials used by every customer.
+    if platform not in CREDENTIAL_ONLY_PLATFORMS and platform != "facebook":
         delete_user_platform_app(db, current_user.id, platform)
     return None

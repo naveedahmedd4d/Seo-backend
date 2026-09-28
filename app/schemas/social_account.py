@@ -60,6 +60,14 @@ class OAuthConnectRequest(BaseModel):
     client_secret: str
 
 
+class MetaAdminSetupResponse(BaseModel):
+    configured: bool
+    client_id: Optional[str] = None
+    redirect_uri: str
+    credentials_source: Optional[str] = None
+    editable: bool = True
+
+
 class MastodonSetupResponse(OAuthSetupResponse):
     instance_url: Optional[str] = None
     developer_portal_url: str = "https://docs.joinmastodon.org/client/intro/"
