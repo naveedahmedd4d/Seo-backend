@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -16,6 +17,7 @@ from app.models.content_analytics import SocialPublicationAttempt
 from app.schemas.social_post import SocialPostPublishResultItem, SocialPostPublishPlatformOptions
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
 from app.services.social_post_copy_service import publish_context_from_history
+from app.services.social_post_link_service import resolve_facebook_destination_url
 from app.services.social_post_platform_publish import download_image_bytes, publish_to_platform
 
 
@@ -129,11 +131,15 @@ async def publish_to_platforms(
     results: list[SocialPostPublishResultItem] = []
     for platform in platforms:
         opts = _platform_options_dict(platform, platform_options)
+        platform_ctx = ctx
+        if platform == "facebook":
+            first_party_url = await resolve_facebook_destination_url(db, user_id, history)
+            platform_ctx = replace(ctx, source_url=first_party_url)
         result = await publish_to_platform(
             db,
             user_id,
             platform,
-            ctx=ctx,
+            ctx=platform_ctx,
             image_url=image_url,
             image_bytes=image_bytes if platform in {"x", "facebook"} else None,
             platform_options=opts,

@@ -588,7 +588,10 @@ async def _run_social(
         publication_mode = str(config.get("approved_action", "publish"))
     publication_results = list(cached.get("publication_results") or [])
     if publication_mode == "publish" and not publication_results:
+        from dataclasses import replace
+
         from app.services.social_post_copy_service import PublishCopyContext
+        from app.services.social_post_link_service import resolve_facebook_destination_url
         from app.services.social_post_platform_publish import publish_to_platform
         from app.services.social_post_publish_service import finalize_history_status, record_publications
 
@@ -608,11 +611,15 @@ async def _run_social(
             )
             results = []
             for platform in post.get("platforms") or []:
+                platform_ctx = ctx
+                if platform == "facebook":
+                    first_party_url = await resolve_facebook_destination_url(db, user.id, history)
+                    platform_ctx = replace(ctx, source_url=first_party_url)
                 results.append(await publish_to_platform(
                     db,
                     user.id,
                     platform,
-                    ctx=ctx,
+                    ctx=platform_ctx,
                     image_url=post.get("image_url"),
                     platform_options=(config.get("platform_options") or {}).get(platform, {}),
                 ))

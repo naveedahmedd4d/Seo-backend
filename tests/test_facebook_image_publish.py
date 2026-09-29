@@ -50,7 +50,7 @@ async def test_facebook_publish_uses_saved_bytes_and_keeps_source_link(
         headline="Headline",
         short_description="Description",
         story_caption="Story caption",
-        hashtags=[],
+        hashtags=["news", "#trending"],
         source_url="https://example.com/article",
     )
 
@@ -69,7 +69,7 @@ async def test_facebook_publish_uses_saved_bytes_and_keeps_source_link(
     mock_publish_photo.assert_awaited_once_with(
         "page-token",
         page_id="page-1",
-        caption="Headline\n\nStory caption\n\nhttps://example.com/article",
+        caption="Headline\n\nStory caption\n\n#news #trending\n\nhttps://example.com/article",
         image_bytes=image,
     )
 
@@ -116,7 +116,12 @@ async def test_facebook_publish_downloads_remote_image_when_local_bytes_are_abse
 
 @pytest.mark.asyncio
 @patch("app.services.social_post_publish_service.publish_to_platform", new_callable=AsyncMock)
-async def test_history_publisher_reads_saved_file_for_facebook(mock_publish):
+@patch(
+    "app.services.social_post_publish_service.resolve_facebook_destination_url",
+    new_callable=AsyncMock,
+    return_value="https://example.com/owned-article",
+)
+async def test_history_publisher_reads_saved_file_for_facebook(mock_resolve_url, mock_publish):
     image = b"\x89PNG\r\n\x1a\nsaved-local-image"
     saved_path = MagicMock()
     path_reader = MagicMock()
@@ -147,3 +152,5 @@ async def test_history_publisher_reads_saved_file_for_facebook(mock_publish):
 
     assert results[0].success is True
     assert mock_publish.await_args.kwargs["image_bytes"] == image
+    assert mock_publish.await_args.kwargs["ctx"].source_url == "https://example.com/owned-article"
+    mock_resolve_url.assert_awaited_once()

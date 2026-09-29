@@ -86,10 +86,16 @@ def test_pinterest_title_strips_highlight_markup():
     assert "Longer story caption" in (copy.get("description") or "")
 
 
-def test_facebook_message_headline_and_story():
+def test_facebook_message_headline_story_and_hashtags():
     msg = build_facebook_message(_ctx())
     assert "Breaking **News** Headline" in msg
     assert "Longer story caption" in msg
+    assert msg.endswith("#news #trending")
+
+
+def test_facebook_message_preserves_prefixed_hashtags():
+    msg = build_facebook_message(_ctx(hashtags=["#MLB", "Baseball", " "]))
+    assert msg.endswith("#MLB #Baseball")
 
 
 def test_reddit_title_is_headline():
