@@ -20,7 +20,7 @@ from app.models.wordpress_site import WordPressSite
 from app.services.bluesky_service import get_valid_bluesky_session
 from app.services.facebook_service import get_valid_facebook_page_context
 from app.services.http_ssl import httpx_verify
-from app.services.instagram_service import get_valid_instagram_context
+from app.services.instagram_service import get_valid_instagram_context, instagram_graph_get
 from app.services.linkedin_service import LINKEDIN_API_BASE, get_valid_linkedin_access_token
 from app.services.mastodon_service import get_valid_mastodon_access_token
 from app.services.meta_graph_service import graph_get
@@ -238,15 +238,16 @@ async def _facebook_metrics(db: Session, publication: SocialPostPublication) -> 
 
 
 async def _instagram_metrics(db: Session, publication: SocialPostPublication) -> tuple[dict[str, int | None], dict[str, Any]]:
-    _, _, page_token = await get_valid_instagram_context(db, publication.user_id)
-    post = await graph_get(
+    _, _, access_token, api_source = await get_valid_instagram_context(db, publication.user_id)
+    get = instagram_graph_get if api_source == "instagram" else graph_get
+    post = await get(
         publication.external_id,
-        page_token,
+        access_token,
         params={"fields": "like_count,comments_count,permalink"},
     )
-    insights = await graph_get(
+    insights = await get(
         f"{publication.external_id}/insights",
-        page_token,
+        access_token,
         params={"metric": "reach,views,shares,total_interactions"},
     )
     values = {
@@ -382,8 +383,9 @@ async def sync_follower_counts(db: Session, user_id: int) -> dict[str, int]:
                 followers = payload.get("followers_count")
                 availability = _availability("available")
             elif account.platform == "instagram":
-                instagram_id, _, page_token = await get_valid_instagram_context(db, user_id)
-                payload = await graph_get(instagram_id, page_token, params={"fields": "followers_count"})
+                instagram_id, _, access_token, api_source = await get_valid_instagram_context(db, user_id)
+                get = instagram_graph_get if api_source == "instagram" else graph_get
+                payload = await get(instagram_id, access_token, params={"fields": "followers_count"})
                 followers = payload.get("followers_count")
                 availability = _availability("available")
         except Exception as exc:

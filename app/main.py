@@ -17,6 +17,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+# httpx's INFO request line includes the full URL. OAuth providers commonly
+# accept secrets and tokens as query parameters, so never emit those URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(
     title="SEO Automation Tool API",

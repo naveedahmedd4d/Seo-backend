@@ -538,16 +538,17 @@ async def _publish_to_instagram(
         )
 
     try:
-        ig_id, username, page_token = await get_valid_instagram_context(
+        ig_id, username, access_token, api_source = await get_valid_instagram_context(
             db,
             user_id,
             instagram_id=platform_options.get("instagram_id"),
         )
         result = await publish_instagram_image_post(
             ig_id,
-            page_token,
+            access_token,
             image_url=image_url,
             caption=caption,
+            api_source=api_source,
         )
         media_id = result.get("id")
         display_username = username or username_hint

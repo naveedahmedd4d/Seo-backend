@@ -384,13 +384,38 @@ def get_instagram_app_credentials(
     *,
     redirect_uri: Optional[str] = None,
 ) -> Optional[OAuthAppCredentials]:
-    row = get_user_platform_app(db, user_id, "instagram")
+    """Return the platform-owned Instagram Login app credentials."""
+    from app.config import settings
+
+    resolved_redirect_uri = redirect_uri or get_instagram_redirect_uri()
+    app_id = settings.instagram_app_id or settings.meta_app_id
+    app_secret = settings.instagram_app_secret or settings.meta_app_secret
+    if app_id and app_secret:
+        return OAuthAppCredentials(
+            client_id=app_id.strip(),
+            client_secret=app_secret.strip(),
+            redirect_uri=resolved_redirect_uri,
+        )
+
+    if not settings.platform_owner_email:
+        return None
+
+    from app.models.user import User
+
+    owner = (
+        db.query(User)
+        .filter(func.lower(User.email) == settings.platform_owner_email.strip().casefold())
+        .first()
+    )
+    if not owner:
+        return None
+    row = get_user_platform_app(db, owner.id, "instagram")
     if not row:
         return None
     return OAuthAppCredentials(
         client_id=row.client_id,
         client_secret=decrypt_api_key(row.client_secret),
-        redirect_uri=redirect_uri or get_instagram_redirect_uri(),
+        redirect_uri=resolved_redirect_uri,
     )
 
 

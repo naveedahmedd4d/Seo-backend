@@ -69,6 +69,13 @@ INFOGRAPHIC_BRAND_COLOR=#2563eb
 # META_APP_ID=
 # META_APP_SECRET=
 
+# Instagram API with Instagram Login. Configure the callback under Instagram
+# > API setup with Instagram login. If omitted, META_APP_ID/META_APP_SECRET are
+# used as a fallback when the same credentials apply to both products.
+# INSTAGRAM_APP_ID=
+# INSTAGRAM_APP_SECRET=
+# INSTAGRAM_REDIRECT_URI=https://seo-backend-xgzu.onrender.com/api/social-accounts/instagram/callback
+
 # Google Search Console OAuth — platform-wide client (optional).
 # When set, every user gets a one-click "Connect Google Search Console" with no
 # Google Cloud Console setup of their own (requires this OAuth client's consent

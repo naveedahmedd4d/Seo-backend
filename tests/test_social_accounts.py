@@ -260,6 +260,150 @@ def test_instagram_setup_returns_redirect_uri(client, auth_headers):
     assert "/api/social-accounts/instagram/callback" in response.json()["redirect_uri"]
 
 
+def test_instagram_connect_redirects_to_official_instagram_oauth(
+    client, auth_headers, monkeypatch
+):
+    monkeypatch.setattr("app.config.settings.instagram_app_id", "instagram-app")
+    monkeypatch.setattr("app.config.settings.instagram_app_secret", "instagram-secret")
+
+    response = client.post(
+        "/api/social-accounts/instagram/connect",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    assert authorization_url.startswith("https://www.instagram.com/oauth/authorize?")
+    assert "client_id=instagram-app" in authorization_url
+    assert "instagram_business_basic" in authorization_url
+    assert "instagram_business_content_publish" in authorization_url
+    assert "enable_fb_login=0" in authorization_url
+    assert "instagram-secret" not in authorization_url
+
+
+def test_instagram_connect_requires_platform_configuration(
+    client, auth_headers, monkeypatch
+):
+    monkeypatch.setattr("app.config.settings.instagram_app_id", None)
+    monkeypatch.setattr("app.config.settings.instagram_app_secret", None)
+    monkeypatch.setattr("app.config.settings.meta_app_id", None)
+    monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+    monkeypatch.setattr("app.config.settings.platform_owner_email", None)
+
+    response = client.post(
+        "/api/social-accounts/instagram/connect",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Instagram connection is not configured. Contact your administrator."
+    )
+
+
+def test_instagram_callback_saves_account_and_returns_to_application(
+    client, auth_headers, db_session, monkeypatch
+):
+    from app.models.user import User
+    from app.services.auth_service import create_oauth_state_token
+
+    user = db_session.query(User).filter(User.email == "social@test.com").one()
+    state = create_oauth_state_token(user, "instagram")
+    observed = {}
+
+    async def fake_save(db, user_id, code, *, redirect_uri=None):
+        observed.update(
+            {"user_id": user_id, "code": code, "redirect_uri": redirect_uri}
+        )
+
+    monkeypatch.setattr(
+        "app.api.social_accounts.save_instagram_account_from_code", fake_save
+    )
+
+    response = client.get(
+        "/api/social-accounts/instagram/callback",
+        params={"code": "instagram-code", "state": state},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in {302, 307}
+    assert response.headers["location"].endswith(
+        "/dashboard/social-post?connected=instagram"
+    )
+    assert observed["user_id"] == user.id
+    assert observed["code"] == "instagram-code"
+    assert observed["redirect_uri"].endswith(
+        "/api/social-accounts/instagram/callback"
+    )
+
+
+def test_instagram_oauth_code_creates_publish_ready_account(
+    db_session, auth_headers, monkeypatch
+):
+    import asyncio
+
+    from app.models.user import User
+    from app.services.instagram_service import save_instagram_account_from_code
+    from app.services.social_account_service import (
+        get_account_metadata,
+        get_decrypted_access_token,
+    )
+    from app.services.social_platform_app_service import OAuthAppCredentials
+
+    user = db_session.query(User).filter(User.email == "social@test.com").one()
+    credentials = OAuthAppCredentials(
+        client_id="instagram-app",
+        client_secret="instagram-secret",
+        redirect_uri="https://api.example.com/api/social-accounts/instagram/callback",
+    )
+
+    async def fake_short_token(_credentials, _code):
+        return {"access_token": "short-token", "user_id": "ig-1"}
+
+    async def fake_long_token(_credentials, _short_token):
+        return {"access_token": "long-token", "expires_in": 5_184_000}
+
+    async def fake_profile(_path, _token, *, params=None):
+        return {
+            "user_id": "ig-1",
+            "username": "trendify.press",
+            "account_type": "BUSINESS",
+        }
+
+    monkeypatch.setattr(
+        "app.services.instagram_service.get_instagram_app_credentials",
+        lambda *_args, **_kwargs: credentials,
+    )
+    monkeypatch.setattr(
+        "app.services.instagram_service.exchange_code_for_instagram_token",
+        fake_short_token,
+    )
+    monkeypatch.setattr(
+        "app.services.instagram_service.exchange_long_lived_instagram_token",
+        fake_long_token,
+    )
+    monkeypatch.setattr(
+        "app.services.instagram_service.instagram_graph_get", fake_profile
+    )
+
+    account = asyncio.run(
+        save_instagram_account_from_code(
+            db_session,
+            user.id,
+            "authorization-code",
+            redirect_uri=credentials.redirect_uri,
+        )
+    )
+
+    metadata = get_account_metadata(account)
+    assert account.account_label == "@trendify.press"
+    assert get_decrypted_access_token(account) == "long-token"
+    assert metadata["auth_method"] == "instagram_login"
+    assert metadata["default_instagram_id"] == "ig-1"
+
+
 def test_reddit_connect_rejects_placeholder(client, auth_headers):
     response = client.post(
         "/api/social-accounts/reddit/connect",

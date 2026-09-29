@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     linkedin_client_secret: Optional[str] = None
     meta_app_id: Optional[str] = None
     meta_app_secret: Optional[str] = None
+    # Instagram API with Instagram Login. These may differ from the Facebook
+    # Login credentials shown for the same Meta app.
+    instagram_app_id: Optional[str] = None
+    instagram_app_secret: Optional[str] = None
 
     # Google Search Console OAuth
     google_client_id: Optional[str] = None

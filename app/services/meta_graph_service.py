@@ -99,10 +99,13 @@ async def graph_get(
     params: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     query = dict(params or {})
-    query["access_token"] = access_token
     url = path if path.startswith("http") else f"{GRAPH_BASE}/{path.lstrip('/')}"
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.get(url, params=query)
+        response = await client.get(
+            url,
+            params=query,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
     if response.status_code >= 400:
         logger.error("Meta Graph GET %s failed: %s", path, response.text)
         _raise_meta_error(response, f"Graph GET {path}")
@@ -116,10 +119,13 @@ async def graph_post(
     data: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     payload = dict(data or {})
-    payload["access_token"] = access_token
     url = path if path.startswith("http") else f"{GRAPH_BASE}/{path.lstrip('/')}"
     async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        response = await client.post(url, data=payload)
+        response = await client.post(
+            url,
+            data=payload,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
     if response.status_code >= 400:
         logger.error("Meta Graph POST %s failed: %s", path, response.text)
         _raise_meta_error(response, f"Graph POST {path}")
@@ -135,10 +141,14 @@ async def graph_post_multipart(
 ) -> dict[str, Any]:
     """POST multipart media to Meta without placing tokens in the URL."""
     payload = dict(data or {})
-    payload["access_token"] = access_token
     url = path if path.startswith("http") else f"{GRAPH_BASE}/{path.lstrip('/')}"
     async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        response = await client.post(url, data=payload, files=files)
+        response = await client.post(
+            url,
+            data=payload,
+            files=files,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
     if response.status_code >= 400:
         logger.error("Meta Graph multipart POST %s failed: %s", path, response.text)
         _raise_meta_error(response, f"Graph multipart POST {path}")
@@ -158,6 +168,18 @@ async def fetch_user_pages(user_access_token: str) -> list[dict[str, Any]]:
             if not page_id:
                 continue
             ig_account = item.get("instagram_business_account") or {}
+            if not ig_account.get("id"):
+                # Meta's documented Page-specific lookup can return the link
+                # even when the nested field is omitted from /me/accounts.
+                try:
+                    page_payload = await graph_get(
+                        str(page_id),
+                        user_access_token,
+                        params={"fields": "instagram_business_account"},
+                    )
+                    ig_account = page_payload.get("instagram_business_account") or {}
+                except MetaGraphError:
+                    ig_account = {}
             pages.append(
                 {
                     "id": str(page_id),
@@ -173,7 +195,21 @@ async def fetch_user_pages(user_access_token: str) -> list[dict[str, Any]]:
         if not paging.get("next") or not after:
             break
         params = {**params, "after": after}
+    logger.info(
+        "Meta Page discovery returned %d Page(s); %d linked Instagram professional account(s)",
+        len(pages),
+        sum(bool(page.get("instagram_business_account_id")) for page in pages),
+    )
     return pages
+
+
+async def fetch_user_permissions(user_access_token: str) -> set[str]:
+    payload = await graph_get("me/permissions", user_access_token)
+    return {
+        str(item.get("permission"))
+        for item in payload.get("data", [])
+        if item.get("permission") and item.get("status") == "granted"
+    }
 
 
 async def fetch_instagram_username(ig_user_id: str, page_access_token: str) -> str:

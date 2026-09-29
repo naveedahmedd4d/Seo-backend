@@ -134,6 +134,15 @@ from app.services.x_service import (
 
 router = APIRouter()
 
+_SENSITIVE_METADATA_KEYS = {
+    "access_token",
+    "refresh_token",
+    "page_access_token",
+    "client_secret",
+    "api_key",
+    "app_password",
+}
+
 
 def _require_platform_owner(current_user: User) -> None:
     owner_email = (settings.platform_owner_email or "").strip().casefold()
@@ -142,12 +151,29 @@ def _require_platform_owner(current_user: User) -> None:
 
 
 def _account_to_response(account) -> SocialAccountResponse:
+    def is_sensitive_key(key: str) -> bool:
+        normalized = key.casefold()
+        return normalized in _SENSITIVE_METADATA_KEYS or normalized.endswith(
+            ("_access_token", "_refresh_token", "_client_secret", "_api_key", "_app_password")
+        )
+
+    def public_metadata(value):
+        if isinstance(value, dict):
+            return {
+                key: public_metadata(item)
+                for key, item in value.items()
+                if not is_sensitive_key(key)
+            }
+        if isinstance(value, list):
+            return [public_metadata(item) for item in value]
+        return value
+
     return SocialAccountResponse(
         id=account.id,
         platform=account.platform,
         account_label=account.account_label,
         connected=True,
-        metadata=get_account_metadata(account),
+        metadata=public_metadata(get_account_metadata(account)),
         created_at=account.created_at.isoformat() if account.created_at else "",
         updated_at=account.updated_at.isoformat() if account.updated_at else None,
     )
@@ -1112,41 +1138,29 @@ async def instagram_setup(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    app_row = get_user_platform_app(db, current_user.id, "instagram")
     return OAuthSetupResponse(
         redirect_uri=get_instagram_redirect_uri(http_request),
         has_app_credentials=user_has_instagram_app(db, current_user.id),
-        client_id=app_row.client_id if app_row else None,
+        # Platform credentials are never exposed to customer-facing clients.
+        client_id=None,
         developer_portal_url="https://developers.facebook.com/apps/",
     )
 
 
 @router.post("/instagram/connect", response_model=SocialAccountConnectResponse)
 async def instagram_connect(
-    request: OAuthConnectRequest,
     http_request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        upsert_user_platform_app(
-            db,
-            current_user.id,
-            "instagram",
-            request.client_id,
-            request.client_secret,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
     redirect_uri = get_instagram_redirect_uri(http_request)
     credentials = get_instagram_app_credentials(
         db, current_user.id, redirect_uri=redirect_uri
     )
     if not credentials:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to save Instagram app credentials",
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Instagram connection is not configured. Contact your administrator.",
         )
 
     state = create_oauth_state_token(current_user, "instagram")
@@ -1161,10 +1175,13 @@ async def instagram_callback(
     code: str = Query(default=""),
     state: str = Query(default=""),
     error: str = Query(default=""),
+    error_reason: str = Query(default=""),
+    error_description: str = Query(default=""),
     db: Session = Depends(get_db),
 ):
-    if error:
-        return _oauth_callback_redirect("instagram", error=error)
+    oauth_error = error_description or error_reason or error
+    if oauth_error:
+        return _oauth_callback_redirect("instagram", error=oauth_error)
     if not code or not state:
         return _oauth_callback_redirect("instagram", error="missing_code")
 
@@ -1175,7 +1192,7 @@ async def instagram_callback(
     redirect_uri = get_instagram_redirect_uri(http_request)
     try:
         await save_instagram_account_from_code(
-            db, user.id, code, redirect_uri=redirect_uri
+            db, user.id, code.removesuffix("#_"), redirect_uri=redirect_uri
         )
     except Exception as exc:
         return _oauth_callback_redirect("instagram", error=str(exc))
