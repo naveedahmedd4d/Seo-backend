@@ -11,6 +11,7 @@ from app.services.meta_graph_service import (
     exchange_long_lived_user_token,
     fetch_user_pages,
     graph_post,
+    graph_post_multipart,
 )
 from app.services.social_account_service import (
     get_account_metadata,
@@ -133,6 +134,37 @@ async def publish_page_post(
     if link:
         data["link"] = link
     return await graph_post(f"{page_id}/feed", page_access_token, data=data)
+
+
+async def publish_page_photo(
+    page_access_token: str,
+    *,
+    page_id: str,
+    caption: str,
+    image_bytes: bytes,
+) -> dict[str, Any]:
+    """Upload a locally stored image as a published Facebook Page photo."""
+    if not image_bytes:
+        raise ValueError("Image data is required for Facebook Page photo posts")
+
+    content_type = "image/png"
+    filename = "social-post.png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        content_type = "image/jpeg"
+        filename = "social-post.jpg"
+    elif image_bytes.startswith((b"GIF87a", b"GIF89a")):
+        content_type = "image/gif"
+        filename = "social-post.gif"
+    elif image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        content_type = "image/webp"
+        filename = "social-post.webp"
+
+    return await graph_post_multipart(
+        f"{page_id}/photos",
+        page_access_token,
+        data={"caption": caption[:63206], "published": "true"},
+        files={"source": (filename, image_bytes, content_type)},
+    )
 
 
 def set_default_page(db: Session, account: SocialAccount, page_id: str, page_name: str) -> SocialAccount:

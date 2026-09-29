@@ -126,6 +126,25 @@ async def graph_post(
     return response.json()
 
 
+async def graph_post_multipart(
+    path: str,
+    access_token: str,
+    *,
+    data: Optional[dict[str, Any]] = None,
+    files: dict[str, tuple[str, bytes, str]],
+) -> dict[str, Any]:
+    """POST multipart media to Meta without placing tokens in the URL."""
+    payload = dict(data or {})
+    payload["access_token"] = access_token
+    url = path if path.startswith("http") else f"{GRAPH_BASE}/{path.lstrip('/')}"
+    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
+        response = await client.post(url, data=payload, files=files)
+    if response.status_code >= 400:
+        logger.error("Meta Graph multipart POST %s failed: %s", path, response.text)
+        _raise_meta_error(response, f"Graph multipart POST {path}")
+    return response.json()
+
+
 async def fetch_user_pages(user_access_token: str) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
     params: dict[str, Any] = {

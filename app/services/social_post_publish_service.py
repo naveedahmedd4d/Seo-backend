@@ -135,7 +135,7 @@ async def publish_to_platforms(
             platform,
             ctx=ctx,
             image_url=image_url,
-            image_bytes=image_bytes if platform == "x" else None,
+            image_bytes=image_bytes if platform in {"x", "facebook"} else None,
             platform_options=opts,
         )
         results.append(result)

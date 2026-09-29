@@ -9,7 +9,7 @@ from app.schemas.social_post import SocialPostPublishResultItem
 from app.services.blogger_service import create_post as create_blogger_post, get_valid_blogger_access_token
 from app.services.bluesky_service import create_post, get_valid_bluesky_session, upload_blob
 from app.services.devto_service import create_article as create_devto_article, get_devto_api_key
-from app.services.facebook_service import get_valid_facebook_page_context, publish_page_post
+from app.services.facebook_service import get_valid_facebook_page_context, publish_page_photo
 from app.services.hashnode_service import get_hashnode_token, publish_article as publish_hashnode_article
 from app.services.http_ssl import httpx_verify
 from app.services.instagram_service import get_valid_instagram_context, publish_instagram_image_post
@@ -122,6 +122,8 @@ async def publish_to_platform(
             user_id,
             message=str(copy.get("message") or ""),
             source_url=ctx.source_url,
+            image_url=image_url,
+            image_bytes=image_bytes,
             platform_options=platform_options,
         )
     if platform == "instagram":
@@ -470,26 +472,42 @@ async def _publish_to_facebook(
     *,
     message: str,
     source_url: str | None,
+    image_url: str | None,
+    image_bytes: bytes | None,
     platform_options: dict,
 ) -> SocialPostPublishResultItem:
     account = get_user_social_account(db, user_id, "facebook")
     if not account:
         return SocialPostPublishResultItem(platform="facebook", success=False, error="Facebook account not connected")
-    if not source_url:
-        return SocialPostPublishResultItem(
-            platform="facebook",
-            success=False,
-            error="A source link is required for Facebook Page posts",
-        )
-
     try:
+        # History publishing supplies bytes from the PNG saved in local storage.
+        # The URL fallback keeps automation flows working when their image comes
+        # from an externally hosted article rather than a saved social card.
+        resolved_image_bytes = image_bytes
+        if resolved_image_bytes is None and image_url:
+            resolved_image_bytes = await download_image_bytes(image_url)
+        if not resolved_image_bytes:
+            return SocialPostPublishResultItem(
+                platform="facebook",
+                success=False,
+                error="Image is required for Facebook Page posts",
+            )
+
         page_id, _page_name, page_token = await get_valid_facebook_page_context(
             db,
             user_id,
             page_id=platform_options.get("page_id"),
         )
-        result = await publish_page_post(page_token, page_id=page_id, message=message, link=source_url)
-        post_id = result.get("id")
+        caption = message.strip()
+        if source_url:
+            caption = f"{caption}\n\n{source_url}" if caption else source_url
+        result = await publish_page_photo(
+            page_token,
+            page_id=page_id,
+            caption=caption,
+            image_bytes=resolved_image_bytes,
+        )
+        post_id = result.get("post_id") or result.get("id")
         return SocialPostPublishResultItem(
             platform="facebook",
             success=True,
