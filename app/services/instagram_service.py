@@ -25,8 +25,8 @@ INSTAGRAM_GRAPH_VERSION = "v26.0"
 INSTAGRAM_GRAPH_BASE = f"https://graph.instagram.com/{INSTAGRAM_GRAPH_VERSION}"
 INSTAGRAM_AUTH_URL = "https://www.instagram.com/oauth/authorize"
 INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
-INSTAGRAM_LONG_LIVED_TOKEN_URL = f"{INSTAGRAM_GRAPH_BASE}/access_token"
-INSTAGRAM_REFRESH_TOKEN_URL = f"{INSTAGRAM_GRAPH_BASE}/refresh_access_token"
+INSTAGRAM_LONG_LIVED_TOKEN_URL = "https://graph.instagram.com/access_token"
+INSTAGRAM_REFRESH_TOKEN_URL = "https://graph.instagram.com/refresh_access_token"
 INSTAGRAM_SCOPES = "instagram_business_basic,instagram_business_content_publish"
 
 
@@ -90,9 +90,8 @@ async def exchange_long_lived_instagram_token(
     short_lived_token: str,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        # Instagram Login uses the versioned Instagram Graph endpoint for the
-        # short-lived to long-lived token exchange. The unversioned endpoint
-        # rejects this request as an unsupported method.
+        # The long-lived token endpoint is separate from the authorization-code
+        # endpoint: it accepts GET query parameters, not a POST form body.
         response = await client.get(
             INSTAGRAM_LONG_LIVED_TOKEN_URL,
             params={

@@ -5,7 +5,10 @@ import ssl
 import httpx
 
 from app.services.http_ssl import httpx_verify
-from app.services.instagram_service import exchange_long_lived_instagram_token
+from app.services.instagram_service import (
+    exchange_long_lived_instagram_token,
+    refresh_long_lived_instagram_token,
+)
 from app.services.meta_graph_service import graph_get
 from app.services.social_platform_app_service import OAuthAppCredentials
 
@@ -56,7 +59,7 @@ def test_meta_graph_get_keeps_access_token_out_of_url():
     assert observed_request.headers["Authorization"] == "Bearer secret-token"
 
 
-def test_instagram_long_lived_token_exchange_uses_versioned_get():
+def test_instagram_long_lived_token_exchange_uses_get():
     observed_request = None
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -88,7 +91,36 @@ def test_instagram_long_lived_token_exchange_uses_versioned_get():
     assert result["access_token"] == "long-lived-token"
     assert observed_request is not None
     assert observed_request.method == "GET"
-    assert observed_request.url.path == "/v26.0/access_token"
+    assert observed_request.url.path == "/access_token"
     assert observed_request.url.params["grant_type"] == "ig_exchange_token"
     assert observed_request.url.params["client_secret"] == "instagram-app-secret"
     assert observed_request.url.params["access_token"] == "short-lived-token"
+
+
+def test_instagram_long_lived_token_refresh_uses_get():
+    observed_request = None
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal observed_request
+        observed_request = request
+        return httpx.Response(
+            200,
+            json={"access_token": "refreshed-token", "token_type": "bearer"},
+        )
+
+    transport = httpx.MockTransport(handler)
+    original_client = httpx.AsyncClient
+
+    def mock_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        return original_client(*args, **kwargs)
+
+    with patch("app.services.instagram_service.httpx.AsyncClient", side_effect=mock_client):
+        result = asyncio.run(refresh_long_lived_instagram_token("long-lived-token"))
+
+    assert result["access_token"] == "refreshed-token"
+    assert observed_request is not None
+    assert observed_request.method == "GET"
+    assert observed_request.url.path == "/refresh_access_token"
+    assert observed_request.url.params["grant_type"] == "ig_refresh_token"
+    assert observed_request.url.params["access_token"] == "long-lived-token"
