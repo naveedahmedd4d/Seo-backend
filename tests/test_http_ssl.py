@@ -2,8 +2,6 @@ from unittest.mock import MagicMock, patch
 
 import asyncio
 import ssl
-from urllib.parse import parse_qs
-
 import httpx
 
 from app.services.http_ssl import httpx_verify
@@ -58,7 +56,7 @@ def test_meta_graph_get_keeps_access_token_out_of_url():
     assert observed_request.headers["Authorization"] == "Bearer secret-token"
 
 
-def test_instagram_long_lived_token_exchange_uses_form_post():
+def test_instagram_long_lived_token_exchange_uses_versioned_get():
     observed_request = None
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -89,14 +87,8 @@ def test_instagram_long_lived_token_exchange_uses_form_post():
 
     assert result["access_token"] == "long-lived-token"
     assert observed_request is not None
-    assert observed_request.method == "POST"
-    assert "instagram-app-secret" not in str(observed_request.url)
-    assert "short-lived-token" not in str(observed_request.url)
-    assert observed_request.headers["content-type"].startswith(
-        "application/x-www-form-urlencoded"
-    )
-    assert parse_qs(observed_request.content.decode()) == {
-        "grant_type": ["ig_exchange_token"],
-        "client_secret": ["instagram-app-secret"],
-        "access_token": ["short-lived-token"],
-    }
+    assert observed_request.method == "GET"
+    assert observed_request.url.path == "/v26.0/access_token"
+    assert observed_request.url.params["grant_type"] == "ig_exchange_token"
+    assert observed_request.url.params["client_secret"] == "instagram-app-secret"
+    assert observed_request.url.params["access_token"] == "short-lived-token"
