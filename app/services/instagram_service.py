@@ -90,9 +90,13 @@ async def exchange_long_lived_instagram_token(
     short_lived_token: str,
 ) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.get(
+        # Instagram's token exchange endpoint requires form-encoded POST data.
+        # Sending these values as GET query parameters is rejected with
+        # "Unsupported request - method type: get" and also risks leaking the
+        # app secret and access token into HTTP access logs.
+        response = await client.post(
             INSTAGRAM_LONG_LIVED_TOKEN_URL,
-            params={
+            data={
                 "grant_type": "ig_exchange_token",
                 "client_secret": credentials.client_secret,
                 "access_token": short_lived_token,
