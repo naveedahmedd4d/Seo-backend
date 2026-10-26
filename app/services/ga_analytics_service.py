@@ -35,15 +35,18 @@ def get_ga_credentials(db: Session, user_id: int) -> OAuthAppCredentials | None:
 
 
 def build_ga_authorization_url(state: str, credentials: OAuthAppCredentials) -> str:
-    return f"{GOOGLE_AUTH_URL}?{urlencode({
-        'client_id': credentials.client_id,
-        'redirect_uri': credentials.redirect_uri,
-        'response_type': 'code',
-        'scope': f'openid email {GA_SCOPE}',
-        'access_type': 'offline',
-        'prompt': 'consent',
-        'state': state,
-    })}"
+    query = urlencode(
+        {
+            "client_id": credentials.client_id,
+            "redirect_uri": credentials.redirect_uri,
+            "response_type": "code",
+            "scope": f"openid email {GA_SCOPE}",
+            "access_type": "offline",
+            "prompt": "consent",
+            "state": state,
+        }
+    )
+    return f"{GOOGLE_AUTH_URL}?{query}"
 
 
 async def exchange_ga_code(code: str, credentials: OAuthAppCredentials) -> dict[str, Any]:
