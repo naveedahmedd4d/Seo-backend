@@ -23,6 +23,11 @@ from app.services.pinterest_service import (
 from app.services.reddit_service import get_valid_reddit_access_token, submit_link_post
 from app.services.social_account_service import get_account_metadata, get_user_social_account
 from app.services.social_post_copy_service import PublishCopyContext, build_platform_copy
+from app.services.upload_post_service import (
+    publish_photo_via_upload_post,
+    supports_upload_post,
+    upload_post_configured,
+)
 from app.services.x_service import create_tweet, get_valid_x_access_token, upload_media as upload_x_media
 
 
@@ -45,6 +50,28 @@ async def publish_to_platform(
 ) -> SocialPostPublishResultItem:
     platform_options = platform_options or {}
     copy = build_platform_copy(platform, ctx)
+
+    # Prefer Upload-Post when configured for supported platforms.
+    if upload_post_configured() and supports_upload_post(platform):
+        title = str(
+            copy.get("caption")
+            or copy.get("message")
+            or copy.get("text")
+            or copy.get("title")
+            or copy.get("description")
+            or ctx.headline
+            or ""
+        )
+        description = copy.get("description")
+        if isinstance(description, str) and description.strip() == title.strip():
+            description = None
+        return await publish_photo_via_upload_post(
+            platform=platform,
+            title=title,
+            image_url=image_url,
+            description=description if isinstance(description, str) else None,
+            platform_options=platform_options,
+        )
 
     if platform == "pinterest":
         return await _publish_to_pinterest(

@@ -88,3 +88,11 @@ INFOGRAPHIC_BRAND_COLOR=#2563eb
 # GOOGLE_GSC_REDIRECT_URI=http://localhost:8000/api/search-console/oauth/callback
 # GOOGLE_GA_REDIRECT_URI=http://localhost:8000/api/google-analytics/oauth/callback
 
+# Upload-Post (unified social publishing). When set, supported platforms
+# (facebook, instagram, x, linkedin, pinterest, bluesky, …) publish via Upload-Post.
+# UPLOAD_POST_USER is the Upload-Post profile name (Manage Users).
+# UPLOAD_POST_API_KEY=your-upload-post-api-key
+# UPLOAD_POST_USER=your-profile-name
+# Optional: Facebook Page id when posting to Facebook via Upload-Post
+# UPLOAD_POST_FACEBOOK_PAGE_ID=
+

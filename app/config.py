@@ -92,6 +92,14 @@ class Settings(BaseSettings):
     google_client_secret: Optional[str] = None
     google_gsc_redirect_uri: Optional[str] = None
     google_ga_redirect_uri: Optional[str] = None
+
+    # Upload-Post unified social publishing (https://docs.upload-post.com)
+    # When set, supported platforms publish via Upload-Post instead of first-party OAuth.
+    upload_post_api_key: Optional[str] = None
+    upload_post_user: Optional[str] = None
+    upload_post_base_url: str = "https://api.upload-post.com/api"
+    # Optional Facebook Page id when posting via Upload-Post (falls back to upload_post_user if numeric).
+    upload_post_facebook_page_id: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),
