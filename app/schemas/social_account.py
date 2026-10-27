@@ -60,6 +60,13 @@ class OAuthConnectRequest(BaseModel):
     client_secret: str
 
 
+class FacebookConnectRequest(BaseModel):
+    """Optional BYO Meta app credentials. Empty body uses platform-managed Meta app."""
+
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+
+
 class MetaAdminSetupResponse(BaseModel):
     configured: bool
     client_id: Optional[str] = None

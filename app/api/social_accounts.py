@@ -18,6 +18,7 @@ from app.schemas.social_account import (
     BloggerBlogsResponse,
     BlueskyConnectRequest,
     BlueskyConnectResponse,
+    FacebookConnectRequest,
     FacebookPageItem,
     FacebookPageUpdateRequest,
     FacebookPagesResponse,
@@ -1023,11 +1024,12 @@ async def facebook_setup(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_app = get_user_platform_app(db, current_user.id, "facebook")
     return OAuthSetupResponse(
         redirect_uri=get_facebook_redirect_uri(http_request),
         has_app_credentials=user_has_facebook_app(db, current_user.id),
-        # Platform credentials are never exposed to customer-facing clients.
-        client_id=None,
+        # Only expose the caller's own saved App ID — never the platform secret.
+        client_id=user_app.client_id if user_app else None,
         developer_portal_url="https://developers.facebook.com/apps/",
     )
 
@@ -1035,17 +1037,41 @@ async def facebook_setup(
 @router.post("/facebook/connect", response_model=SocialAccountConnectResponse)
 async def facebook_connect(
     http_request: Request,
+    request: FacebookConnectRequest = FacebookConnectRequest(),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     redirect_uri = get_facebook_redirect_uri(http_request)
+
+    # Allow BYO Meta app when server env is not forcing platform credentials.
+    if (
+        request.client_id
+        and request.client_secret
+        and not (settings.meta_app_id and settings.meta_app_secret)
+    ):
+        try:
+            upsert_user_platform_app(
+                db,
+                current_user.id,
+                "facebook",
+                request.client_id,
+                request.client_secret,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
     credentials = get_facebook_app_credentials(
         db, current_user.id, redirect_uri=redirect_uri
     )
     if not credentials:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Facebook connection is not configured. Contact your administrator.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Facebook is not configured. Enter your Meta App ID and App Secret "
+                "in the connect dialog, or ask an administrator to configure META_APP_ID."
+            ),
         )
 
     state = create_oauth_state_token(current_user, "facebook")

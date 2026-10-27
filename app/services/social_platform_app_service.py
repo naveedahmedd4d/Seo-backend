@@ -338,11 +338,9 @@ def get_facebook_app_credentials(
     *,
     redirect_uri: Optional[str] = None,
 ) -> Optional[OAuthAppCredentials]:
-    """Return the platform-owned Meta app used for every Facebook connection.
+    """Resolve Meta app credentials for Facebook Pages OAuth.
 
-    Customers authorize our Meta app and never provide or receive its secret.
-    ``db`` and ``user_id`` remain in the signature to keep OAuth call sites
-    uniform, but Facebook credentials are never resolved from a user's row.
+    Order: server env → the user's own Meta app → platform-owner shared app.
     """
     from app.config import settings
 
@@ -354,11 +352,19 @@ def get_facebook_app_credentials(
             redirect_uri=resolved_redirect_uri,
         )
 
+    user_row = get_user_platform_app(db, user_id, "facebook")
+    if user_row:
+        return OAuthAppCredentials(
+            client_id=user_row.client_id,
+            client_secret=decrypt_api_key(user_row.client_secret),
+            redirect_uri=resolved_redirect_uri,
+        )
+
     if not settings.platform_owner_email:
         return None
 
     # Admin-entered platform credentials are stored encrypted against the
-    # designated owner account, then shared only for server-side OAuth calls.
+    # designated owner account, then shared for server-side OAuth calls.
     from app.models.user import User
 
     owner = (
