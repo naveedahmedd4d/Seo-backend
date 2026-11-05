@@ -114,6 +114,23 @@ python -m app.jobs.bot_automation
 
 The worker only queues active bots whose `next_run_at` has passed. Per-schedule idempotency keys prevent a due slot from being executed twice.
 
+### Weekly auto content (events + CSV blogs)
+
+Create a Render Cron Job that uses the same repository, environment variables, and database as the web service. Suggested schedule: Mondays at 09:00 UTC (`0 9 * * 1`):
+
+```bash
+python -m app.jobs.weekly_content
+```
+
+The job syncs international observances + Nager.Date holidays, then for each user with Goal 1 and/or Goal 2 enabled:
+
+1. **Goal 1** — creates social posts for upcoming-week events (capped by `max_social_per_week`) and publishes to connected social accounts.
+2. **Goal 2** — takes the next `blogs_per_week` pending CSV keywords, generates blogs, publishes to the configured WordPress site, then shares to connected social + outreach platforms (Dev.to / Hashnode / Blogger).
+
+Idempotency is per user + ISO week via `weekly_content_runs`. Manual trigger: `POST /api/weekly-content/run?force=true`.
+
+Apply the Alembic revision `h2i3j4k5l6m7` (or rely on startup `create_tables_if_missing`) before enabling.
+
 ### Verify deployment
 
 ```bash

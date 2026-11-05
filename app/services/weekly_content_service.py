@@ -1,0 +1,871 @@
+"""Fully-auto weekly pipelines: event social posts + CSV blog plan."""
+
+from __future__ import annotations
+
+import csv
+import io
+import logging
+import re
+from datetime import date, datetime, timezone
+from typing import Any, Optional
+
+from sqlalchemy.orm import Session
+
+from app.models.social_post_history import SocialPostHistory
+from app.models.user import User
+from app.models.weekly_content import (
+    CalendarEvent,
+    KeywordPlanImport,
+    KeywordPlanItem,
+    WeeklyContentRun,
+    WeeklyContentSettings,
+    WeeklySocialItem,
+)
+from app.models.wordpress_site import WordPressSite
+from app.services.international_events_service import (
+    DEFAULT_COUNTRIES,
+    list_events,
+    sync_calendar_events,
+    upcoming_week_window,
+)
+from app.services.social_account_service import get_user_social_accounts
+
+logger = logging.getLogger(__name__)
+
+OUTREACH_PLATFORMS = {"devto", "hashnode", "blogger"}
+SOCIAL_IMAGE_PLATFORMS = {
+    "facebook",
+    "instagram",
+    "x",
+    "linkedin",
+    "pinterest",
+    "mastodon",
+    "bluesky",
+    "reddit",
+}
+
+
+def iso_week_key(d: Optional[date] = None) -> str:
+    target = d or date.today()
+    year, week, _ = target.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
+    row = db.query(WeeklyContentSettings).filter(WeeklyContentSettings.user_id == user_id).first()
+    if row:
+        if row.countries is None:
+            row.countries = list(DEFAULT_COUNTRIES)
+            db.commit()
+            db.refresh(row)
+        return row
+    row = WeeklyContentSettings(
+        user_id=user_id,
+        countries=list(DEFAULT_COUNTRIES),
+        max_social_per_week=7,
+        blogs_per_week=2,
+        goal1_enabled=False,
+        goal2_enabled=False,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def update_settings(
+    db: Session,
+    user_id: int,
+    **changes: Any,
+) -> WeeklyContentSettings:
+    row = get_or_create_settings(db, user_id)
+    if "goal1_enabled" in changes and changes["goal1_enabled"] is not None:
+        row.goal1_enabled = bool(changes["goal1_enabled"])
+    if "goal2_enabled" in changes and changes["goal2_enabled"] is not None:
+        row.goal2_enabled = bool(changes["goal2_enabled"])
+    if "countries" in changes and changes["countries"] is not None:
+        cleaned = [str(c).strip().upper() for c in changes["countries"] if str(c).strip()]
+        row.countries = cleaned or list(DEFAULT_COUNTRIES)
+    if "max_social_per_week" in changes and changes["max_social_per_week"] is not None:
+        row.max_social_per_week = int(changes["max_social_per_week"])
+    if "blogs_per_week" in changes and changes["blogs_per_week"] is not None:
+        row.blogs_per_week = int(changes["blogs_per_week"])
+    if "wordpress_site_id" in changes:
+        site_id = changes["wordpress_site_id"]
+        if site_id is None:
+            row.wordpress_site_id = None
+        else:
+            site = (
+                db.query(WordPressSite)
+                .filter(WordPressSite.id == int(site_id), WordPressSite.user_id == user_id)
+                .first()
+            )
+            if not site:
+                raise ValueError("WordPress site not found")
+            row.wordpress_site_id = site.id
+    if "cron_weekday" in changes and changes["cron_weekday"] is not None:
+        row.cron_weekday = max(0, min(6, int(changes["cron_weekday"])))
+    if "cron_time_utc" in changes and changes["cron_time_utc"] is not None:
+        value = str(changes["cron_time_utc"]).strip()
+        if not re.fullmatch(r"\d{1,2}:\d{2}", value):
+            raise ValueError("cron_time_utc must be HH:MM")
+        hour, minute = value.split(":")
+        row.cron_time_utc = f"{int(hour):02d}:{int(minute):02d}"
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def settings_to_dict(row: WeeklyContentSettings) -> dict:
+    return {
+        "goal1_enabled": bool(row.goal1_enabled),
+        "goal2_enabled": bool(row.goal2_enabled),
+        "countries": list(row.countries or DEFAULT_COUNTRIES),
+        "max_social_per_week": int(row.max_social_per_week or 7),
+        "blogs_per_week": int(row.blogs_per_week or 2),
+        "wordpress_site_id": row.wordpress_site_id,
+        "cron_weekday": int(row.cron_weekday if row.cron_weekday is not None else 0),
+        "cron_time_utc": row.cron_time_utc or "09:00",
+        "last_run_at": row.last_run_at,
+        "last_run_iso_week": row.last_run_iso_week,
+        "updated_at": row.updated_at,
+    }
+
+
+def _connected_platforms(db: Session, user_id: int, *, include_outreach: bool) -> list[str]:
+    accounts = get_user_social_accounts(db, user_id)
+    platforms: list[str] = []
+    for account in accounts:
+        platform = (account.platform or "").strip().lower()
+        if not platform:
+            continue
+        if platform in SOCIAL_IMAGE_PLATFORMS:
+            platforms.append(platform)
+        elif include_outreach and platform in OUTREACH_PLATFORMS:
+            platforms.append(platform)
+    # Preserve order, unique
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for platform in platforms:
+        if platform not in seen:
+            seen.add(platform)
+            ordered.append(platform)
+    return ordered
+
+
+async def _generate_and_publish_social(
+    db: Session,
+    user: User,
+    *,
+    query: str,
+    source_title: str,
+    source_snippet: str,
+    source_url: Optional[str],
+    platforms: list[str],
+    settings_snapshot: dict,
+    image_url: Optional[str] = None,
+    body_html: Optional[str] = None,
+) -> tuple[SocialPostHistory, list[dict]]:
+    from dataclasses import replace
+
+    from app.services.llm_settings_service import resolve_llm_credentials
+    from app.services.openrouter_service import (
+        generate_news_headline,
+        generate_social_post_description,
+        generate_social_post_hashtags,
+        generate_social_post_story_description,
+        reset_llm_context,
+        set_llm_context,
+    )
+    from app.services.social_post_copy_service import PublishCopyContext
+    from app.services.social_post_link_service import resolve_facebook_destination_url
+    from app.services.social_post_platform_publish import publish_to_platform
+    from app.services.social_post_publish_service import finalize_history_status, record_publications
+
+    source = [{
+        "title": source_title,
+        "source": "Weekly automation",
+        "snippet": (source_snippet or source_title)[:1200],
+        "link": source_url,
+        "date": date.today().isoformat(),
+    }]
+    token = set_llm_context(resolve_llm_credentials(db, user.id))
+    try:
+        headline = await generate_news_headline(source, query=query)
+        description = await generate_social_post_description(source, headline, query)
+        story = await generate_social_post_story_description(source, headline, query)
+        hashtags = await generate_social_post_hashtags(source, headline, query, 12)
+    finally:
+        reset_llm_context(token)
+
+    # For outreach article platforms, prefer HTML body as story/caption payload.
+    story_for_history = story
+    if body_html and any(p in OUTREACH_PLATFORMS for p in platforms):
+        story_for_history = body_html[:20000]
+
+    history = SocialPostHistory(
+        user_id=user.id,
+        query=query,
+        headline=headline,
+        description=description,
+        story_description=story_for_history,
+        hashtags=hashtags,
+        settings_snapshot=settings_snapshot,
+        news_results=source,
+        publish_status="draft",
+    )
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+
+    if not platforms:
+        return history, []
+
+    ctx = PublishCopyContext(
+        headline=headline,
+        short_description=description,
+        story_caption=story_for_history if body_html else story,
+        hashtags=hashtags or [],
+        source_url=source_url,
+    )
+    results = []
+    for platform in platforms:
+        platform_ctx = ctx
+        if platform == "facebook":
+            first_party_url = await resolve_facebook_destination_url(db, user.id, history)
+            platform_ctx = replace(ctx, source_url=first_party_url)
+        results.append(
+            await publish_to_platform(
+                db,
+                user.id,
+                platform,
+                ctx=platform_ctx,
+                image_url=image_url,
+                platform_options={},
+            )
+        )
+    record_publications(db, user.id, history.id, results)
+    finalize_history_status(db, history, results)
+    return history, [r.model_dump(mode="json") for r in results]
+
+
+async def run_goal1_for_user(
+    db: Session,
+    user: User,
+    settings: WeeklyContentSettings,
+    run: WeeklyContentRun,
+) -> dict:
+    week = run.iso_week
+    date_from, date_to = upcoming_week_window()
+    countries = list(settings.countries or DEFAULT_COUNTRIES)
+    events = list_events(db, date_from=date_from, date_to=date_to, countries=countries)
+    cap = max(1, int(settings.max_social_per_week or 7))
+    events = events[:cap]
+
+    platforms = _connected_platforms(db, user.id, include_outreach=False)
+    created = 0
+    published = 0
+    failed = 0
+
+    if not platforms:
+        for event in events:
+            item = (
+                db.query(WeeklySocialItem)
+                .filter(
+                    WeeklySocialItem.user_id == user.id,
+                    WeeklySocialItem.iso_week == week,
+                    WeeklySocialItem.calendar_event_id == event.id,
+                )
+                .first()
+            )
+            if not item:
+                item = WeeklySocialItem(
+                    user_id=user.id,
+                    run_id=run.id,
+                    iso_week=week,
+                    calendar_event_id=event.id,
+                    status="failed",
+                    error_message="No connected social accounts",
+                )
+                db.add(item)
+            else:
+                item.status = "failed"
+                item.error_message = "No connected social accounts"
+                item.run_id = run.id
+            failed += 1
+        db.commit()
+        return {"events": len(events), "created": created, "published": published, "failed": failed}
+
+    for event in events:
+        item = (
+            db.query(WeeklySocialItem)
+            .filter(
+                WeeklySocialItem.user_id == user.id,
+                WeeklySocialItem.iso_week == week,
+                WeeklySocialItem.calendar_event_id == event.id,
+            )
+            .first()
+        )
+        if item and item.status == "published":
+            published += 1
+            continue
+        if not item:
+            item = WeeklySocialItem(
+                user_id=user.id,
+                run_id=run.id,
+                iso_week=week,
+                calendar_event_id=event.id,
+                status="queued",
+            )
+            db.add(item)
+            db.commit()
+            db.refresh(item)
+            created += 1
+        else:
+            item.run_id = run.id
+            item.status = "generating"
+            item.error_message = None
+            db.commit()
+
+        try:
+            item.status = "generating"
+            db.commit()
+            history, results = await _generate_and_publish_social(
+                db,
+                user,
+                query=event.title,
+                source_title=event.title,
+                source_snippet=event.description or f"International observance: {event.title}",
+                source_url=None,
+                platforms=platforms,
+                settings_snapshot={
+                    "source": "weekly_content_goal1",
+                    "calendar_event_id": event.id,
+                    "iso_week": week,
+                    "platforms": platforms,
+                },
+            )
+            item.social_post_history_id = history.id
+            item.publish_results = results
+            item.status = "published" if any(r.get("success") for r in results) else "failed"
+            if item.status == "failed":
+                item.error_message = "All platform publishes failed"
+                failed += 1
+            else:
+                published += 1
+            db.commit()
+        except Exception as exc:
+            logger.exception("Goal1 social failed for user %s event %s", user.id, event.id)
+            item.status = "failed"
+            item.error_message = str(exc)[:2000]
+            failed += 1
+            db.commit()
+
+    return {"events": len(events), "created": created, "published": published, "failed": failed}
+
+
+def import_keywords_csv(
+    db: Session,
+    user_id: int,
+    *,
+    filename: str,
+    content: bytes,
+) -> tuple[KeywordPlanImport, int]:
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise ValueError("CSV has no header row")
+    fields = {f.strip().lower(): f for f in reader.fieldnames if f}
+    keyword_key = fields.get("keyword") or fields.get("keywords") or fields.get("topic")
+    if not keyword_key:
+        # Allow headerless single-column: re-parse as plain lines
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            raise ValueError("CSV is empty")
+        # If first line looks like a header named keyword, skip it
+        start = 1 if lines[0].lower() in {"keyword", "keywords", "topic"} else 0
+        import_row = KeywordPlanImport(user_id=user_id, filename=filename, row_count=0)
+        db.add(import_row)
+        db.commit()
+        db.refresh(import_row)
+        created = 0
+        for line in lines[start:]:
+            keyword = line.split(",")[0].strip().strip('"')
+            if not keyword:
+                continue
+            db.add(
+                KeywordPlanItem(
+                    user_id=user_id,
+                    import_id=import_row.id,
+                    keyword=keyword[:255],
+                    category=None,
+                    priority=100,
+                    status="pending",
+                )
+            )
+            created += 1
+        import_row.row_count = created
+        db.commit()
+        return import_row, created
+
+    category_key = fields.get("category")
+    priority_key = fields.get("priority")
+    import_row = KeywordPlanImport(user_id=user_id, filename=filename, row_count=0)
+    db.add(import_row)
+    db.commit()
+    db.refresh(import_row)
+    created = 0
+    for row in reader:
+        keyword = str(row.get(keyword_key) or "").strip()
+        if not keyword:
+            continue
+        category = str(row.get(category_key) or "").strip() if category_key else None
+        priority = 100
+        if priority_key:
+            try:
+                priority = int(str(row.get(priority_key) or "100").strip())
+            except ValueError:
+                priority = 100
+        db.add(
+            KeywordPlanItem(
+                user_id=user_id,
+                import_id=import_row.id,
+                keyword=keyword[:255],
+                category=(category[:120] if category else None),
+                priority=priority,
+                status="pending",
+            )
+        )
+        created += 1
+    import_row.row_count = created
+    db.commit()
+    db.refresh(import_row)
+    return import_row, created
+
+
+def list_keyword_items(
+    db: Session,
+    user_id: int,
+    *,
+    status: Optional[str] = None,
+    limit: int = 200,
+) -> list[KeywordPlanItem]:
+    query = db.query(KeywordPlanItem).filter(KeywordPlanItem.user_id == user_id)
+    if status:
+        query = query.filter(KeywordPlanItem.status == status)
+    return (
+        query.order_by(KeywordPlanItem.priority.asc(), KeywordPlanItem.id.asc())
+        .limit(limit)
+        .all()
+    )
+
+
+def pending_keyword_count(db: Session, user_id: int) -> int:
+    return (
+        db.query(KeywordPlanItem)
+        .filter(KeywordPlanItem.user_id == user_id, KeywordPlanItem.status == "pending")
+        .count()
+    )
+
+
+async def run_goal2_for_user(
+    db: Session,
+    user: User,
+    settings: WeeklyContentSettings,
+    run: WeeklyContentRun,
+) -> dict:
+    from app.api.blog import publish_blog, run_blog_workflow
+    from app.models.workflow_state import WorkflowState, WorkflowStatus, WorkflowType
+    from app.schemas.blog import BlogPublishRequest
+
+    week = run.iso_week
+    limit = max(1, int(settings.blogs_per_week or 2))
+    # Only successful publishes consume weekly quota so transient failures can retry.
+    already_used = (
+        db.query(KeywordPlanItem)
+        .filter(
+            KeywordPlanItem.user_id == user.id,
+            KeywordPlanItem.iso_week == week,
+            KeywordPlanItem.status == "used",
+        )
+        .count()
+    )
+    remaining = max(0, limit - already_used)
+    if remaining == 0:
+        return {"selected": 0, "published": already_used, "failed": 0, "skipped": "week_quota_met"}
+
+    if not settings.wordpress_site_id:
+        return {"selected": 0, "published": 0, "failed": 0, "error": "wordpress_site_id not configured"}
+
+    site = (
+        db.query(WordPressSite)
+        .filter(WordPressSite.id == settings.wordpress_site_id, WordPressSite.user_id == user.id)
+        .first()
+    )
+    if not site:
+        return {"selected": 0, "published": 0, "failed": 0, "error": "WordPress site not found"}
+
+    # Prefer true pending rows; also retry earlier failed items that never published to WP.
+    items = (
+        db.query(KeywordPlanItem)
+        .filter(
+            KeywordPlanItem.user_id == user.id,
+            KeywordPlanItem.status == "pending",
+        )
+        .order_by(KeywordPlanItem.priority.asc(), KeywordPlanItem.id.asc())
+        .limit(remaining)
+        .all()
+    )
+    if len(items) < remaining:
+        retry_needed = remaining - len(items)
+        retries = (
+            db.query(KeywordPlanItem)
+            .filter(
+                KeywordPlanItem.user_id == user.id,
+                KeywordPlanItem.status == "failed",
+                KeywordPlanItem.wordpress_post_id.is_(None),
+            )
+            .order_by(KeywordPlanItem.priority.asc(), KeywordPlanItem.id.asc())
+            .limit(retry_needed)
+            .all()
+        )
+        for row in retries:
+            row.status = "pending"
+            row.error_message = None
+            row.iso_week = None
+        if retries:
+            db.commit()
+            items = items + retries
+
+    platforms = _connected_platforms(db, user.id, include_outreach=True)
+    published = 0
+    failed = 0
+
+    for item in items:
+        item.error_message = None
+        db.commit()
+        publish_data: dict[str, Any] | None = None
+        workflow_id: int | None = None
+        try:
+            # If a previous attempt already published to WP, do not republish — only share.
+            if item.wordpress_post_id and item.wordpress_link:
+                publish_data = {
+                    "post_id": item.wordpress_post_id,
+                    "link": item.wordpress_link,
+                    "reused": True,
+                }
+                title = item.keyword
+                body = ""
+                meta = ""
+                image_url = None
+                link = item.wordpress_link
+                workflow_id = item.workflow_id
+            else:
+                workflow = WorkflowState(
+                    user_id=user.id,
+                    workflow_type=WorkflowType.BLOG,
+                    status=WorkflowStatus.PENDING,
+                    state_data={
+                        "topic": item.keyword,
+                        "description": None,
+                        "keywords": [item.keyword],
+                        "category": item.category or "Technology & AI",
+                        "source": "weekly_content_goal2",
+                        "iso_week": week,
+                    },
+                )
+                db.add(workflow)
+                db.commit()
+                db.refresh(workflow)
+                workflow_id = workflow.id
+
+                await run_blog_workflow(
+                    db,
+                    workflow.id,
+                    item.keyword,
+                    None,
+                    [item.keyword],
+                    item.category or "Technology & AI",
+                    user.id,
+                    include_research=True,
+                )
+                db.refresh(workflow)
+                if workflow.status != WorkflowStatus.COMPLETED:
+                    raise ValueError(workflow.error_message or "Blog generation failed")
+
+                publish_response = await publish_blog(
+                    BlogPublishRequest(
+                        workflow_id=workflow.id,
+                        wordpress_site_id=site.id,
+                        status="publish",
+                        source_category=item.category,
+                    ),
+                    current_user=user,
+                    db=db,
+                )
+                publish_data = publish_response.model_dump(mode="json")
+                # Persist WP result immediately so a later social failure does not orphan the post.
+                item.workflow_id = workflow.id
+                item.wordpress_post_id = publish_data.get("post_id")
+                item.wordpress_link = publish_data.get("link")
+                db.commit()
+
+                state = workflow.state_data or {}
+                title = state.get("title") or item.keyword
+                body = state.get("body_content") or ""
+                meta = state.get("meta_description") or ""
+                featured = state.get("featured_image")
+                image_url = featured.get("url") if isinstance(featured, dict) else featured
+                link = publish_data.get("link")
+
+            social_history_id = item.social_post_history_id
+            social_results: list[dict] = []
+            social_error: str | None = None
+            if platforms and not social_history_id:
+                try:
+                    history, social_results = await _generate_and_publish_social(
+                        db,
+                        user,
+                        query=item.keyword,
+                        source_title=title,
+                        source_snippet=meta or (body[:800] if isinstance(body, str) else ""),
+                        source_url=link,
+                        platforms=platforms,
+                        settings_snapshot={
+                            "source": "weekly_content_goal2",
+                            "keyword_plan_item_id": item.id,
+                            "iso_week": week,
+                            "platforms": platforms,
+                        },
+                        image_url=image_url if isinstance(image_url, str) else None,
+                        body_html=body if isinstance(body, str) else None,
+                    )
+                    social_history_id = history.id
+                except Exception as social_exc:
+                    logger.exception(
+                        "Goal2 social share failed for user %s keyword %s", user.id, item.id
+                    )
+                    social_error = str(social_exc)[:2000]
+
+            # WP success consumes quota even if social sharing failed.
+            item.status = "used"
+            item.iso_week = week
+            item.used_at = datetime.now(timezone.utc)
+            item.workflow_id = workflow_id
+            if publish_data:
+                item.wordpress_post_id = publish_data.get("post_id") or item.wordpress_post_id
+                item.wordpress_link = publish_data.get("link") or item.wordpress_link
+            item.social_post_history_id = social_history_id
+            item.result_json = {
+                "publish": publish_data,
+                "social": social_results,
+                "social_error": social_error,
+            }
+            item.error_message = social_error
+            published += 1
+            db.commit()
+        except Exception as exc:
+            logger.exception("Goal2 blog failed for user %s keyword %s", user.id, item.id)
+            item.status = "failed"
+            # Keep iso_week unset unless WP already published (handled above as used).
+            item.error_message = str(exc)[:2000]
+            failed += 1
+            db.commit()
+
+    return {"selected": len(items), "published": published, "failed": failed}
+
+
+def _is_stale_running(run: WeeklyContentRun, *, max_age_hours: int = 2) -> bool:
+    if run.status != "running" or not run.started_at:
+        return False
+    started = run.started_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - started
+    return age.total_seconds() >= max_age_hours * 3600
+
+
+async def run_weekly_for_user(
+    db: Session,
+    user: User,
+    *,
+    trigger: str = "scheduled",
+    force: bool = False,
+) -> WeeklyContentRun:
+    settings = get_or_create_settings(db, user.id)
+    week = iso_week_key()
+    existing = (
+        db.query(WeeklyContentRun)
+        .filter(WeeklyContentRun.user_id == user.id, WeeklyContentRun.iso_week == week)
+        .first()
+    )
+    if existing and existing.status == "completed" and not force:
+        return existing
+    if existing and existing.status == "running" and not force:
+        if _is_stale_running(existing):
+            existing.status = "failed"
+            existing.error_summary = "Stale running state recovered after timeout"
+            existing.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        else:
+            return existing
+
+    run = existing or WeeklyContentRun(
+        user_id=user.id,
+        iso_week=week,
+        status="queued",
+        trigger=trigger,
+    )
+    if not existing:
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+    run.status = "running"
+    run.trigger = trigger
+    run.started_at = datetime.now(timezone.utc)
+    run.error_summary = None
+    db.commit()
+
+    summary: dict[str, Any] = {"goal1": None, "goal2": None, "events_sync": None}
+    try:
+        countries = list(settings.countries or DEFAULT_COUNTRIES)
+        summary["events_sync"] = await sync_calendar_events(db, countries=countries)
+        if settings.goal1_enabled:
+            summary["goal1"] = await run_goal1_for_user(db, user, settings, run)
+        if settings.goal2_enabled:
+            summary["goal2"] = await run_goal2_for_user(db, user, settings, run)
+        run.status = "completed"
+        run.result_summary = summary
+        run.finished_at = datetime.now(timezone.utc)
+        settings.last_run_at = run.finished_at
+        settings.last_run_iso_week = week
+        db.commit()
+        db.refresh(run)
+        return run
+    except Exception as exc:
+        logger.exception("Weekly content run failed for user %s", user.id)
+        run.status = "failed"
+        run.error_summary = str(exc)[:2000]
+        run.result_summary = summary
+        run.finished_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(run)
+        return run
+
+
+async def run_due_weekly_content(*, force: bool = False) -> int:
+    """Cron entry: sync events globally then run enabled users for the current ISO week."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    count = 0
+    try:
+        await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
+        rows = (
+            db.query(WeeklyContentSettings)
+            .filter(
+                (WeeklyContentSettings.goal1_enabled.is_(True))
+                | (WeeklyContentSettings.goal2_enabled.is_(True))
+            )
+            .all()
+        )
+        for settings in rows:
+            user = db.query(User).filter(User.id == settings.user_id).first()
+            if not user:
+                continue
+            week = iso_week_key()
+            if settings.last_run_iso_week == week and not force:
+                existing = (
+                    db.query(WeeklyContentRun)
+                    .filter(
+                        WeeklyContentRun.user_id == user.id,
+                        WeeklyContentRun.iso_week == week,
+                        WeeklyContentRun.status == "completed",
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+            await run_weekly_for_user(db, user, trigger="scheduled", force=force)
+            count += 1
+        return count
+    finally:
+        db.close()
+
+
+def get_social_week(db: Session, user_id: int, *, week: Optional[str] = None) -> dict:
+    settings = get_or_create_settings(db, user_id)
+    iso = week or iso_week_key()
+    date_from, date_to = upcoming_week_window()
+    events = list_events(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        countries=list(settings.countries or DEFAULT_COUNTRIES),
+    )
+    items = (
+        db.query(WeeklySocialItem)
+        .filter(WeeklySocialItem.user_id == user_id, WeeklySocialItem.iso_week == iso)
+        .order_by(WeeklySocialItem.id.asc())
+        .all()
+    )
+    history_ids = [i.social_post_history_id for i in items if i.social_post_history_id]
+    histories = {}
+    if history_ids:
+        for row in db.query(SocialPostHistory).filter(SocialPostHistory.id.in_(history_ids)).all():
+            histories[row.id] = row
+
+    event_map = {e.id: e for e in db.query(CalendarEvent).filter(
+        CalendarEvent.id.in_([i.calendar_event_id for i in items] or [-1])
+    ).all()}
+
+    payload_items = []
+    for item in items:
+        event = event_map.get(item.calendar_event_id)
+        history = histories.get(item.social_post_history_id) if item.social_post_history_id else None
+        payload_items.append({
+            "id": item.id,
+            "iso_week": item.iso_week,
+            "status": item.status,
+            "event_id": item.calendar_event_id,
+            "event_date": event.event_date if event else date.today(),
+            "event_title": event.title if event else "Unknown event",
+            "event_scope": event.country_or_scope if event else "INT",
+            "social_post_history_id": item.social_post_history_id,
+            "headline": history.headline if history else None,
+            "publish_results": item.publish_results,
+            "error_message": item.error_message,
+            "created_at": item.created_at,
+        })
+
+    return {
+        "iso_week": iso,
+        "items": payload_items,
+        "upcoming_events": [
+            {
+                "id": e.id,
+                "event_date": e.event_date,
+                "title": e.title,
+                "country_or_scope": e.country_or_scope,
+                "source": e.source,
+                "description": e.description,
+            }
+            for e in events
+        ],
+    }
+
+
+def get_blog_week(db: Session, user_id: int, *, week: Optional[str] = None) -> dict:
+    iso = week or iso_week_key()
+    items = (
+        db.query(KeywordPlanItem)
+        .filter(KeywordPlanItem.user_id == user_id, KeywordPlanItem.iso_week == iso)
+        .order_by(KeywordPlanItem.id.asc())
+        .all()
+    )
+    return {
+        "iso_week": iso,
+        "items": items,
+        "pending_count": pending_keyword_count(db, user_id),
+    }

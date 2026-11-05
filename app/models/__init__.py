@@ -64,6 +64,14 @@ from app.models.content_analytics import (
     SocialPostMetricSnapshot,
     SocialPublicationAttempt,
 )
+from app.models.weekly_content import (
+    CalendarEvent,
+    KeywordPlanImport,
+    KeywordPlanItem,
+    WeeklyContentRun,
+    WeeklyContentSettings,
+    WeeklySocialItem,
+)
 
 __all__ = [
     "User",
@@ -128,5 +136,11 @@ __all__ = [
     "SocialAccountMetricSnapshot",
     "SocialPostMetricSnapshot",
     "SocialPublicationAttempt",
+    "CalendarEvent",
+    "KeywordPlanImport",
+    "KeywordPlanItem",
+    "WeeklyContentRun",
+    "WeeklyContentSettings",
+    "WeeklySocialItem",
 ]
 

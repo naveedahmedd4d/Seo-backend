@@ -5,7 +5,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import settings
 from app.database import engine, Base
-from app.api import auth, wordpress, trending, reddit_trends, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm, settings_blog, website_audit, bot_automation, content_analytics, google_analytics
+from app.api import auth, wordpress, trending, reddit_trends, research, images, blog, social_post, social_platforms, social_accounts, ai_humanizer, search_console, authority, settings_llm, settings_blog, website_audit, bot_automation, content_analytics, google_analytics, weekly_content
 from app.middleware import (
     http_exception_handler,
     validation_exception_handler,
@@ -61,6 +61,7 @@ app.include_router(website_audit.router, prefix="/api/website-audit", tags=["web
 app.include_router(bot_automation.router, prefix="/api/bot-automation", tags=["bot-automation"])
 app.include_router(content_analytics.router, prefix="/api/content-analytics", tags=["content-analytics"])
 app.include_router(google_analytics.router, prefix="/api/google-analytics", tags=["google-analytics"])
+app.include_router(weekly_content.router, prefix="/api/weekly-content", tags=["weekly-content"])
 
 
 @app.on_event("startup")
