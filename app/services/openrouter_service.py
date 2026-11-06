@@ -37,6 +37,26 @@ def get_llm_context() -> Optional["LlmCredentials"]:
     return LLM_CONTEXT.get()
 
 
+def has_usable_llm_key() -> bool:
+    """Whether any LLM credential is reachable for this request.
+
+    Per-user keys live in the DB and arrive through LLM_CONTEXT; the env vars
+    are only the unauthenticated fallback. Guarding on settings.groq_api_key
+    alone rejected users who had saved a key in Settings, because the call
+    being guarded reads the context first.
+    """
+    ctx = get_llm_context()
+    if ctx is not None and (getattr(ctx, "api_key", "") or "").strip():
+        return True
+    if ctx is not None and getattr(ctx, "try_claude_routine", False):
+        return True
+    return bool(
+        getattr(settings, "groq_api_key", None)
+        or getattr(settings, "gemini_api_key", None)
+        or getattr(settings, "openrouter_api_key", None)
+    )
+
+
 def _llm_gen_kwargs(
     blog_config: Optional["BlogGenerationConfig"],
     default_tokens: int,
@@ -371,9 +391,9 @@ Output only the 2-line headline. No quotes, no explanation. Use a real newline b
         max_chars = 220
         max_lines = 2
 
-    if not settings.groq_api_key:
+    if not has_usable_llm_key():
         raise ValueError(
-            "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
+            "No LLM API key configured. Add one in Settings."
         )
     result = await generate_content(
         prompt,
@@ -452,9 +472,9 @@ async def generate_social_post_description(
     """
     if not news_results:
         raise ValueError("At least one news result is required")
-    if not settings.groq_api_key:
+    if not has_usable_llm_key():
         raise ValueError(
-            "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
+            "No LLM API key configured. Add one in Settings."
         )
 
     lines = []
@@ -512,9 +532,9 @@ async def generate_social_post_story_description(
     """
     if not news_results:
         raise ValueError("At least one news result is required")
-    if not settings.groq_api_key:
+    if not has_usable_llm_key():
         raise ValueError(
-            "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
+            "No LLM API key configured. Add one in Settings."
         )
 
     lines = []
@@ -574,9 +594,9 @@ async def generate_social_post_hashtags(
     """
     if not news_results:
         raise ValueError("At least one news result is required")
-    if not settings.groq_api_key:
+    if not has_usable_llm_key():
         raise ValueError(
-            "No LLM API key configured. Set GROQ_API_KEY in the backend .env file."
+            "No LLM API key configured. Add one in Settings."
         )
 
     # Clamp requested count to a sane range
