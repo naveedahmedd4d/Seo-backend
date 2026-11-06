@@ -84,3 +84,16 @@ def test_splits_em_dash_into_two_lines():
     out = clean_headline_output(raw, max_lines=2)
     assert "\n" in out
     assert out.split("\n")[0].rstrip().endswith("—")
+
+
+def test_strips_word_by_word_count_tally():
+    """Model narrates per-word char counts after the headline."""
+    raw = (
+        'Residents Praise the Tribute, While Advocates Call for More Funding" '
+        "Count: Residents(9) space=10 praise(6)=16 space=17 the(3)=20 "
+        "space=21 tribute,(8)=29 space=30 While(5)=35 space=36"
+    )
+    out = clean_headline_output(raw, max_lines=2)
+    assert out == "Residents Praise the Tribute, While Advocates Call for More Funding"
+    assert "Count:" not in out
+    assert "space=" not in out

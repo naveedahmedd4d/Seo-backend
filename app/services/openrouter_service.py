@@ -425,16 +425,20 @@ _NARRATION_RE = re.compile(
     re.IGNORECASE,
 )
 # Character-count / self-check chatter leaked into the headline string.
+# Covers: "length: …", "Count: Residents(9) space=10 …", "asterisks count…"
 _META_TAIL_RE = re.compile(
     r"""(?ix)
     \s*[\"']?\s*
     (?:
         length\s*:
+        | \bcount(?:ing)?\s*:
         | (?:asterisks?|stars?)\s+count
         | count(?:ing)?\s+characters?
         | characters?\s*(?:count|=|:)
         | char(?:acter)?\s*count
         | \d+\s+asterisks?
+        # word-by-word tally: Residents(9) space=10 praise(6)=16
+        | [A-Za-z][A-Za-z'’\-]*\(\d+\)(?:\s*(?:space|spaces?)\s*=\s*\d+|\s*=\s*\d+)
     )
     .*
     $
@@ -443,12 +447,11 @@ _META_TAIL_RE = re.compile(
 
 
 def _strip_headline_meta_tail(text: str) -> str:
-    """Cut off trailing 'length: … / Count characters: …' model self-checks."""
+    """Cut off trailing 'Count: … / length: …' model self-checks."""
     m = _META_TAIL_RE.search(text)
     if m:
         text = text[: m.start()]
     return text.rstrip(" \t\"'")
-
 
 def _dedupe_repeated_phrases(text: str) -> str:
     """Drop repeated headline clauses (common with reasoning models)."""
@@ -518,7 +521,11 @@ def clean_headline_output(raw: str, *, max_lines: int = 2) -> str:
             if _LEAD_IN_RE.match(line) or _NARRATION_RE.search(line):
                 continue
             # Meta-only lines (character counting) with no real headline words
-            if re.search(r"(?i)count(?:ing)?\s+characters?|asterisks?\s+count|length\s*:", line):
+            if re.search(
+                r"(?i)\bcount(?:ing)?\s*:|count(?:ing)?\s+characters?|"
+                r"asterisks?\s+count|length\s*:|[A-Za-z]+\(\d+\)\s*(?:space\s*=|=)\s*\d+",
+                line,
+            ):
                 continue
         line = line.strip().strip('"').strip("'").strip()
         line = re.sub(r"^\*\*(.*)\*\*$", r"\1", line).strip()
