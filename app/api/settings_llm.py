@@ -18,6 +18,11 @@ from app.schemas.settings_llm import (
 )
 from app.services.http_ssl import httpx_verify
 from app.services.llm_settings_service import (
+    DEFAULT_CLOUDFLARE_MODEL,
+    DEFAULT_COHERE_MODEL,
+    DEFAULT_GEMINI_BLOG_MODEL,
+    DEFAULT_MISTRAL_MODEL,
+    DEFAULT_OPENROUTER_FREE_MODEL,
     get_model_allowlist,
     get_or_create_settings,
     get_saved_provider_key,
@@ -116,10 +121,10 @@ async def test_llm_key(
 
     if body.provider == "openrouter":
         url = "https://openrouter.ai/api/v1/chat/completions"
-        model = "openrouter/free"
+        model = DEFAULT_OPENROUTER_FREE_MODEL
     elif body.provider == "gemini":
         url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-        model = "gemini-2.5-flash"
+        model = DEFAULT_GEMINI_BLOG_MODEL
     elif body.provider == "cloudflare":
         if not account_id:
             raise HTTPException(
@@ -127,19 +132,36 @@ async def test_llm_key(
                 detail="Cloudflare account id is required to test Workers AI.",
             )
         url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions"
-        model = "@cf/meta/llama-3.1-8b-instruct"
+        model = DEFAULT_CLOUDFLARE_MODEL
     elif body.provider == "mistral":
         url = "https://api.mistral.ai/v1/chat/completions"
-        model = "mistral-small-latest"
+        model = DEFAULT_MISTRAL_MODEL
     elif body.provider == "cohere":
         url = "https://api.cohere.ai/compatibility/v1/chat/completions"
-        model = "command-light"
+        model = DEFAULT_COHERE_MODEL
     elif body.provider == "nvidia":
         url = "https://integrate.api.nvidia.com/v1/chat/completions"
-        model = "meta/llama-3.1-8b-instruct"
+        model = "meta/llama-3.3-70b-instruct"
     else:
         url = "https://api.groq.com/openai/v1/chat/completions"
         model = "openai/gpt-oss-20b"
+
+    # An explicit model makes this a per-model probe rather than a key check.
+    # Validate it belongs to this provider so the vendor error the user sees
+    # always refers to the model they actually selected.
+    requested_model = (body.model or "").strip()
+    if requested_model and requested_model != "default":
+        allowed = {
+            m.id for m in get_model_allowlist() if m.provider == body.provider
+        }
+        if requested_model not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Model not allowed for {body.provider}: {requested_model}"
+                ),
+            )
+        model = requested_model
 
     payload = {
         "model": model,
@@ -155,11 +177,14 @@ async def test_llm_key(
         async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
             response = await client.post(url, headers=headers, json=payload)
         if response.status_code == 200:
-            return LlmTestResponse(ok=True, message="API key is valid.")
+            return LlmTestResponse(ok=True, message=f"API key is valid. Model {model} responded.")
         try:
             err = response.json().get("error", {}).get("message", response.text)
         except Exception:
             err = response.text
-        return LlmTestResponse(ok=False, message=f"Validation failed ({response.status_code}): {err}")
+        return LlmTestResponse(
+            ok=False,
+            message=f"{model} failed ({response.status_code}): {err}",
+        )
     except Exception as e:
-        return LlmTestResponse(ok=False, message=f"Request failed: {e}")
+        return LlmTestResponse(ok=False, message=f"{model} request failed: {e}")

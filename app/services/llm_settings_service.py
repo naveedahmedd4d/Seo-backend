@@ -53,12 +53,12 @@ DEFAULT_FALLBACK_ORDER: List[Provider] = [
 ]
 
 DEFAULT_GROQ_BLOG_MODEL = "openai/gpt-oss-120b"
-DEFAULT_GEMINI_BLOG_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_BLOG_MODEL = "gemini-3.8-flash"
 DEFAULT_OPENROUTER_FREE_MODEL = "openrouter/free"
-DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.1-8b-instruct"
+DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
 DEFAULT_COHERE_MODEL = "command-r-plus-08-2024"
-DEFAULT_NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"
+DEFAULT_NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
 
 GROQ_MODEL_MIGRATIONS = {
     "llama-3.1-8b-instant": "openai/gpt-oss-20b",
@@ -139,7 +139,8 @@ def get_model_allowlist() -> List[LlmModelOption]:
         LlmModelOption(id="default", label="Default (follow fallback lineup)", provider="default", free=True),
         # Gemini
         LlmModelOption(id=gemini_default, label=f"Gemini · {gemini_default} (free)", provider="gemini", free=True),
-        LlmModelOption(id="gemini-2.5-flash", label="Gemini · 2.5 Flash (free)", provider="gemini", free=True),
+        LlmModelOption(id="gemini-3.8-flash", label="Gemini · 3.8 Flash (free)", provider="gemini", free=True),
+        LlmModelOption(id="gemini-3.5-flash-lite", label="Gemini · 3.5 Flash-Lite (free)", provider="gemini", free=True),
         LlmModelOption(id="gemini-2.5-flash-lite", label="Gemini · 2.5 Flash-Lite (free)", provider="gemini", free=True),
         LlmModelOption(id="gemini-2.0-flash", label="Gemini · 2.0 Flash (free)", provider="gemini", free=True),
         LlmModelOption(id="gemini-2.0-flash-lite", label="Gemini · 2.0 Flash-Lite (free)", provider="gemini", free=True),
@@ -170,7 +171,6 @@ def get_model_allowlist() -> List[LlmModelOption]:
         LlmModelOption(id="qwen/qwen3-32b", label="Groq · Qwen3 32B (free tier)", provider="groq", free=True),
         # Cloudflare Workers AI
         LlmModelOption(id=cf_default, label=f"Cloudflare · {cf_default} (free)", provider="cloudflare", free=True),
-        LlmModelOption(id="@cf/meta/llama-3.1-8b-instruct", label="Cloudflare · Llama 3.1 8B (free)", provider="cloudflare", free=True),
         LlmModelOption(id="@cf/meta/llama-3.3-70b-instruct-fp8-fast", label="Cloudflare · Llama 3.3 70B (free)", provider="cloudflare", free=True),
         LlmModelOption(id="@cf/qwen/qwen3-30b-a3b-fp8", label="Cloudflare · Qwen3 30B (free)", provider="cloudflare", free=True),
         LlmModelOption(id="@cf/google/gemma-3-12b-it", label="Cloudflare · Gemma 3 12B (free)", provider="cloudflare", free=True),
@@ -183,12 +183,9 @@ def get_model_allowlist() -> List[LlmModelOption]:
         # Cohere
         LlmModelOption(id=cohere_default, label=f"Cohere · {cohere_default} (trial)", provider="cohere", free=True),
         LlmModelOption(id="command-r-08-2024", label="Cohere · Command R (trial)", provider="cohere", free=True),
-        LlmModelOption(id="command-light", label="Cohere · Command Light (trial)", provider="cohere", free=True),
         # NVIDIA
         LlmModelOption(id=nvidia_default, label=f"NVIDIA · {nvidia_default} (dev free)", provider="nvidia", free=True),
-        LlmModelOption(id="meta/llama-3.1-8b-instruct", label="NVIDIA · Llama 3.1 8B (dev free)", provider="nvidia", free=True),
         LlmModelOption(id="meta/llama-3.3-70b-instruct", label="NVIDIA · Llama 3.3 70B (dev free)", provider="nvidia", free=True),
-        LlmModelOption(id="google/gemma-2-9b-it", label="NVIDIA · Gemma 2 9B (dev free)", provider="nvidia", free=True),
     ]
     seen = set()
     unique: List[LlmModelOption] = []

@@ -31,11 +31,11 @@ class Settings(BaseSettings):
     blog_openrouter_model: str = "openrouter/free"
     # Google AI Studio / Gemini Developer API (free-tier Flash models).
     gemini_api_key: Optional[str] = None
-    blog_gemini_model: str = "gemini-2.5-flash"
+    blog_gemini_model: str = "gemini-3.8-flash"
     # Cloudflare Workers AI (account id + API token).
     cloudflare_api_token: Optional[str] = None
     cloudflare_account_id: Optional[str] = None
-    blog_cloudflare_model: str = "@cf/meta/llama-3.1-8b-instruct"
+    blog_cloudflare_model: str = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
     # Mistral Free mode
     mistral_api_key: Optional[str] = None
     blog_mistral_model: str = "mistral-small-latest"
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     blog_cohere_model: str = "command-r-plus-08-2024"
     # NVIDIA NIM / Build
     nvidia_api_key: Optional[str] = None
-    blog_nvidia_model: str = "meta/llama-3.1-8b-instruct"
+    blog_nvidia_model: str = "meta/llama-3.3-70b-instruct"
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None

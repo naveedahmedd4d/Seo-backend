@@ -183,6 +183,13 @@ class LlmTestRequest(BaseModel):
         default=None,
         description="Cloudflare account id (required when testing Cloudflare)",
     )
+    model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Exact model id to probe. Must be an allowlisted model belonging to "
+            "`provider`. Omit to probe this provider's default model."
+        ),
+    )
 
 
 class LlmTestResponse(BaseModel):

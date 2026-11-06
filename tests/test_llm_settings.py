@@ -212,7 +212,9 @@ def test_models_allowlist(client, auth_headers):
     assert res.status_code == 200
     ids = [m["id"] for m in res.json()["models"]]
     assert "default" in ids
-    assert "gemini-2.5-flash" in ids
+    # gemini-2.5-flash was retired by Google (404, "no longer available to new
+    # users"); the live replacement it names is asserted below.
+    assert "gemini-3.8-flash" in ids
     assert "openrouter/free" in ids
     assert "google/gemma-4-31b-it:free" in ids
     assert "openai/gpt-oss-120b" in ids
@@ -290,3 +292,128 @@ async def test_context_uses_injected_credentials(monkeypatch):
         assert called["model"] == "openai/gpt-4o-mini"
     finally:
         reset_llm_context(token)
+
+
+# --- Test endpoint honours the caller's model ---------------------------------
+
+DEAD_MODEL_IDS = [
+    "gemini-2.5-flash",
+    "@cf/meta/infire-llama-3.1-8b-instruct",
+    "command-light",
+    "meta/llama-3.1-8b-instruct",
+    "google/gemma-2-9b-it",
+]
+
+
+def test_allowlist_drops_vendor_confirmed_dead_models(client, auth_headers):
+    res = client.get("/api/settings/llm/models", headers=auth_headers)
+    assert res.status_code == 200
+    ids = {m["id"] for m in res.json()["models"]}
+    for dead in DEAD_MODEL_IDS:
+        assert dead not in ids, f"{dead} is EOL at the vendor and must not be offered"
+
+
+def test_allowlist_has_google_named_replacements(client, auth_headers):
+    res = client.get("/api/settings/llm/models", headers=auth_headers)
+    ids = {m["id"] for m in res.json()["models"]}
+    assert "gemini-3.8-flash" in ids
+    assert "gemini-3.5-flash-lite" in ids
+
+
+def _capture_probe(monkeypatch):
+    """Record the payload the test endpoint sends to the vendor."""
+    sent = {}
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "OK"}}]}
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            sent["url"] = url
+            sent["model"] = (json or {}).get("model")
+            return _Resp()
+
+    monkeypatch.setattr("app.api.settings_llm.httpx.AsyncClient", _Client)
+    return sent
+
+
+def test_test_endpoint_probes_the_requested_model(client, auth_headers, monkeypatch):
+    sent = _capture_probe(monkeypatch)
+    res = client.post(
+        "/api/settings/llm/test",
+        headers=auth_headers,
+        json={"provider": "gemini", "api_key": "k-test", "model": "gemini-1.5-flash"},
+    )
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert sent["model"] == "gemini-1.5-flash"
+
+
+def test_test_endpoint_without_model_uses_provider_default(client, auth_headers, monkeypatch):
+    sent = _capture_probe(monkeypatch)
+    res = client.post(
+        "/api/settings/llm/test",
+        headers=auth_headers,
+        json={"provider": "groq", "api_key": "k-test"},
+    )
+    assert res.status_code == 200
+    assert sent["model"] == "openai/gpt-oss-20b"
+
+
+def test_test_endpoint_rejects_model_from_another_provider(client, auth_headers, monkeypatch):
+    _capture_probe(monkeypatch)
+    res = client.post(
+        "/api/settings/llm/test",
+        headers=auth_headers,
+        json={"provider": "gemini", "api_key": "k-test", "model": "openai/gpt-oss-20b"},
+    )
+    assert res.status_code == 400
+
+
+def test_test_endpoint_reports_the_model_it_probed(client, auth_headers, monkeypatch):
+    sent = {}
+
+    class _Resp:
+        status_code = 404
+
+        def json(self):
+            return {"error": {"message": "models/gemini-1.5-flash is not found"}}
+
+        text = "not found"
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            sent["model"] = (json or {}).get("model")
+            return _Resp()
+
+    monkeypatch.setattr("app.api.settings_llm.httpx.AsyncClient", _Client)
+    res = client.post(
+        "/api/settings/llm/test",
+        headers=auth_headers,
+        json={"provider": "gemini", "api_key": "k-test", "model": "gemini-1.5-flash"},
+    )
+    body = res.json()
+    assert body["ok"] is False
+    # the message must name the model actually probed, not a provider default
+    assert "gemini-1.5-flash" in body["message"]
