@@ -400,18 +400,75 @@ Output only the 2-line headline. No quotes, no explanation. Use a real newline b
         max_tokens=max_tokens,
         temperature=0.75
     )
-    headline = (result or "").strip().strip('"').strip("'")
+    headline = clean_headline_output(result or "", max_lines=max_lines)
     if not headline:
         raise ValueError(
             "The model returned an empty headline. Try again or adjust your query."
         )
-    parts = [p.strip() for p in headline.split("\n") if p.strip()][:max_lines]
-    headline = "\n".join(parts).strip()
     if len(headline) > max_chars:
         headline = headline[: max_chars - 3] + "..."
     if is_pro_variant:
         headline = _ensure_pro1_highlight_markup(headline)
     return headline
+
+
+# Reasoning-capable models narrate before answering. Anything matching these
+# is the model talking about the task, not the headline itself.
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_LINE_LABEL_RE = re.compile(r"^\s*(?:\*\*)?line\s*\d+\s*(?:\*\*)?\s*[:.\-]\s*", re.IGNORECASE)
+_LEAD_IN_RE = re.compile(
+    r"^\s*(?:\*\*)?(?:sure|okay|ok|here(?:'s| is| you go)?|output|result|"
+    r"headline|answer|response)\b[^\n]*?:\s*(?:\*\*)?\s*$",
+    re.IGNORECASE,
+)
+# Narration: first person, or meta-talk about the task.
+_NARRATION_RE = re.compile(
+    r"\b(?:we need|i need|i should|i'll|i will|let me|let's|let us|"
+    r"the user wants|they want|provide \d|must be|should be)\b",
+    re.IGNORECASE,
+)
+
+
+def clean_headline_output(raw: str, *, max_lines: int = 2) -> str:
+    """Pull the headline out of a response that may contain reasoning.
+
+    Models that narrate ("We need a 2-line headline... Let's craft. Line1:
+    ...") had that narration rendered onto the card. Prefer explicitly
+    labelled Line1/Line2 content when present, since that is the model
+    marking its own answer; otherwise drop narration and lead-ins and keep
+    what remains.
+
+    Returns "" when nothing survives, so the caller can raise rather than
+    render chatter.
+    """
+    if not raw:
+        return ""
+
+    text = _THINK_BLOCK_RE.sub(" ", raw)
+
+    # A labelled line is the model pointing at its own answer -- trust it, and
+    # ignore everything outside those labels.
+    labelled = [
+        _LINE_LABEL_RE.sub("", ln).strip()
+        for ln in text.split("\n")
+        if _LINE_LABEL_RE.match(ln)
+    ]
+    candidates = labelled if labelled else text.split("\n")
+
+    kept: list[str] = []
+    for line in candidates:
+        line = line.strip()
+        if not line:
+            continue
+        if not labelled:
+            if _LEAD_IN_RE.match(line) or _NARRATION_RE.search(line):
+                continue
+        line = line.strip().strip('"').strip("'").strip()
+        line = re.sub(r"^\*\*(.*)\*\*$", r"\1", line).strip()
+        if line:
+            kept.append(line)
+
+    return "\n".join(kept[:max_lines]).strip()
 
 
 def _highlight_first_n_words(line: str, n: int) -> str:

@@ -128,5 +128,16 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    """Liveness plus the commit actually running.
+
+    Render sets RENDER_GIT_COMMIT on every build. Without it there is no way
+    to tell a deploy that has not rolled from a fix that did not work, which
+    is otherwise only answerable by guessing.
+    """
+    import os
+
+    return {
+        "status": "healthy",
+        "commit": (os.environ.get("RENDER_GIT_COMMIT") or "unknown")[:7],
+    }
 
