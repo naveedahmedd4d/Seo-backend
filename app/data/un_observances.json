@@ -1,0 +1,2171 @@
+[
+  {
+    "month": 1,
+    "day": 4,
+    "title": "World Braille Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/braille-day",
+    "external_id": "world-braille-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 1,
+    "day": 24,
+    "title": "International Day of Education",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/education-day",
+    "external_id": "international-day-of-education",
+    "description": "UN international day"
+  },
+  {
+    "month": 1,
+    "day": 26,
+    "title": "International Day of Clean Energy",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/clean-energy-day",
+    "external_id": "international-day-of-clean-energy",
+    "description": "UN international day"
+  },
+  {
+    "month": 1,
+    "day": 27,
+    "title": "International Day of Commemoration in Memory of the Victims of the Holocaust",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/commemoration-holocaust-victims-day",
+    "external_id": "international-day-of-commemoration-in-memory-of-the-victims-of-the-holocaust",
+    "description": "UN international day"
+  },
+  {
+    "month": 1,
+    "day": 28,
+    "title": "International Day of Peaceful Coexistence",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/peaceful-coexistence-day",
+    "external_id": "international-day-of-peaceful-coexistence",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 1,
+    "title": "World Interfaith Harmony Week, 1-7 February",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/interfaith-harmony-week",
+    "external_id": "world-interfaith-harmony-week-1-7-february",
+    "description": "UN international week"
+  },
+  {
+    "month": 2,
+    "day": 2,
+    "title": "World Wetlands Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-wetlands-day",
+    "external_id": "world-wetlands-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 4,
+    "title": "International Day of Human Fraternity",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/human-fraternity",
+    "external_id": "international-day-of-human-fraternity",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 6,
+    "title": "International Day of Zero Tolerance to Female Genital Mutilation",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/female-genital-mutilation-day",
+    "external_id": "international-day-of-zero-tolerance-to-female-genital-mutilation",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 10,
+    "title": "World Pulses Day [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/world-pulses-day/en",
+    "external_id": "world-pulses-day-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 10,
+    "title": "International Day of the Arabian Leopard",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/arabian-leopard-day",
+    "external_id": "international-day-of-the-arabian-leopard",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 11,
+    "title": "International Day of Women and Girls in Science",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/women-and-girls-in-science-day/",
+    "external_id": "international-day-of-women-and-girls-in-science",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 12,
+    "title": "International Day for the Prevention of Violent Extremism as and when Conducive to Terrorism",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/prevention-extremism-when-conducive-terrorism-day",
+    "external_id": "international-day-for-the-prevention-of-violent-extremism-as-and-when-conducive-to-terrorism",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 13,
+    "title": "World Radio Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/radio-day",
+    "external_id": "world-radio-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 17,
+    "title": "Global Tourism Resilience Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/tourism-resilience-day",
+    "external_id": "global-tourism-resilience-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 20,
+    "title": "World Day of Social Justice",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/social-justice-day",
+    "external_id": "world-day-of-social-justice",
+    "description": "UN international day"
+  },
+  {
+    "month": 2,
+    "day": 21,
+    "title": "International Mother Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/mother-language-day",
+    "external_id": "international-mother-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 1,
+    "title": "Zero Discrimination Day [UNAIDS]",
+    "kind": "day",
+    "url": "https://www.unaids.org/en/zero-discrimination-day",
+    "external_id": "zero-discrimination-day-unaids",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 1,
+    "title": "World Seagrass Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/seagrass-day",
+    "external_id": "world-seagrass-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 3,
+    "title": "World Wildlife Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-wildlife-day",
+    "external_id": "world-wildlife-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 5,
+    "title": "International Day for Disarmament and Non-Proliferation Awareness",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/disarmament-non-proliferation-awareness-day",
+    "external_id": "international-day-for-disarmament-and-non-proliferation-awareness",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 8,
+    "title": "International Women's Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/womens-day",
+    "external_id": "international-women-s-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 10,
+    "title": "International Day of Women Judges",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/women-judges-day",
+    "external_id": "international-day-of-women-judges",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 15,
+    "title": "International Day to Combat Islamophobia",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/anti-islamophobia-day",
+    "external_id": "international-day-to-combat-islamophobia",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 20,
+    "title": "International Day of Happiness",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/happiness-day",
+    "external_id": "international-day-of-happiness",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 20,
+    "title": "French Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/fr/observances/french-language-day/",
+    "external_id": "french-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "World Day for Glaciers",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-glaciers-day",
+    "external_id": "world-day-for-glaciers",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "International Day of Forests [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/international-day-of-forests/en",
+    "external_id": "international-day-of-forests-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "International Day for the Elimination of Racial Discrimination",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-racism-day",
+    "external_id": "international-day-for-the-elimination-of-racial-discrimination",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "World Poetry Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/poetry",
+    "external_id": "world-poetry-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "International Day of Nowruz",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-nowruz-day",
+    "external_id": "international-day-of-nowruz",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 21,
+    "title": "World Down Syndrome Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/down-syndrome-day",
+    "external_id": "world-down-syndrome-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 22,
+    "title": "World Water Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/water-day",
+    "external_id": "world-water-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 23,
+    "title": "World Meteorological Day [WMO]",
+    "kind": "day",
+    "url": "https://wmo.int/about-wmo/world-meteorological-day",
+    "external_id": "world-meteorological-day-wmo",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 24,
+    "title": "World Tuberculosis Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-tb-day/",
+    "external_id": "world-tuberculosis-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 24,
+    "title": "International Day for the Right to the Truth concerning Gross Human Rights Violations and for the Dignity of Victims",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/right-to-truth-day",
+    "external_id": "international-day-for-the-right-to-the-truth-concerning-gross-human-rights-violations-and-for-the-di",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 25,
+    "title": "International Day of Remembrance of the Victims of Slavery and the Transatlantic Slave Trade",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/transatlantic-slave-trade",
+    "external_id": "international-day-of-remembrance-of-the-victims-of-slavery-and-the-transatlantic-slave-trade",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 25,
+    "title": "International Day of Solidarity with Detained and Missing Staff Members",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/detained-staff-day",
+    "external_id": "international-day-of-solidarity-with-detained-and-missing-staff-members",
+    "description": "UN international day"
+  },
+  {
+    "month": 3,
+    "day": 30,
+    "title": "International Day of Zero Waste",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/zero-waste-day",
+    "external_id": "international-day-of-zero-waste",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 2,
+    "title": "World Autism Awareness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/autism-day",
+    "external_id": "world-autism-awareness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 4,
+    "title": "International Day for Mine Awareness and Assistance in Mine Action",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/mine-awareness-day",
+    "external_id": "international-day-for-mine-awareness-and-assistance-in-mine-action",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 5,
+    "title": "International Day of Conscience",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/conscience-day",
+    "external_id": "international-day-of-conscience",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 6,
+    "title": "International Day of Sport for Development and Peace",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/sport-day",
+    "external_id": "international-day-of-sport-for-development-and-peace",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 7,
+    "title": "International Day of Reflection on the 1994 Genocide against the Tutsi in Rwanda",
+    "kind": "day",
+    "url": "http://www.un.org/en/preventgenocide/rwanda/commemoration/annualcommemoration.shtml",
+    "external_id": "international-day-of-reflection-on-the-1994-genocide-against-the-tutsi-in-rwanda",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 7,
+    "title": "World Health Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-health-day",
+    "external_id": "world-health-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 12,
+    "title": "International Day of Human Space Flight",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/human-spaceflight-day",
+    "external_id": "international-day-of-human-space-flight",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 14,
+    "title": "World Chagas Disease Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-chagas-disease-day",
+    "external_id": "world-chagas-disease-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 15,
+    "title": "International Wellness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/wellness-day",
+    "external_id": "international-wellness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 20,
+    "title": "Chinese Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/zh/observances/chinese-language-day",
+    "external_id": "chinese-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 21,
+    "title": "World Creativity and Innovation Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/creativity-and-innovation-day",
+    "external_id": "world-creativity-and-innovation-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 22,
+    "title": "International Mother Earth Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/earth-day",
+    "external_id": "international-mother-earth-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 23,
+    "title": "International Girls in ICT Day [ITU]",
+    "kind": "day",
+    "url": "https://www.itu.int/women-and-girls/girls-in-ict/",
+    "external_id": "international-girls-in-ict-day-itu",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 23,
+    "title": "World Book and Copyright Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/world-book-and-copyright",
+    "external_id": "world-book-and-copyright-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 23,
+    "title": "English Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/english-language-day",
+    "external_id": "english-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 23,
+    "title": "Spanish Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/es/observances/spanish-language-day",
+    "external_id": "spanish-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 24,
+    "title": "World Immunization Week, 24-30 April [WHO]",
+    "kind": "week",
+    "url": "https://www.who.int/campaigns/world-immunization-week/",
+    "external_id": "world-immunization-week-24-30-april-who",
+    "description": "UN international week"
+  },
+  {
+    "month": 4,
+    "day": 24,
+    "title": "International Day of Multilateralism and Diplomacy for Peace",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/Multilateralism-for-Peace-day",
+    "external_id": "international-day-of-multilateralism-and-diplomacy-for-peace",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 25,
+    "title": "World Malaria Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-malaria-day/world-malaria-day-2021",
+    "external_id": "world-malaria-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 25,
+    "title": "International Delegate’s Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/delegates-day",
+    "external_id": "international-delegate-s-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 26,
+    "title": "International Chernobyl Disaster Remembrance Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/chernobyl-remembrance-day",
+    "external_id": "international-chernobyl-disaster-remembrance-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 26,
+    "title": "World Intellectual Property Day [WIPO]",
+    "kind": "day",
+    "url": "http://www.wipo.int/ip-outreach/en/ipday/",
+    "external_id": "world-intellectual-property-day-wipo",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 28,
+    "title": "World Day for Safety and Health at Work",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/work-safety-day",
+    "external_id": "world-day-for-safety-and-health-at-work",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 29,
+    "title": "International Day in Memory of the Victims of Earthquakes",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/earthquake-victims-day",
+    "external_id": "international-day-in-memory-of-the-victims-of-earthquakes",
+    "description": "UN international day"
+  },
+  {
+    "month": 4,
+    "day": 30,
+    "title": "International Jazz Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/jazz-day",
+    "external_id": "international-jazz-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 1,
+    "title": "Vesak, the Day of the Full Moon",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/vesak-day",
+    "external_id": "vesak-the-day-of-the-full-moon",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 2,
+    "title": "World Tuna Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/tuna-day",
+    "external_id": "world-tuna-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 3,
+    "title": "World Press Freedom Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/press-freedom-day",
+    "external_id": "world-press-freedom-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 5,
+    "title": "World Portuguese Language Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/portuguese-language",
+    "external_id": "world-portuguese-language-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 8,
+    "title": "Time of Remembrance and Reconciliation for Those Who Lost Their Lives During the Second World War",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/second-world-war-remembrance-days",
+    "external_id": "time-of-remembrance-and-reconciliation-for-those-who-lost-their-lives-during-the-second-world-war",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 9,
+    "title": "World Migratory Bird Day [UNEP]",
+    "kind": "day",
+    "url": "http://www.worldmigratorybirdday.org/",
+    "external_id": "world-migratory-bird-day-unep",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 10,
+    "title": "International Day of Argania",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/argania-day",
+    "external_id": "international-day-of-argania",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 12,
+    "title": "International Day of Plant Health [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/plant-health-day/en",
+    "external_id": "international-day-of-plant-health-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 15,
+    "title": "International Day of Families",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-of-families",
+    "external_id": "international-day-of-families",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 16,
+    "title": "International Day of Living Together in Peace",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/living-in-peace-day",
+    "external_id": "international-day-of-living-together-in-peace",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 16,
+    "title": "International Day of Light [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/light",
+    "external_id": "international-day-of-light-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 17,
+    "title": "World Telecommunication and Information Society Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/telecommunication-day",
+    "external_id": "world-telecommunication-and-information-society-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 19,
+    "title": "World Fair Play Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/fair-play-day",
+    "external_id": "world-fair-play-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 20,
+    "title": "World Bee Day [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/world-bee-day/en",
+    "external_id": "world-bee-day-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 21,
+    "title": "International Tea Day [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/international-tea-day/en",
+    "external_id": "international-tea-day-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 21,
+    "title": "World Day for Cultural Diversity for Dialogue and Development",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/cultural-diversity-day",
+    "external_id": "world-day-for-cultural-diversity-for-dialogue-and-development",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 22,
+    "title": "International Day for Biological Diversity",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/biological-diversity-day",
+    "external_id": "international-day-for-biological-diversity",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 23,
+    "title": "International Day to End Obstetric Fistula",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-fistula-day",
+    "external_id": "international-day-to-end-obstetric-fistula",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 24,
+    "title": "International Day of the Markhor",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/markhor-day",
+    "external_id": "international-day-of-the-markhor",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 25,
+    "title": "World Football Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/football-day",
+    "external_id": "world-football-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 25,
+    "title": "Week of Solidarity with the Peoples of Non-Self-Governing Territories, 25-31 May",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/non-self-governing-week",
+    "external_id": "week-of-solidarity-with-the-peoples-of-non-self-governing-territories-25-31-may",
+    "description": "UN international week"
+  },
+  {
+    "month": 5,
+    "day": 29,
+    "title": "International Day of UN Peacekeepers",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/peacekeepers-day",
+    "external_id": "international-day-of-un-peacekeepers",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 30,
+    "title": "International Day of Potato [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/international-potato-day/en",
+    "external_id": "international-day-of-potato-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 5,
+    "day": 31,
+    "title": "World No-Tobacco Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-no-tobacco-day",
+    "external_id": "world-no-tobacco-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 1,
+    "title": "Global Day of Parents",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/parents-day",
+    "external_id": "global-day-of-parents",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 3,
+    "title": "World Bicycle Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/bicycle-day",
+    "external_id": "world-bicycle-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 4,
+    "title": "International Day of Innocent Children Victims of Aggression",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/child-victim-day",
+    "external_id": "international-day-of-innocent-children-victims-of-aggression",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 5,
+    "title": "World Environment Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/environment-day",
+    "external_id": "world-environment-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 5,
+    "title": "International Day for the Fight against Illegal, Unreported and Unregulated Fishing",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-illegal-fishing-day",
+    "external_id": "international-day-for-the-fight-against-illegal-unreported-and-unregulated-fishing",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 6,
+    "title": "Russian Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/russian-language-day",
+    "external_id": "russian-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 7,
+    "title": "World Food Safety Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/food-safety-day",
+    "external_id": "world-food-safety-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 8,
+    "title": "World Oceans Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/oceans-day",
+    "external_id": "world-oceans-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 10,
+    "title": "International Day for Dialogue among Civilizations",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-for-dialogue-among-civilizations",
+    "external_id": "international-day-for-dialogue-among-civilizations",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 11,
+    "title": "International Day of Play",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-of-play",
+    "external_id": "international-day-of-play",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 12,
+    "title": "World Day Against Child Labour",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-day-against-child-labour",
+    "external_id": "world-day-against-child-labour",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 13,
+    "title": "International Albinism Awareness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/albinism-day",
+    "external_id": "international-albinism-awareness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 14,
+    "title": "World Blood Donor Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-blood-donor-day",
+    "external_id": "world-blood-donor-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 15,
+    "title": "World Elder Abuse Awareness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/elder-abuse-awareness-day",
+    "external_id": "world-elder-abuse-awareness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 16,
+    "title": "International Day of Family Remittances",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/remittances-day",
+    "external_id": "international-day-of-family-remittances",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 17,
+    "title": "World Day to Combat Desertification and Drought",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/desertification-day",
+    "external_id": "world-day-to-combat-desertification-and-drought",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 18,
+    "title": "Sustainable Gastronomy Day [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/sustainable-gastronomy-day/en",
+    "external_id": "sustainable-gastronomy-day-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 18,
+    "title": "International Day for Countering Hate Speech",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/countering-hate-speech",
+    "external_id": "international-day-for-countering-hate-speech",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 19,
+    "title": "International Day for the Elimination of Sexual Violence in Conflict",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-sexual-violence-in-conflict-day",
+    "external_id": "international-day-for-the-elimination-of-sexual-violence-in-conflict",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 20,
+    "title": "World Refugee Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/refugee-day",
+    "external_id": "world-refugee-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 21,
+    "title": "International Day of Yoga",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/yoga-day",
+    "external_id": "international-day-of-yoga",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 21,
+    "title": "International Day of the Celebration of the Solstice",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/solstice-day",
+    "external_id": "international-day-of-the-celebration-of-the-solstice",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 23,
+    "title": "United Nations Public Service Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/public-service-day",
+    "external_id": "united-nations-public-service-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 23,
+    "title": "International Widows' Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/widows-day",
+    "external_id": "international-widows-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 24,
+    "title": "International Day of Women in Diplomacy",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/women-in-diplomacy-day",
+    "external_id": "international-day-of-women-in-diplomacy",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 25,
+    "title": "Day of the Seafarer [IMO]",
+    "kind": "day",
+    "url": "https://www.imo.org/en/About/Events/Pages/Day-of-the-Seafarer-2025.aspx",
+    "external_id": "day-of-the-seafarer-imo",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 26,
+    "title": "International Day against Drug Abuse and Illicit Trafficking",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-drug-abuse-day",
+    "external_id": "international-day-against-drug-abuse-and-illicit-trafficking",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 26,
+    "title": "United Nations International Day in Support of Victims of Torture",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/torture-victims-day",
+    "external_id": "united-nations-international-day-in-support-of-victims-of-torture",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 27,
+    "title": "International Day of Deafblindness",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/deafblindness-day",
+    "external_id": "international-day-of-deafblindness",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 27,
+    "title": "Micro-, Small and Medium-sized Enterprises Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/micro-small-medium-businesses-day",
+    "external_id": "micro-small-and-medium-sized-enterprises-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 29,
+    "title": "International Day of the Tropics",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/tropics-day",
+    "external_id": "international-day-of-the-tropics",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 30,
+    "title": "International Asteroid Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/asteroid-day",
+    "external_id": "international-asteroid-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 6,
+    "day": 30,
+    "title": "International Day of Parliamentarism",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/parliamentarism-day",
+    "external_id": "international-day-of-parliamentarism",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 5,
+    "title": "International Day of Cooperatives",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/cooperatives-day",
+    "external_id": "international-day-of-cooperatives",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 6,
+    "title": "World Rural Development Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/rural-development-day",
+    "external_id": "world-rural-development-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 7,
+    "title": "World Kiswahili Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/kiswahili-day",
+    "external_id": "world-kiswahili-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 11,
+    "title": "International Day of Reflection and Commemoration of the 1995 Genocide in Srebrenica",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/srebrenica-genocide-commemoration-day",
+    "external_id": "international-day-of-reflection-and-commemoration-of-the-1995-genocide-in-srebrenica",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 11,
+    "title": "World Population Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-population-day",
+    "external_id": "world-population-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 11,
+    "title": "World Horse Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/horse-day",
+    "external_id": "world-horse-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 12,
+    "title": "International Day of Combating Sand and Dust Storms",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/day-of-combating-sand-and-dust-storms",
+    "external_id": "international-day-of-combating-sand-and-dust-storms",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 12,
+    "title": "International Day of Hope",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/hope-day",
+    "external_id": "international-day-of-hope",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 15,
+    "title": "World Youth Skills Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-youth-skills-day",
+    "external_id": "world-youth-skills-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 18,
+    "title": "Nelson Mandela International Day",
+    "kind": "day",
+    "url": "http://www.un.org/en/events/mandeladay/",
+    "external_id": "nelson-mandela-international-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 20,
+    "title": "World Chess Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-chess-day",
+    "external_id": "world-chess-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 20,
+    "title": "International Moon Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/moon-day",
+    "external_id": "international-moon-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 25,
+    "title": "International Day of Women and Girls of African Descent",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/women-girls-african-descent",
+    "external_id": "international-day-of-women-and-girls-of-african-descent",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 25,
+    "title": "World Drowning Prevention Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/drowning-prevention-day",
+    "external_id": "world-drowning-prevention-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 25,
+    "title": "International Day for Judicial Well-being",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/judicial-well-being-day",
+    "external_id": "international-day-for-judicial-well-being",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 28,
+    "title": "World Hepatitis Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-hepatitis-day",
+    "external_id": "world-hepatitis-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 30,
+    "title": "International Day of Friendship",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/friendship-day",
+    "external_id": "international-day-of-friendship",
+    "description": "UN international day"
+  },
+  {
+    "month": 7,
+    "day": 30,
+    "title": "World Day against Trafficking in Persons",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-human-trafficking-day",
+    "external_id": "world-day-against-trafficking-in-persons",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 1,
+    "title": "World Breastfeeding Week, 1-7 August [WHO]",
+    "kind": "week",
+    "url": "https://www.who.int/campaigns/world-breastfeeding-week",
+    "external_id": "world-breastfeeding-week-1-7-august-who",
+    "description": "UN international week"
+  },
+  {
+    "month": 8,
+    "day": 6,
+    "title": "International Day of Awareness of the Special Development Needs and Challenges of Landlocked Developing Countries",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/landlocked-developing-countries-day",
+    "external_id": "international-day-of-awareness-of-the-special-development-needs-and-challenges-of-landlocked-develop",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 9,
+    "title": "International Day of the World's Indigenous Peoples",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/indigenous-day",
+    "external_id": "international-day-of-the-world-s-indigenous-peoples",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 11,
+    "title": "World Steelpan Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/steelpan-day",
+    "external_id": "world-steelpan-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 12,
+    "title": "International Youth Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/youth-day",
+    "external_id": "international-youth-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 19,
+    "title": "World Humanitarian Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/humanitarian-day",
+    "external_id": "world-humanitarian-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 21,
+    "title": "International Day of Remembrance and Tribute to the Victims of Terrorism",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/terrorism-victims-day",
+    "external_id": "international-day-of-remembrance-and-tribute-to-the-victims-of-terrorism",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 22,
+    "title": "International Day Commemorating the Victims of Acts of Violence Based on Religion or Belief",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/religious-based-violence-victims-day",
+    "external_id": "international-day-commemorating-the-victims-of-acts-of-violence-based-on-religion-or-belief",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 23,
+    "title": "International Day for the Remembrance of the Slave Trade and Its Abolition [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/slave-trade-remembrance",
+    "external_id": "international-day-for-the-remembrance-of-the-slave-trade-and-its-abolition-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 27,
+    "title": "World Lake Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-lake-day",
+    "external_id": "world-lake-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 29,
+    "title": "International Day against Nuclear Tests",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-nuclear-tests-day",
+    "external_id": "international-day-against-nuclear-tests",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 30,
+    "title": "International Day of the Victims of Enforced Disappearances",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/victims-enforced-disappearance",
+    "external_id": "international-day-of-the-victims-of-enforced-disappearances",
+    "description": "UN international day"
+  },
+  {
+    "month": 8,
+    "day": 31,
+    "title": "International Day for People of African Descent",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/african-descent-day",
+    "external_id": "international-day-for-people-of-african-descent",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 5,
+    "title": "International Day of Charity",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/charity-day",
+    "external_id": "international-day-of-charity",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 5,
+    "title": "International Day of the World’s Indigenous Women and Girls",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/indigenous-women-day",
+    "external_id": "international-day-of-the-world-s-indigenous-women-and-girls",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 7,
+    "title": "International Day of Clean Air for Blue Skies [UNEP]",
+    "kind": "day",
+    "url": "https://www.cleanairblueskies.org/",
+    "external_id": "international-day-of-clean-air-for-blue-skies-unep",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 7,
+    "title": "International Day of Police Cooperation",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/police-cooperation-day",
+    "external_id": "international-day-of-police-cooperation",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 7,
+    "title": "World Duchenne Awareness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/duchenne-awareness-day",
+    "external_id": "world-duchenne-awareness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 8,
+    "title": "International Literacy Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/literacy",
+    "external_id": "international-literacy-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 9,
+    "title": "International Day to Protect Education from Attack",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/protect-education-day",
+    "external_id": "international-day-to-protect-education-from-attack",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 12,
+    "title": "United Nations Day for South-South Cooperation",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/south-south-cooperation-day",
+    "external_id": "united-nations-day-for-south-south-cooperation",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 15,
+    "title": "International Day of Democracy",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/democracy-day",
+    "external_id": "international-day-of-democracy",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 16,
+    "title": "International Day of Science, Technology and Innovation for the South",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/science-technology-and-innovation-for-south-day",
+    "external_id": "international-day-of-science-technology-and-innovation-for-the-south",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 16,
+    "title": "International Day for Interventional Cardiology",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/interventional-cardiology-day",
+    "external_id": "international-day-for-interventional-cardiology",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 16,
+    "title": "International Day for the Preservation of the Ozone Layer",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/ozone-day",
+    "external_id": "international-day-for-the-preservation-of-the-ozone-layer",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 17,
+    "title": "World Patient Safety Day [WHO]",
+    "kind": "day",
+    "url": "https://www.who.int/campaigns/world-patient-safety-day/",
+    "external_id": "world-patient-safety-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 18,
+    "title": "International Equal Pay Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/equal-pay-day",
+    "external_id": "international-equal-pay-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 20,
+    "title": "World Cleanup Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/cleanup-day",
+    "external_id": "world-cleanup-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 21,
+    "title": "International Day of Peace",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-peace",
+    "external_id": "international-day-of-peace",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 23,
+    "title": "International Day of Sign Languages",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/sign-languages-day",
+    "external_id": "international-day-of-sign-languages",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 24,
+    "title": "World Maritime Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/maritime-day",
+    "external_id": "world-maritime-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 26,
+    "title": "International Day for the Total Elimination of Nuclear Weapons",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/nuclear-weapons-elimination-day",
+    "external_id": "international-day-for-the-total-elimination-of-nuclear-weapons",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 27,
+    "title": "World Tourism Day [UN Tourism]",
+    "kind": "day",
+    "url": "https://www.untourism.int/world-tourism-day-2026",
+    "external_id": "world-tourism-day-un-tourism",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 28,
+    "title": "International Day for Universal Access to Information",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/information-access-day",
+    "external_id": "international-day-for-universal-access-to-information",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 29,
+    "title": "International Day of Awareness of Food Loss and Waste [FAO]",
+    "kind": "day",
+    "url": "https://www.fao.org/platform-food-loss-waste/flw-events/international-day-food-loss-and-waste/en",
+    "external_id": "international-day-of-awareness-of-food-loss-and-waste-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 9,
+    "day": 30,
+    "title": "International Translation Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-translation-day",
+    "external_id": "international-translation-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 1,
+    "title": "International Coffee Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/coffee-day",
+    "external_id": "international-coffee-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 1,
+    "title": "International Day of Older Persons",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/older-persons-day",
+    "external_id": "international-day-of-older-persons",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 2,
+    "title": "International Day of Non-Violence",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/non-violence-day",
+    "external_id": "international-day-of-non-violence",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 4,
+    "title": "World Space Week, 4-10 October",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/world-space-week",
+    "external_id": "world-space-week-4-10-october",
+    "description": "UN international week"
+  },
+  {
+    "month": 10,
+    "day": 6,
+    "title": "World Habitat Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/habitat-day",
+    "external_id": "world-habitat-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 5,
+    "title": "World Teachers’ Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/teachers",
+    "external_id": "world-teachers-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 7,
+    "title": "World Cotton Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/cotton-day",
+    "external_id": "world-cotton-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 9,
+    "title": "World Post Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-post-day",
+    "external_id": "world-post-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 9,
+    "title": "World Migratory Bird Day [UNEP]",
+    "kind": "day",
+    "url": "http://www.worldmigratorybirdday.org/",
+    "external_id": "world-migratory-bird-day-unep",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 10,
+    "title": "World Mental Health Day [WHO]",
+    "kind": "day",
+    "url": "http://www.who.int/mental_health/world-mental-health-day/en/",
+    "external_id": "world-mental-health-day-who",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 11,
+    "title": "International Day of the Girl Child",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/girl-child-day",
+    "external_id": "international-day-of-the-girl-child",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 13,
+    "title": "International Day for Disaster Risk Reduction",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/disaster-reduction-day",
+    "external_id": "international-day-for-disaster-risk-reduction",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 15,
+    "title": "International Day of Rural Women",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/rural-women-day",
+    "external_id": "international-day-of-rural-women",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 16,
+    "title": "World Food Day [FAO]",
+    "kind": "day",
+    "url": "http://www.fao.org/world-food-day",
+    "external_id": "world-food-day-fao",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 17,
+    "title": "International Day for the Eradication of Poverty",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/day-for-eradicating-poverty",
+    "external_id": "international-day-for-the-eradication-of-poverty",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 23,
+    "title": "International Day of the Snow Leopard",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/snow-leopard-day",
+    "external_id": "international-day-of-the-snow-leopard",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 24,
+    "title": "Disarmament Week, 24-30 October",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/disarmament-week",
+    "external_id": "disarmament-week-24-30-october",
+    "description": "UN international week"
+  },
+  {
+    "month": 10,
+    "day": 24,
+    "title": "United Nations Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/un-day",
+    "external_id": "united-nations-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 24,
+    "title": "World Development Information Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/development-information-day",
+    "external_id": "world-development-information-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 24,
+    "title": "Global Media and Information Literacy Week, 24-31 October",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/media-information-literacy-week",
+    "external_id": "global-media-and-information-literacy-week-24-31-october",
+    "description": "UN international week"
+  },
+  {
+    "month": 10,
+    "day": 27,
+    "title": "World Day for Audiovisual Heritage [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/audiovisual-heritage",
+    "external_id": "world-day-for-audiovisual-heritage-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 29,
+    "title": "International Day of Care and Support",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/care-and-support-day",
+    "external_id": "international-day-of-care-and-support",
+    "description": "UN international day"
+  },
+  {
+    "month": 10,
+    "day": 31,
+    "title": "World Cities Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/cities-day",
+    "external_id": "world-cities-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 2,
+    "title": "International Day to End Impunity for Crimes against Journalists",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/end-impunity-crimes-against-journalists",
+    "external_id": "international-day-to-end-impunity-for-crimes-against-journalists",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 5,
+    "title": "World Tsunami Awareness Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/tsunami-awareness-day",
+    "external_id": "world-tsunami-awareness-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 6,
+    "title": "International Day for Preventing the Exploitation of the Environment in War and Armed Conflict",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/environment-in-war-protection-day",
+    "external_id": "international-day-for-preventing-the-exploitation-of-the-environment-in-war-and-armed-conflict",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 9,
+    "title": "International Week of Science and Peace, 9-15 November",
+    "kind": "week",
+    "url": "https://www.un.org/en/observances/world-science-day/week",
+    "external_id": "international-week-of-science-and-peace-9-15-november",
+    "description": "UN international week"
+  },
+  {
+    "month": 11,
+    "day": 10,
+    "title": "World Science Day for Peace and Development",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-science-day",
+    "external_id": "world-science-day-for-peace-and-development",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 14,
+    "title": "World Diabetes Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/diabetes-day",
+    "external_id": "world-diabetes-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 15,
+    "title": "International Day for the Prevention of and Fight against All Forms of Transnational Organized Crime",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/fight-against-transnational-crime-day",
+    "external_id": "international-day-for-the-prevention-of-and-fight-against-all-forms-of-transnational-organized-crime",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 17,
+    "title": "World Day of Remembrance for Road Traffic Victims",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/road-traffic-victims-day",
+    "external_id": "world-day-of-remembrance-for-road-traffic-victims",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 16,
+    "title": "International Day for Tolerance [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/tolerance",
+    "external_id": "international-day-for-tolerance-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 18,
+    "title": "World Antimicrobial Resistance Awareness Week, 18-24 November [WHO]",
+    "kind": "week",
+    "url": "https://www.who.int/campaigns/world-antimicrobial-awareness-week",
+    "external_id": "world-antimicrobial-resistance-awareness-week-18-24-november-who",
+    "description": "UN international week"
+  },
+  {
+    "month": 11,
+    "day": 18,
+    "title": "World Day for the Prevention of and Healing from Child Sexual Exploitation, Abuse and Violence",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/child-sexual-exploitation-prevention-and-healing-day",
+    "external_id": "world-day-for-the-prevention-of-and-healing-from-child-sexual-exploitation-abuse-and-violence",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 21,
+    "title": "World Philosophy Day [UNESCO]",
+    "kind": "day",
+    "url": "https://www.unesco.org/en/days/philosophy",
+    "external_id": "world-philosophy-day-unesco",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 19,
+    "title": "World Toilet Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/toilet-day",
+    "external_id": "world-toilet-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 20,
+    "title": "Africa Industrialization Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/africa-industrialization-day",
+    "external_id": "africa-industrialization-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 20,
+    "title": "World Children's Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-childrens-day",
+    "external_id": "world-children-s-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 21,
+    "title": "World Television Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-television-day",
+    "external_id": "world-television-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 24,
+    "title": "World Conjoined Twins Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/conjoined-twins-day",
+    "external_id": "world-conjoined-twins-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 25,
+    "title": "International Day for the Elimination of Violence against Women",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/ending-violence-against-women-day",
+    "external_id": "international-day-for-the-elimination-of-violence-against-women",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 26,
+    "title": "World Sustainable Transport Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/sustainable-transport-day",
+    "external_id": "world-sustainable-transport-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 29,
+    "title": "International Day of Solidarity with the Palestinian People",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-of-solidarity-with-the-palestinian-people",
+    "external_id": "international-day-of-solidarity-with-the-palestinian-people",
+    "description": "UN international day"
+  },
+  {
+    "month": 11,
+    "day": 30,
+    "title": "Day of Remembrance for all Victims of Chemical Warfare",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/chemical-warfare-victims-day",
+    "external_id": "day-of-remembrance-for-all-victims-of-chemical-warfare",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 1,
+    "title": "World AIDS Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-aids-day",
+    "external_id": "world-aids-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 2,
+    "title": "International Day for the Abolition of Slavery",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/slavery-abolition-day",
+    "external_id": "international-day-for-the-abolition-of-slavery",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 3,
+    "title": "International Day of Persons with Disabilities",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/day-of-persons-with-disabilities",
+    "external_id": "international-day-of-persons-with-disabilities",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 4,
+    "title": "International Day of Banks",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/international-day-of-banks",
+    "external_id": "international-day-of-banks",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 4,
+    "title": "International Day Against Unilateral Coercive Measures",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/day-against-unilateral-coercive-measures",
+    "external_id": "international-day-against-unilateral-coercive-measures",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 5,
+    "title": "International Volunteer Day for Economic and Social Development",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/volunteer-day",
+    "external_id": "international-volunteer-day-for-economic-and-social-development",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 5,
+    "title": "World Soil Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-soil-day",
+    "external_id": "world-soil-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 7,
+    "title": "International Civil Aviation Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/civil-aviation-day",
+    "external_id": "international-civil-aviation-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 9,
+    "title": "International Day of Commemoration and Dignity of the Victims of the Crime of Genocide and of the Prevention of this Crime",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/genocide-prevention-day",
+    "external_id": "international-day-of-commemoration-and-dignity-of-the-victims-of-the-crime-of-genocide-and-of-the-pr",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 9,
+    "title": "International Anti-Corruption Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/anti-corruption-day",
+    "external_id": "international-anti-corruption-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 10,
+    "title": "Human Rights Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/human-rights-day",
+    "external_id": "human-rights-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 11,
+    "title": "International Mountain Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/mountain-day",
+    "external_id": "international-mountain-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 12,
+    "title": "International Day of Neutrality",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/neutrality-day",
+    "external_id": "international-day-of-neutrality",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 12,
+    "title": "International Universal Health Coverage Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/universal-health-coverage-day",
+    "external_id": "international-universal-health-coverage-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 14,
+    "title": "International Day against Colonialism in All its Forms and Manifestations",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/anti-colonialism-day",
+    "external_id": "international-day-against-colonialism-in-all-its-forms-and-manifestations",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 18,
+    "title": "International Migrants Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/migrants-day",
+    "external_id": "international-migrants-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 18,
+    "title": "Arabic Language Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/arabiclanguageday",
+    "external_id": "arabic-language-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 20,
+    "title": "International Human Solidarity Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/human-solidarity-day",
+    "external_id": "international-human-solidarity-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 21,
+    "title": "World Meditation Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/meditation-day",
+    "external_id": "world-meditation-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 21,
+    "title": "World Basketball Day",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/world-basketball-day",
+    "external_id": "world-basketball-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 24,
+    "title": "International Anti-Cybercrime Day",
+    "kind": "day",
+    "url": "https://www.unodc.org/unodc/en/cybercrime/day.html",
+    "external_id": "international-anti-cybercrime-day",
+    "description": "UN international day"
+  },
+  {
+    "month": 12,
+    "day": 27,
+    "title": "International Day of Epidemic Preparedness",
+    "kind": "day",
+    "url": "https://www.un.org/en/observances/epidemic-preparedness-day",
+    "external_id": "international-day-of-epidemic-preparedness",
+    "description": "UN international day"
+  }
+]

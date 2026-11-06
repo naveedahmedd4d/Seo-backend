@@ -61,20 +61,25 @@ async def patch_settings(
 async def get_events(
     date_from: Optional[date] = Query(default=None, alias="from"),
     date_to: Optional[date] = Query(default=None, alias="to"),
+    sync: bool = Query(default=True, description="Refresh UN/Nager seed before listing"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     settings = svc.get_or_create_settings(db, current_user.id)
     start = date_from or date.today()
     end = date_to or date.fromordinal(start.toordinal() + 7)
+    if end < start:
+        start, end = end, start
     # Ensure seed data exists for the window
     years = sorted({start.year, end.year})
-    await sync_calendar_events(db, countries=list(settings.countries or []), years=years)
+    if sync:
+        await sync_calendar_events(db, countries=list(settings.countries or []), years=years)
     rows = list_events(
         db,
         date_from=start,
         date_to=end,
         countries=list(settings.countries or []),
+        limit=1000,
     )
     items = [
         CalendarEventItem(

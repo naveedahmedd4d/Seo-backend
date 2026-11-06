@@ -30,7 +30,7 @@ class CalendarEvent(Base):
     event_date = Column(Date, nullable=False)
     title = Column(String(255), nullable=False)
     country_or_scope = Column(String(64), nullable=False, server_default="INT")
-    source = Column(String(32), nullable=False)  # observance | nager
+    source = Column(String(32), nullable=False)  # observance | un | nager
     external_id = Column(String(160), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

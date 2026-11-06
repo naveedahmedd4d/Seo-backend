@@ -142,13 +142,17 @@ async def sync_calendar_events(
     *,
     years: Optional[list[int]] = None,
 ) -> dict:
+    from app.services.un_observances_service import sync_un_observances
+
     today = date.today()
     year_list = years or [today.year, today.year + 1]
     country_list = countries or DEFAULT_COUNTRIES
     observance_count = sync_observances_for_years(db, year_list)
+    un_count = await sync_un_observances(db, year_list)
     nager_count = await sync_nager_holidays(db, country_list, year_list)
     return {
         "observances_upserted": observance_count,
+        "un_observances_upserted": un_count,
         "nager_upserted": nager_count,
         "countries": country_list,
         "years": year_list,
@@ -161,11 +165,11 @@ def list_events(
     date_from: date,
     date_to: date,
     countries: Optional[list[str]] = None,
-    limit: int = 200,
+    limit: int = 500,
 ) -> list[CalendarEvent]:
     query = (
         db.query(CalendarEvent)
-        .filter(CalendarEvent.event_date >= date_from, CalendarEvent.event_date < date_to)
+        .filter(CalendarEvent.event_date >= date_from, CalendarEvent.event_date <= date_to)
         .order_by(CalendarEvent.event_date.asc(), CalendarEvent.title.asc())
     )
     if countries:
@@ -175,5 +179,14 @@ def list_events(
 
 
 def upcoming_week_window(today: Optional[date] = None) -> tuple[date, date]:
+    """Inclusive 7-day window: today through today+6."""
     start = today or date.today()
-    return start, start + timedelta(days=7)
+    return start, start + timedelta(days=6)
+
+
+def current_iso_week_window(today: Optional[date] = None) -> tuple[date, date]:
+    """Monday–Sunday of the current ISO week (inclusive)."""
+    start = today or date.today()
+    monday = start - timedelta(days=start.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday

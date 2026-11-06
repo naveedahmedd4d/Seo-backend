@@ -63,7 +63,8 @@ def test_seed_observances_loaded():
 
 def test_upcoming_week_window_is_seven_days():
     start, end = upcoming_week_window()
-    assert (end - start).days == 7
+    # Inclusive window: today .. today+6 → 7 calendar days.
+    assert (end - start).days == 6
 
 
 def test_import_keywords_csv_with_headers(db_session, test_user):
