@@ -57,6 +57,7 @@ from app.services.blogger_service import (
 )
 from app.services.bluesky_service import save_bluesky_account_from_credentials
 from app.services.devto_service import save_devto_account_from_api_key
+from app.services.hashnode_service import save_hashnode_account_from_token
 from app.services.facebook_service import (
     build_authorization_url as build_facebook_authorization_url,
     get_valid_facebook_page_context,
