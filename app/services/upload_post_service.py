@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -50,6 +50,38 @@ def _facebook_page_id() -> str | None:
     return None
 
 
+
+def build_form_payload(
+    *,
+    user: str,
+    platform: str,
+    title: Optional[str],
+    description: Optional[str],
+    image_url: Optional[str],
+    extra: dict[str, str],
+) -> dict[str, Any]:
+    """Build the Upload-Post form body.
+
+    Must be a dict, with lists for repeated keys. httpx 0.27 routes a
+    list-of-tuples `data=` through its sync transport, which an AsyncClient
+    rejects outright ("Attempted to send an sync request with an AsyncClient
+    instance") -- so the shape here is load-bearing, not a style choice.
+    """
+    payload: dict[str, Any] = {
+        "user": user,
+        "platform[]": [platform],
+        "async_upload": "true",
+    }
+    if title:
+        payload["title"] = title
+    if description:
+        payload["description"] = description
+    if image_url:
+        payload["photos[]"] = [image_url]
+    payload.update(extra)
+    return payload
+
+
 async def publish_photo_via_upload_post(
     *,
     platform: str,
@@ -74,16 +106,8 @@ async def publish_photo_via_upload_post(
         )
 
     base = settings.upload_post_base_url.rstrip("/")
-    data: list[tuple[str, str]] = [
-        ("user", str(settings.upload_post_user)),
-        ("platform[]", platform),
-        ("async_upload", "true"),
-    ]
-    if title:
-        data.append(("title", title))
-    if description:
-        data.append(("description", description))
 
+    extra: dict[str, str] = {}
     if platform == "facebook":
         page_id = (
             platform_options.get("facebook_page_id")
@@ -91,17 +115,24 @@ async def publish_photo_via_upload_post(
             or _facebook_page_id()
         )
         if page_id:
-            data.append(("facebook_page_id", str(page_id)))
+            extra["facebook_page_id"] = str(page_id)
 
     if platform == "pinterest":
         board_id = platform_options.get("board_id") or platform_options.get("pinterest_board_id")
         if board_id:
-            data.append(("pinterest_board_id", str(board_id)))
+            extra["pinterest_board_id"] = str(board_id)
+
+    data = build_form_payload(
+        user=str(settings.upload_post_user),
+        platform=platform,
+        title=title,
+        description=description,
+        image_url=image_url,
+        extra=extra,
+    )
 
     endpoint = f"{base}/upload_photos" if image_url else f"{base}/upload_text"
-    if image_url:
-        data.append(("photos[]", image_url))
-    elif not title:
+    if not image_url and not title:
         return SocialPostPublishResultItem(
             platform=platform,
             success=False,
