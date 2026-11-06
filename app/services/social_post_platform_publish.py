@@ -38,6 +38,24 @@ async def download_image_bytes(image_url: str) -> bytes:
     return response.content
 
 
+def _is_upload_post_auth_error(error: str | None) -> bool:
+    """True when Upload-Post rejected our API key / auth — first-party OAuth may still work."""
+    msg = (error or "").strip().lower()
+    if not msg:
+        return False
+    needles = (
+        "invalid api key",
+        "invalid apikey",
+        "unauthorized",
+        "forbidden",
+        "401",
+        "403",
+        "authentication",
+        "not configured",
+    )
+    return any(n in msg for n in needles)
+
+
 async def publish_to_platform(
     db: Session,
     user_id: int,
@@ -51,7 +69,9 @@ async def publish_to_platform(
     platform_options = platform_options or {}
     copy = build_platform_copy(platform, ctx)
 
-    # Prefer Upload-Post when configured for supported platforms.
+    # Prefer Upload-Post when configured. If its API key is bad, fall through to
+    # the user's connected first-party account (e.g. Facebook OAuth) instead of
+    # surfacing "Invalid API key" while the UI shows Facebook as connected.
     if upload_post_configured() and supports_upload_post(platform):
         title = str(
             copy.get("caption")
@@ -65,13 +85,18 @@ async def publish_to_platform(
         description = copy.get("description")
         if isinstance(description, str) and description.strip() == title.strip():
             description = None
-        return await publish_photo_via_upload_post(
+        upload_result = await publish_photo_via_upload_post(
             platform=platform,
             title=title,
             image_url=image_url,
             description=description if isinstance(description, str) else None,
             platform_options=platform_options,
         )
+        if upload_result.success or not _is_upload_post_auth_error(upload_result.error):
+            return upload_result
+        # Auth failed — only fall through when a first-party account exists.
+        if get_user_social_account(db, user_id, platform) is None:
+            return upload_result
 
     if platform == "pinterest":
         return await _publish_to_pinterest(
