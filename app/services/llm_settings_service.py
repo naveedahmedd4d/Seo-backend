@@ -58,7 +58,7 @@ DEFAULT_OPENROUTER_FREE_MODEL = "openrouter/free"
 DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
 DEFAULT_COHERE_MODEL = "command-r-plus-08-2024"
-DEFAULT_NVIDIA_MODEL = "meta/llama-3.3-70b-instruct"
+DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b"
 
 GROQ_MODEL_MIGRATIONS = {
     "llama-3.1-8b-instant": "openai/gpt-oss-20b",
@@ -185,7 +185,11 @@ def get_model_allowlist() -> List[LlmModelOption]:
         LlmModelOption(id="command-r-08-2024", label="Cohere · Command R (trial)", provider="cohere", free=True),
         # NVIDIA
         LlmModelOption(id=nvidia_default, label=f"NVIDIA · {nvidia_default} (dev free)", provider="nvidia", free=True),
-        LlmModelOption(id="meta/llama-3.3-70b-instruct", label="NVIDIA · Llama 3.3 70B (dev free)", provider="nvidia", free=True),
+        LlmModelOption(id="nvidia/nemotron-3.5-lightning-30b-a3b", label="NVIDIA · Nemotron 3.5 Lightning 30B (dev free)", provider="nvidia", free=True),
+        LlmModelOption(id="nvidia/nemotron-nano-3-30b-a3b", label="NVIDIA · Nemotron Nano 3 30B (dev free)", provider="nvidia", free=True),
+        LlmModelOption(id="google/gemma-4-31b-it", label="NVIDIA · Gemma 4 31B (dev free)", provider="nvidia", free=True),
+        LlmModelOption(id="google/gemma-3-12b-it", label="NVIDIA · Gemma 3 12B (dev free)", provider="nvidia", free=True),
+        LlmModelOption(id="mistralai/mistral-7b-instruct-v0.3", label="NVIDIA · Mistral 7B Instruct (dev free)", provider="nvidia", free=True),
     ]
     seen = set()
     unique: List[LlmModelOption] = []

@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     blog_cohere_model: str = "command-r-plus-08-2024"
     # NVIDIA NIM / Build
     nvidia_api_key: Optional[str] = None
-    blog_nvidia_model: str = "meta/llama-3.3-70b-instruct"
+    blog_nvidia_model: str = "nvidia/nemotron-3.5-lightning-30b-a3b"
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None

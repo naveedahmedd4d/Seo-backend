@@ -55,6 +55,15 @@ class LlmModelOption(BaseModel):
         "default",
     ]
     free: bool = False
+    available: Optional[bool] = Field(
+        default=None,
+        description=(
+            "True when the vendor currently lists this model, False when the "
+            "vendor answered and did not, None when the vendor could not be "
+            "reached (no key saved, network error). None means unknown -- it "
+            "must not be shown as unavailable."
+        ),
+    )
 
 
 class LlmSettingsResponse(BaseModel):

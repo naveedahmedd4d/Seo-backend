@@ -16,6 +16,9 @@ from app.schemas.settings_llm import (
     LlmTestRequest,
     LlmTestResponse,
 )
+from starlette.concurrency import run_in_threadpool
+
+from app.services import llm_catalog_service
 from app.services.http_ssl import httpx_verify
 from app.services.llm_settings_service import (
     DEFAULT_CLOUDFLARE_MODEL,
@@ -95,8 +98,34 @@ async def update_llm_settings(
 @router.get("/llm/models", response_model=LlmModelsResponse)
 async def list_llm_models(
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    return LlmModelsResponse(models=get_model_allowlist())
+    """The allowlist, annotated with what each vendor currently serves.
+
+    Vendor catalogs go stale without notice, so every model is checked against
+    the provider's own list. A provider we cannot ask (no key saved, vendor
+    unreachable) leaves its models `available=None` -- unknown, not dead.
+    """
+    models = get_model_allowlist()
+
+    row = get_or_create_settings(db, current_user.id)
+    account_id = getattr(row, "cloudflare_account_id", None)
+    providers = {}
+    for provider in {m.provider for m in models} - {"default"}:
+        key = get_saved_provider_key(db, current_user.id, provider)
+        if key or provider in llm_catalog_service.PUBLIC_CATALOGS:
+            providers[provider] = (key, account_id)
+
+    live = await run_in_threadpool(llm_catalog_service.availability_map, providers)
+
+    annotated = []
+    for m in models:
+        if m.provider == "default":
+            annotated.append(m)
+            continue
+        ids = live.get(m.provider)
+        annotated.append(m.model_copy(update={"available": None if ids is None else m.id in ids}))
+    return LlmModelsResponse(models=annotated)
 
 
 @router.post("/llm/test", response_model=LlmTestResponse)

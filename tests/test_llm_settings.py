@@ -417,3 +417,47 @@ def test_test_endpoint_reports_the_model_it_probed(client, auth_headers, monkeyp
     assert body["ok"] is False
     # the message must name the model actually probed, not a provider default
     assert "gemini-1.5-flash" in body["message"]
+
+
+# --- /llm/models availability annotation (fixtures live in this file) ---
+
+from app.services import llm_catalog_service as _cat
+
+
+def test_models_endpoint_marks_availability(client, auth_headers, monkeypatch):
+    """Models the vendor still lists are available; the rest are not."""
+    # A provider is only queried when a key is saved for it.
+    client.put("/api/settings/llm", headers=auth_headers, json={"groq_api_key": "gsk-test"})
+    monkeypatch.setattr(
+        _cat, "fetch_live_ids",
+        lambda provider, api_key=None, account_id=None: {"openai/gpt-oss-20b"} if provider == "groq" else set(),
+    )
+    res = client.get("/api/settings/llm/models", headers=auth_headers)
+    assert res.status_code == 200
+    by_id = {m["id"]: m for m in res.json()["models"]}
+    assert by_id["openai/gpt-oss-20b"]["available"] is True
+    # a groq model the vendor did NOT list is retired, not unknown
+    assert by_id["qwen/qwen3-32b"]["available"] is False
+
+
+def test_models_endpoint_unknown_without_a_saved_key(client, auth_headers, monkeypatch):
+    """No key means we cannot ask, so the answer is unknown rather than dead."""
+    monkeypatch.setattr(
+        _cat, "fetch_live_ids",
+        lambda provider, api_key=None, account_id=None: set(),
+    )
+    res = client.get("/api/settings/llm/models", headers=auth_headers)
+    by_id = {m["id"]: m for m in res.json()["models"]}
+    assert by_id["qwen/qwen3-32b"]["available"] is None
+
+
+def test_models_endpoint_unknown_when_vendor_unreachable(client, auth_headers, monkeypatch):
+    """A vendor we cannot reach must not mark its models dead."""
+    def boom(provider, api_key=None, account_id=None):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(_cat, "fetch_live_ids", boom)
+    res = client.get("/api/settings/llm/models", headers=auth_headers)
+    assert res.status_code == 200
+    vals = {m["available"] for m in res.json()["models"] if m["id"] != "default"}
+    assert vals == {None}, "unreachable vendor means unknown, not unavailable"
