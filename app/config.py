@@ -25,10 +25,26 @@ class Settings(BaseSettings):
     tavily_api_key: Optional[str] = None
     # OpenRouter: used exclusively for blog generation when configured.
     openrouter_api_key: Optional[str] = None
-    openrouter_model: str = "stepfun/step-3.5-flash:free"
-    openrouter_humanize_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_model: str = "openrouter/free"
+    openrouter_humanize_model: str = "google/gemma-4-31b-it:free"
     # Model used for blog generation via OpenRouter (only active when openrouter_api_key is set).
-    blog_openrouter_model: str = "openai/gpt-4o-mini"
+    blog_openrouter_model: str = "openrouter/free"
+    # Google AI Studio / Gemini Developer API (free-tier Flash models).
+    gemini_api_key: Optional[str] = None
+    blog_gemini_model: str = "gemini-2.5-flash"
+    # Cloudflare Workers AI (account id + API token).
+    cloudflare_api_token: Optional[str] = None
+    cloudflare_account_id: Optional[str] = None
+    blog_cloudflare_model: str = "@cf/meta/llama-3.1-8b-instruct"
+    # Mistral Free mode
+    mistral_api_key: Optional[str] = None
+    blog_mistral_model: str = "mistral-small-latest"
+    # Cohere trial
+    cohere_api_key: Optional[str] = None
+    blog_cohere_model: str = "command-r-plus-08-2024"
+    # NVIDIA NIM / Build
+    nvidia_api_key: Optional[str] = None
+    blog_nvidia_model: str = "meta/llama-3.1-8b-instruct"
     groq_api_key: Optional[str] = None
     # Groq key for trending keywords fallback when SerpAPI returns 429/rate limit (optional; falls back to groq_api_key)
     trending_fallback_groq_api_key: Optional[str] = None

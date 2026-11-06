@@ -212,8 +212,53 @@ def test_models_allowlist(client, auth_headers):
     assert res.status_code == 200
     ids = [m["id"] for m in res.json()["models"]]
     assert "default" in ids
+    assert "gemini-2.5-flash" in ids
+    assert "openrouter/free" in ids
+    assert "google/gemma-4-31b-it:free" in ids
     assert "openai/gpt-oss-120b" in ids
     assert "openai/gpt-oss-20b" in ids
+
+
+def test_resolve_prefers_user_gemini_key(db_session, monkeypatch):
+    from app.models.user import User
+    from app.services.auth_service import get_password_hash
+
+    user = User(email="gem@b.com", password_hash=get_password_hash("x"), full_name="G")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    monkeypatch.setattr("app.services.llm_settings_service.settings.gemini_api_key", "platform-gem")
+    monkeypatch.setattr("app.services.llm_settings_service.settings.openrouter_api_key", "platform-or")
+    monkeypatch.setattr("app.services.llm_settings_service.settings.groq_api_key", "platform-groq")
+
+    upsert_settings(db_session, user.id, gemini_api_key="user-gemini-key", preferred_provider="default")
+    creds = resolve_llm_credentials(db_session, user.id)
+    assert creds.provider == "gemini"
+    assert creds.api_key == "user-gemini-key"
+    assert creds.source == "user"
+
+
+def test_manual_fallback_order(db_session, monkeypatch):
+    from app.models.user import User
+    from app.services.auth_service import get_password_hash
+
+    user = User(email="order@b.com", password_hash=get_password_hash("x"), full_name="O")
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+
+    upsert_settings(
+        db_session,
+        user.id,
+        openrouter_api_key="or-key",
+        groq_api_key="groq-key",
+        preferred_provider="default",
+        fallback_order=["groq", "openrouter", "gemini"],
+    )
+    creds = resolve_llm_credentials(db_session, user.id)
+    assert creds.provider == "groq"
+    assert creds.api_key == "groq-key"
 
 
 @pytest.mark.asyncio

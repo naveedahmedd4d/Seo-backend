@@ -20,7 +20,19 @@ SERPAPI_KEY=a9b6d2de649be4fa85e93728d731534ec1f83e8db2495adce53a839015adf60a
 # Mangools KWFinder API (keyword difficulty) — free token from mangools.com/api-token
 MANGOOLS_API_TOKEN=
 TAVILY_API_KEY=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
-OPENROUTER_API_KEY=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
+OPENROUTER_API_KEY=sk-or-v1-your-openrouter-key
+# Free-tier Google AI Studio / Gemini Developer API key
+GEMINI_API_KEY=your-gemini-api-key
+# Cloudflare Workers AI (token + account id)
+# CLOUDFLARE_API_TOKEN=your-cloudflare-api-token
+# CLOUDFLARE_ACCOUNT_ID=your-cloudflare-account-id
+# MISTRAL_API_KEY=your-mistral-key
+# COHERE_API_KEY=your-cohere-key
+# NVIDIA_API_KEY=your-nvidia-nim-key
+# Optional defaults (free-first)
+# BLOG_GEMINI_MODEL=gemini-2.5-flash
+# BLOG_OPENROUTER_MODEL=openrouter/free
+# BLOG_CLOUDFLARE_MODEL=@cf/meta/llama-3.1-8b-instruct
 GROQ_API_KEY=your-groq-key
 # Fallback when SerpAPI returns 429 / rate limit
 # TRENDING_FALLBACK_GROQ_API_KEY=your-second-groq-key

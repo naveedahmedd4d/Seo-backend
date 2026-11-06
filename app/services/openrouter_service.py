@@ -249,25 +249,27 @@ async def generate_content(
     ctx = get_llm_context()
     try:
         if ctx is not None:
-            if ctx.provider == "openrouter":
-                return await _openrouter_chat_completion(
+            if ctx.provider == "groq":
+                return await _groq_chat_completion(
                     messages=messages,
                     model=model or ctx.model,
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    timeout_seconds=max(timeout_seconds, 120.0),
+                    top_p=top_p,
+                    frequency_penalty=frequency_penalty,
+                    presence_penalty=presence_penalty,
+                    timeout_seconds=timeout_seconds,
                     api_key_override=ctx.api_key,
                 )
-            return await _groq_chat_completion(
+            return await _provider_chat_completion(
+                provider=ctx.provider,
                 messages=messages,
                 model=model or ctx.model,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                top_p=top_p,
-                frequency_penalty=frequency_penalty,
-                presence_penalty=presence_penalty,
-                timeout_seconds=timeout_seconds,
-                api_key_override=ctx.api_key,
+                timeout_seconds=max(timeout_seconds, 120.0),
+                api_key=ctx.api_key,
+                account_id=getattr(ctx, "account_id", None),
             )
         if not settings.groq_api_key:
             raise ValueError("Add your Groq API key in Settings")
@@ -782,44 +784,205 @@ async def _openrouter_chat_completion(
         raise Exception("No content generated in OpenRouter response")
 
 
+async def _openai_compatible_chat_completion(
+    *,
+    url: str,
+    api_key: str,
+    messages: List[Dict[str, str]],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_seconds: float,
+    provider_label: str,
+) -> str:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    async with httpx.AsyncClient(timeout=timeout_seconds, verify=httpx_verify()) as client:
+        response = await client.post(url, headers=headers, json=payload)
+        if response.status_code != 200:
+            try:
+                body = response.json()
+                error_msg = (
+                    (body.get("error") or {}).get("message")
+                    or body.get("message")
+                    or response.text
+                )
+            except Exception:
+                error_msg = response.text
+            raise Exception(f"{provider_label} API error {response.status_code}: {error_msg}")
+        data = response.json()
+        if "choices" in data and data["choices"]:
+            msg = data["choices"][0].get("message") or {}
+            content = msg.get("content")
+            if content is None:
+                raise Exception(f"{provider_label} returned no message content. Response: {data}")
+            return content
+        raise Exception(f"No content generated in {provider_label} response")
+
+
+async def _gemini_chat_completion(
+    messages: List[Dict[str, str]],
+    model: str,
+    max_tokens: int = 2000,
+    temperature: float = 0.7,
+    timeout_seconds: float = 180.0,
+    *,
+    api_key_override: Optional[str] = None,
+) -> str:
+    api_key = api_key_override or getattr(settings, "gemini_api_key", None)
+    if not api_key:
+        raise ValueError("Gemini API key not configured")
+    return await _openai_compatible_chat_completion(
+        url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        api_key=api_key,
+        messages=messages,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        timeout_seconds=timeout_seconds,
+        provider_label="Gemini",
+    )
+
+
+async def _provider_chat_completion(
+    *,
+    provider: str,
+    messages: List[Dict[str, str]],
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    timeout_seconds: float,
+    api_key: str,
+    account_id: Optional[str] = None,
+) -> str:
+    if provider == "openrouter":
+        return await _openrouter_chat_completion(
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            api_key_override=api_key,
+        )
+    if provider == "gemini":
+        return await _gemini_chat_completion(
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            api_key_override=api_key,
+        )
+    if provider == "cloudflare":
+        if not account_id:
+            raise ValueError("Cloudflare account id is required")
+        url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1/chat/completions"
+        )
+        return await _openai_compatible_chat_completion(
+            url=url,
+            api_key=api_key,
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            provider_label="Cloudflare",
+        )
+    if provider == "mistral":
+        return await _openai_compatible_chat_completion(
+            url="https://api.mistral.ai/v1/chat/completions",
+            api_key=api_key,
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            provider_label="Mistral",
+        )
+    if provider == "cohere":
+        return await _openai_compatible_chat_completion(
+            url="https://api.cohere.ai/compatibility/v1/chat/completions",
+            api_key=api_key,
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            provider_label="Cohere",
+        )
+    if provider == "nvidia":
+        return await _openai_compatible_chat_completion(
+            url="https://integrate.api.nvidia.com/v1/chat/completions",
+            api_key=api_key,
+            messages=messages,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+            provider_label="NVIDIA",
+        )
+    raise ValueError(f"Unsupported LLM provider: {provider}")
+
+
 async def generate_blog_content_with_groq(
     prompt: str,
     max_tokens: int = 2000,
     temperature: float = 0.7
 ) -> str:
-    """Generate blog content. Uses LLM_CONTEXT when set; else OpenRouter then Groq platform keys."""
+    """Generate blog content via LLM_CONTEXT or platform free-first keys."""
     ctx = get_llm_context()
     if ctx is not None:
-        if ctx.provider == "openrouter":
-            return await _openrouter_chat_completion(
+        if ctx.provider == "groq":
+            return await _groq_chat_completion(
                 messages=[{"role": "user", "content": prompt}],
                 model=ctx.model,
                 max_tokens=max_tokens,
                 temperature=temperature,
-                timeout_seconds=180.0,
+                timeout_seconds=120.0,
+                use_blog_fallback=False,
                 api_key_override=ctx.api_key,
             )
-        return await _groq_chat_completion(
+        return await _provider_chat_completion(
+            provider=ctx.provider,
             messages=[{"role": "user", "content": prompt}],
             model=ctx.model,
             max_tokens=max_tokens,
             temperature=temperature,
-            timeout_seconds=120.0,
-            use_blog_fallback=False,
-            api_key_override=ctx.api_key,
+            timeout_seconds=180.0,
+            api_key=ctx.api_key,
+            account_id=getattr(ctx, "account_id", None),
         )
 
+    if getattr(settings, "gemini_api_key", None):
+        return await _gemini_chat_completion(
+            messages=[{"role": "user", "content": prompt}],
+            model=getattr(settings, "blog_gemini_model", "gemini-2.5-flash"),
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=180.0,
+        )
     if settings.openrouter_api_key:
-        model = getattr(settings, "blog_openrouter_model", "anthropic/claude-opus-4-7")
         return await _openrouter_chat_completion(
             messages=[{"role": "user", "content": prompt}],
-            model=model,
+            model=getattr(settings, "blog_openrouter_model", "openrouter/free"),
             max_tokens=max_tokens,
             temperature=temperature,
             timeout_seconds=180.0,
         )
     if not settings.groq_api_key:
-        raise ValueError("No LLM API key configured for blog generation. Set OPENROUTER_API_KEY or GROQ_API_KEY.")
+        raise ValueError(
+            "No LLM API key configured for blog generation. "
+            "Add Gemini, OpenRouter, Groq, Cloudflare, Mistral, Cohere, or NVIDIA in Settings."
+        )
     return await _groq_chat_completion(
         messages=[{"role": "user", "content": prompt}],
         model=BLOG_GENERATION_MODEL_GROQ,
