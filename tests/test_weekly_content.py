@@ -9,7 +9,11 @@ from app.database import Base
 from app.models.user import User
 from app.services.auth_service import get_password_hash
 from app.services.international_events_service import _load_seed, upcoming_week_window
-from app.services.weekly_content_service import import_keywords_csv, iso_week_key
+from app.services.weekly_content_service import (
+    delete_keyword_plan_item,
+    import_keywords_csv,
+    iso_week_key,
+)
 from app.models.weekly_content import KeywordPlanItem
 
 
@@ -92,3 +96,29 @@ def test_import_keywords_csv_plain_lines(db_session, test_user):
         content=content,
     )
     assert created == 2
+
+
+def test_delete_keyword_plan_item(db_session, test_user):
+    content = b"keyword,category,priority\nkeep me,Tech,1\ndelete me,Tech,2\n"
+    import_keywords_csv(
+        db_session,
+        test_user.id,
+        filename="keywords.csv",
+        content=content,
+    )
+    rows = (
+        db_session.query(KeywordPlanItem)
+        .filter(KeywordPlanItem.user_id == test_user.id)
+        .order_by(KeywordPlanItem.priority.asc())
+        .all()
+    )
+    assert len(rows) == 2
+    to_delete = rows[1]
+    assert delete_keyword_plan_item(db_session, test_user.id, to_delete.id) is True
+    remaining = (
+        db_session.query(KeywordPlanItem)
+        .filter(KeywordPlanItem.user_id == test_user.id)
+        .all()
+    )
+    assert [r.keyword for r in remaining] == ["keep me"]
+    assert delete_keyword_plan_item(db_session, test_user.id, to_delete.id) is False

@@ -468,6 +468,20 @@ def pending_keyword_count(db: Session, user_id: int) -> int:
     )
 
 
+def delete_keyword_plan_item(db: Session, user_id: int, item_id: int) -> bool:
+    """Remove a queue row owned by the user. Does not unpublish WordPress/social posts."""
+    row = (
+        db.query(KeywordPlanItem)
+        .filter(KeywordPlanItem.id == item_id, KeywordPlanItem.user_id == user_id)
+        .first()
+    )
+    if not row:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
 async def run_goal2_for_user(
     db: Session,
     user: User,
@@ -542,6 +556,14 @@ async def run_goal2_for_user(
     failed = 0
 
     for item in items:
+        # Skip if the user deleted this queue row while the run was in progress.
+        still = (
+            db.query(KeywordPlanItem.id)
+            .filter(KeywordPlanItem.id == item.id, KeywordPlanItem.user_id == user.id)
+            .first()
+        )
+        if not still:
+            continue
         item.error_message = None
         db.commit()
         publish_data: dict[str, Any] | None = None
@@ -605,10 +627,16 @@ async def run_goal2_for_user(
                 )
                 publish_data = publish_response.model_dump(mode="json")
                 # Persist WP result immediately so a later social failure does not orphan the post.
-                item.workflow_id = workflow.id
-                item.wordpress_post_id = publish_data.get("post_id")
-                item.wordpress_link = publish_data.get("link")
-                db.commit()
+                live = (
+                    db.query(KeywordPlanItem)
+                    .filter(KeywordPlanItem.id == item.id, KeywordPlanItem.user_id == user.id)
+                    .first()
+                )
+                if live:
+                    live.workflow_id = workflow.id
+                    live.wordpress_post_id = publish_data.get("post_id")
+                    live.wordpress_link = publish_data.get("link")
+                    db.commit()
 
                 state = workflow.state_data or {}
                 title = state.get("title") or item.keyword
@@ -648,27 +676,43 @@ async def run_goal2_for_user(
                     social_error = str(social_exc)[:2000]
 
             # WP success consumes quota even if social sharing failed.
-            item.status = "used"
-            item.iso_week = week
-            item.used_at = datetime.now(timezone.utc)
-            item.workflow_id = workflow_id
+            live = (
+                db.query(KeywordPlanItem)
+                .filter(KeywordPlanItem.id == item.id, KeywordPlanItem.user_id == user.id)
+                .first()
+            )
+            if not live:
+                published += 1
+                continue
+            live.status = "used"
+            live.iso_week = week
+            live.used_at = datetime.now(timezone.utc)
+            live.workflow_id = workflow_id
             if publish_data:
-                item.wordpress_post_id = publish_data.get("post_id") or item.wordpress_post_id
-                item.wordpress_link = publish_data.get("link") or item.wordpress_link
-            item.social_post_history_id = social_history_id
-            item.result_json = {
+                live.wordpress_post_id = publish_data.get("post_id") or live.wordpress_post_id
+                live.wordpress_link = publish_data.get("link") or live.wordpress_link
+            live.social_post_history_id = social_history_id
+            live.result_json = {
                 "publish": publish_data,
                 "social": social_results,
                 "social_error": social_error,
             }
-            item.error_message = social_error
+            live.error_message = social_error
             published += 1
             db.commit()
         except Exception as exc:
             logger.exception("Goal2 blog failed for user %s keyword %s", user.id, item.id)
-            item.status = "failed"
+            live = (
+                db.query(KeywordPlanItem)
+                .filter(KeywordPlanItem.id == item.id, KeywordPlanItem.user_id == user.id)
+                .first()
+            )
+            if not live:
+                failed += 1
+                continue
+            live.status = "failed"
             # Keep iso_week unset unless WP already published (handled above as used).
-            item.error_message = str(exc)[:2000]
+            live.error_message = str(exc)[:2000]
             failed += 1
             db.commit()
 

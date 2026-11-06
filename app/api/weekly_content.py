@@ -164,6 +164,18 @@ async def list_keywords(
     return KeywordPlanListResponse(items=items, total=len(items), pending_count=pending)
 
 
+@router.delete("/keywords/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_keyword(
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    deleted = svc.delete_keyword_plan_item(db, current_user.id, item_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Keyword not found")
+    return None
+
+
 @router.get("/blog-week", response_model=WeeklyBlogWeekResponse)
 async def get_blog_week(
     week: Optional[str] = None,
