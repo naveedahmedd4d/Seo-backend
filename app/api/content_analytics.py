@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
@@ -27,8 +28,12 @@ from app.services.content_analytics_service import (
     resolve_range,
 )
 from app.services.content_analytics_sync_service import execute_sync_run
+from app.services.published_options_service import merge_options
+from app.services.wordpress_service import list_published_content
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _range(
@@ -138,13 +143,39 @@ async def published_blog_options(
         WordPressSite.user_id == current_user.id,
         PublishedPost.wp_status == "publish",
     ).order_by(PublishedPost.published_at.desc()).limit(limit).all()
-    return {"items": [{
-        "id": row.id,
-        "title": row.title or "Untitled article",
-        "website": row.wordpress_site.name,
-        "url": row.canonical_url or row.wp_link,
-        "published_at": (row.wordpress_published_at or row.published_at).isoformat(),
-    } for row in rows]}
+
+    tracked_by_site: dict[int, list] = {}
+    for row in rows:
+        tracked_by_site.setdefault(row.wordpress_site_id, []).append({
+            "id": row.id,
+            "wp_post_id": row.wp_post_id,
+            "site_id": row.wordpress_site_id,
+            "title": row.title,
+            "website": row.wordpress_site.name,
+            "url": row.canonical_url or row.wp_link,
+            "published_at": (row.wordpress_published_at or row.published_at).isoformat(),
+        })
+
+    # published_posts only records what this app published. A site connected
+    # with existing content has no rows, so also ask each site what it has.
+    sites = db.query(WordPressSite).filter(WordPressSite.user_id == current_user.id).all()
+    items: list[dict] = []
+    for site in sites:
+        tracked = tracked_by_site.get(site.id, [])
+        try:
+            live = await list_published_content(site, site.url)
+        except Exception as exc:
+            logger.info("could not list content for site %s: %s", site.id, exc)
+            live = []
+        items.extend(merge_options(tracked, live, site_id=site.id, website=site.name))
+
+    # Sites that were deleted may still have tracked rows; keep those too.
+    known_sites = {site.id for site in sites}
+    for site_id, tracked in tracked_by_site.items():
+        if site_id not in known_sites:
+            items.extend(tracked)
+
+    return {"items": items[:limit]}
 
 
 @router.get("/integrations")

@@ -13,6 +13,10 @@ class SocialPostGenerateRequest(BaseModel):
     template_variant: Optional[str] = None
     source: Literal["query", "article"] = "query"
     published_post_id: Optional[int] = None
+    # A post that exists on the site but was not published by this app has no
+    # published_posts row, so it is addressed by site + WordPress post id.
+    wordpress_site_id: Optional[int] = None
+    wp_post_id: Optional[int] = None
 
 
 class NewsResultItem(BaseModel):

@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
 from app.models.published_post import PublishedPost
+from app.models.wordpress_site import WordPressSite
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 import logging
 
@@ -298,39 +299,59 @@ async def _resolve_article_image(
 
 async def _bundle_from_article(db, current_user, request, serp_key):
     """Build the post from the user's own article rather than the news."""
-    if not request.published_post_id:
+    row = None
+    if request.published_post_id:
+        row = (
+            db.query(PublishedPost)
+            .filter(
+                PublishedPost.id == request.published_post_id,
+                PublishedPost.user_id == current_user.id,
+            )
+            .first()
+        )
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="That published article was not found.",
+            )
+        site = row.wordpress_site
+        wp_post_id = row.wp_post_id
+    elif request.wordpress_site_id and request.wp_post_id:
+        # An article published outside this app: no published_posts row, so it
+        # is addressed by site + WordPress post id instead.
+        site = (
+            db.query(WordPressSite)
+            .filter(
+                WordPressSite.id == request.wordpress_site_id,
+                WordPressSite.user_id == current_user.id,
+            )
+            .first()
+        )
+        if not site:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="That website was not found.",
+            )
+        wp_post_id = request.wp_post_id
+    else:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Select a published article.",
         )
-    row = (
-        db.query(PublishedPost)
-        .filter(
-            PublishedPost.id == request.published_post_id,
-            PublishedPost.user_id == current_user.id,
-        )
-        .first()
-    )
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="That published article was not found.",
-        )
 
-    site = row.wordpress_site
-    wp_post = await get_wp_post(site, row.wp_post_id)
+    wp_post = await get_wp_post(site, wp_post_id)
     if not wp_post.get("success"):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Could not read that article from WordPress.",
         )
 
-    title = wp_post.get("title") or row.title or ""
+    title = wp_post.get("title") or (row.title if row else "") or ""
     content_html = wp_post.get("content") or ""
     item = article_social_service.as_news_result(
         title=title,
         content_html=content_html,
-        url=row.canonical_url or row.wp_link,
+        url=(row.canonical_url or row.wp_link) if row else wp_post.get("link"),
         site=getattr(site, "name", None),
     )
     if not item["title"] and not item["snippet"]:
@@ -345,7 +366,8 @@ async def _bundle_from_article(db, current_user, request, serp_key):
         template_variant=request.template_variant,
     )
     image_url, image_source = await _resolve_article_image(
-        site, wp_post, content_html, title, row.target_keyword, serp_key,
+        site, wp_post, content_html, title,
+        row.target_keyword if row else None, serp_key,
     )
     return bundle, image_url, image_source
 
