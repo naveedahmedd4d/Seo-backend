@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Optional
 
@@ -14,7 +15,8 @@ from app.services.social_account_service import (
 
 logger = logging.getLogger(__name__)
 
-HASHNODE_GQL_URL = "https://gql.hashnode.com"
+# gql.hashnode.com now 301s to an HTML announcement page (empty/invalid JSON).
+HASHNODE_GQL_URL = "https://gql-beta.hashnode.com"
 
 ME_QUERY = """
 query Me {
@@ -39,17 +41,45 @@ mutation PublishPost($input: PublishPostInput!) {
 """
 
 
+def _auth_header(token: str) -> str:
+    """Hashnode accepts the PAT with or without a Bearer prefix."""
+    value = (token or "").strip()
+    if value.lower().startswith("bearer "):
+        return value
+    return f"Bearer {value}"
+
+
 async def _graphql(token: str, query: str, variables: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
+    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify(), follow_redirects=True) as client:
         response = await client.post(
             HASHNODE_GQL_URL,
-            headers={"Authorization": token.strip(), "Content-Type": "application/json"},
+            headers={
+                "Authorization": _auth_header(token),
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
             json={"query": query, "variables": variables or {}},
         )
     if response.status_code >= 400:
-        logger.error("Hashnode GraphQL HTTP error: %s", response.text)
-        response.raise_for_status()
-    payload = response.json()
+        logger.error("Hashnode GraphQL HTTP error: %s", response.text[:500])
+        raise ValueError(
+            f"Hashnode API error (HTTP {response.status_code}). "
+            "Check that your personal access token is valid."
+        )
+    content_type = (response.headers.get("content-type") or "").lower()
+    raw = (response.text or "").strip()
+    if not raw or "application/json" not in content_type:
+        raise ValueError(
+            "Hashnode returned a non-JSON response. "
+            "Use a Personal Access Token from hashnode.com/settings/developer."
+        )
+    try:
+        payload = response.json()
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Hashnode returned invalid JSON. "
+            "Use a Personal Access Token from hashnode.com/settings/developer."
+        ) from exc
     if payload.get("errors"):
         message = payload["errors"][0].get("message", "Hashnode API error")
         raise ValueError(message)
