@@ -9,6 +9,7 @@ from app.schemas.social_post import SocialPostPublishResultItem
 from app.services.blogger_service import create_post as create_blogger_post, get_valid_blogger_access_token
 from app.services.bluesky_service import create_post, get_valid_bluesky_session, upload_blob
 from app.services.devto_service import create_article as create_devto_article, get_devto_api_key
+from app.services.facebook_image_adapt import adapt_social_card_for_facebook_feed
 from app.services.facebook_service import get_valid_facebook_page_context, publish_page_photo
 from app.services.hashnode_service import get_hashnode_token, publish_article as publish_hashnode_article
 from app.services.http_ssl import httpx_verify
@@ -36,24 +37,6 @@ async def download_image_bytes(image_url: str) -> bytes:
         response = await client.get(image_url)
     response.raise_for_status()
     return response.content
-
-
-def _is_upload_post_auth_error(error: str | None) -> bool:
-    """True when Upload-Post rejected our API key / auth — first-party OAuth may still work."""
-    msg = (error or "").strip().lower()
-    if not msg:
-        return False
-    needles = (
-        "invalid api key",
-        "invalid apikey",
-        "unauthorized",
-        "forbidden",
-        "401",
-        "403",
-        "authentication",
-        "not configured",
-    )
-    return any(n in msg for n in needles)
 
 
 async def publish_to_platform(
@@ -92,11 +75,15 @@ async def publish_to_platform(
             description=description if isinstance(description, str) else None,
             platform_options=platform_options,
         )
-        if upload_result.success or not _is_upload_post_auth_error(upload_result.error):
+        if upload_result.success:
             return upload_result
-        # Auth failed — only fall through when a first-party account exists.
+        # Upload-Post failed. Prefer the user's connected first-party account
+        # (Facebook OAuth, etc.) whenever one exists — auth errors, unreachable
+        # media URLs, and page mismatches all used to stop here while the UI
+        # still showed the account as Active.
         if get_user_social_account(db, user_id, platform) is None:
             return upload_result
+        # Otherwise fall through to the first-party publisher below.
 
     if platform == "pinterest":
         return await _publish_to_pinterest(
@@ -554,9 +541,7 @@ async def _publish_to_facebook(
         if source_url:
             caption = f"{caption}\n\n{source_url}" if caption else source_url
 
-        # 4:5 social cards get empty side bars on desktop Facebook; pad to 1:1.
-        from app.services.facebook_image_adapt import adapt_social_card_for_facebook_feed
-
+        # 4:5 social cards get empty side bars on desktop Facebook; crop to 1:1.
         facebook_bytes = adapt_social_card_for_facebook_feed(resolved_image_bytes)
         result = await publish_page_photo(
             page_token,
