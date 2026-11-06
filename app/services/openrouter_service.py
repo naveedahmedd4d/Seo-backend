@@ -359,36 +359,33 @@ async def generate_news_headline(
     if is_pro_variant:
         prompt = f"""You are writing a scroll-stopping headline for a social media post (Instagram story / feed card). The visual style is bold centered text on a dark photo with marker-style highlights on key phrases.
 
-Below are 7 recent news articles. Write a headline in 2 to 4 lines:
-- Each line should be short and punchy (roughly 4–12 words per line).
-- Wrap exactly 2 to 3 short phrases in **double asterisks** for highlight blocks (e.g. **Tools that** reveal your hidden data). Each highlighted phrase must be 1–4 words.
+Below are recent news articles. Write a SHORT headline in 2 lines (3 max if needed):
+- Each line: 4–8 words, roughly 28–48 characters.
+- Wrap exactly 2 short phrases in **double asterisks** for highlights (e.g. **Science diplomacy** unites nations). Each highlight is 1–3 words.
 - Do not use any other markdown—only ** for highlights and newlines between lines.
-- Center-friendly rhythm: mix highlighted and non-highlighted words across lines.
-- Total length 100–220 characters. Accurate and not clickbait—must reflect the real story.
-- Capture the most newsworthy or emotional angle from the articles.
+- Total length 70–120 characters. Accurate, not clickbait.
+- Do NOT repeat the same phrase. Do NOT count characters or explain the task.
 {news_block}{query_line}
 
-Output only the headline. No quotes, no explanation. Use real newlines between lines."""
-        max_tokens = 260
-        max_chars = 260
-        max_lines = 4
+Output ONLY the headline text. No quotes, no preamble, no character counts, no explanation."""
+        max_tokens = 120
+        max_chars = 120
+        max_lines = 3
     else:
-        prompt = f"""You are writing a 2-LINE headline for a social media post (Instagram, Twitter, Facebook). The goal is to stop the scroll and get engagement—clicks, likes, shares.
+        prompt = f"""You are writing a SHORT 2-LINE headline for a social media post (Instagram, Twitter, Facebook).
 
-Style reference (long, descriptive, event then reaction): "Tyler Shough's Rookie Season Ends Without ROY — Fans and Analysts Debate the Snub"
+Style reference: "Rookie Season Ends Without ROY — Fans Debate the Snub"
 
-Below are 7 recent news articles. Write a headline in exactly two lines:
-- Use a long, descriptive style: state what happened (name/subject, outcome), then use an em dash — and add the reaction, debate, or why it matters (e.g. "Fans and Analysts Debate the Snub").
-- Line 1: Main hook—55–75 characters. Event or outcome with specifics (names, numbers). Can end with em dash — if the second part continues on line 2.
-- Line 2: Reaction, debate, or consequence—55–75 characters. What people are saying, the twist, or the stakes.
-- Put a single newline between line 1 and line 2. No other newlines.
-- Total length 120–180 characters. Accurate and not clickbait—must reflect the real story.
-- Capture the most newsworthy or emotional angle from the articles.
+Below are recent news articles. Write a headline in exactly two lines:
+- Line 1: Main hook — 35–55 characters (names/numbers OK). May end with em dash —
+- Line 2: Reaction or stakes — 35–55 characters
+- One newline between the two lines. Total 70–110 characters.
+- Accurate, not clickbait. Do NOT repeat phrases. Do NOT count characters or explain.
 {news_block}{query_line}
 
-Output only the 2-line headline. No quotes, no explanation. Use a real newline between the two lines."""
-        max_tokens = 220
-        max_chars = 220
+Output ONLY the 2-line headline. No quotes, no preamble, no character counts, no explanation."""
+        max_tokens = 100
+        max_chars = 110
         max_lines = 2
 
     if not has_usable_llm_key():
@@ -427,6 +424,61 @@ _NARRATION_RE = re.compile(
     r"the user wants|they want|provide \d|must be|should be)\b",
     re.IGNORECASE,
 )
+# Character-count / self-check chatter leaked into the headline string.
+_META_TAIL_RE = re.compile(
+    r"""(?ix)
+    \s*[\"']?\s*
+    (?:
+        length\s*:
+        | (?:asterisks?|stars?)\s+count
+        | count(?:ing)?\s+characters?
+        | characters?\s*(?:count|=|:)
+        | char(?:acter)?\s*count
+        | \d+\s+asterisks?
+    )
+    .*
+    $
+    """,
+)
+
+
+def _strip_headline_meta_tail(text: str) -> str:
+    """Cut off trailing 'length: … / Count characters: …' model self-checks."""
+    m = _META_TAIL_RE.search(text)
+    if m:
+        text = text[: m.start()]
+    return text.rstrip(" \t\"'")
+
+
+def _dedupe_repeated_phrases(text: str) -> str:
+    """Drop repeated headline clauses (common with reasoning models)."""
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) < 24:
+        return text
+    # Exact half-repeat: "Foo bar Foo bar"
+    mid = len(cleaned) // 2
+    for split_at in (mid, mid - 1, mid + 1):
+        if split_at <= 0 or split_at >= len(cleaned):
+            continue
+        left, right = cleaned[:split_at].strip(), cleaned[split_at:].strip()
+        if left and left == right:
+            return left
+    # Leading clause reappears later — drop the second copy (and anything after it
+    # if that copy was a trailing echo).
+    for size in range(min(80, len(cleaned) // 2), 17, -1):
+        phrase = cleaned[:size].rstrip(" —–-.,;:")
+        if len(phrase) < 18:
+            continue
+        second = cleaned.find(phrase, len(phrase))
+        if second > 0:
+            between = cleaned[len(phrase) : second].strip()
+            after = cleaned[second + len(phrase) :].strip()
+            if not after:
+                # Trailing echo: keep first + middle
+                return f"{phrase} {between}".strip() if between else phrase
+            # Drop only the second copy
+            return f"{phrase} {between} {after}".strip()
+    return text
 
 
 def clean_headline_output(raw: str, *, max_lines: int = 2) -> str:
@@ -445,6 +497,7 @@ def clean_headline_output(raw: str, *, max_lines: int = 2) -> str:
         return ""
 
     text = _THINK_BLOCK_RE.sub(" ", raw)
+    text = _strip_headline_meta_tail(text)
 
     # A labelled line is the model pointing at its own answer -- trust it, and
     # ignore everything outside those labels.
@@ -460,13 +513,29 @@ def clean_headline_output(raw: str, *, max_lines: int = 2) -> str:
         line = line.strip()
         if not line:
             continue
+        line = _strip_headline_meta_tail(line)
         if not labelled:
             if _LEAD_IN_RE.match(line) or _NARRATION_RE.search(line):
                 continue
+            # Meta-only lines (character counting) with no real headline words
+            if re.search(r"(?i)count(?:ing)?\s+characters?|asterisks?\s+count|length\s*:", line):
+                continue
         line = line.strip().strip('"').strip("'").strip()
         line = re.sub(r"^\*\*(.*)\*\*$", r"\1", line).strip()
+        line = _dedupe_repeated_phrases(line)
         if line:
             kept.append(line)
+
+    # If the model dumped everything on one line, split on an em dash when useful.
+    if len(kept) == 1 and max_lines >= 2:
+        one = kept[0]
+        for sep in (" — ", " – "):
+            if sep in one:
+                left, right = one.split(sep, 1)
+                left, right = left.strip(), right.strip()
+                if 18 <= len(left) <= 70 and 18 <= len(right) <= 80:
+                    kept = [f"{left} —", right]
+                    break
 
     return "\n".join(kept[:max_lines]).strip()
 

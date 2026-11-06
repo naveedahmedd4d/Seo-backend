@@ -60,3 +60,27 @@ def test_plain_output_is_untouched():
 
 def test_preamble_only_returns_empty_so_caller_can_error():
     assert clean_headline_output("Let me think about this.", max_lines=2) == ""
+
+
+def test_strips_character_count_meta_and_repeated_phrase():
+    """gpt-oss style: repeats the hook then narrates character counting."""
+    raw = (
+        '**Science diplomacy** unites nations today Celebrating World Science Day '
+        'for peace **Common ground** sparks global collaboration '
+        '**Science diplomacy** unites nations today" length: 2 asterisks count as '
+        'characters. Count characters: "**Science diplomacy**" ='
+    )
+    out = clean_headline_output(raw, max_lines=3)
+    assert "length:" not in out.lower()
+    assert "asterisks" not in out.lower()
+    assert "count characters" not in out.lower()
+    assert out.count("Science diplomacy") == 1
+    assert "Common ground" in out
+    assert len(out) < 160
+
+
+def test_splits_em_dash_into_two_lines():
+    raw = "Rookie Season Ends Without ROY — Fans Debate the Snub"
+    out = clean_headline_output(raw, max_lines=2)
+    assert "\n" in out
+    assert out.split("\n")[0].rstrip().endswith("—")

@@ -27,11 +27,13 @@ def test_generate_news_headline_pro1_preserves_highlights_and_lines():
 
     async def _run():
         with patch(
-            "app.services.openrouter_service.generate_blog_seo_content",
+            "app.services.openrouter_service.generate_content",
             new_callable=AsyncMock,
             return_value=raw,
-        ), patch("app.services.openrouter_service.settings") as mock_settings:
-            mock_settings.groq_api_key = "test-key"
+        ), patch(
+            "app.services.openrouter_service.has_usable_llm_key",
+            return_value=True,
+        ):
             return await generate_news_headline(
                 [{"title": "T", "source": "S", "snippet": "Sn", "date": "d"}],
                 "spacex",
@@ -53,10 +55,12 @@ def test_generate_news_headline_pro2_uses_pro_highlight_prompt():
 
     async def _run():
         with patch(
-            "app.services.openrouter_service.generate_blog_seo_content",
+            "app.services.openrouter_service.generate_content",
             side_effect=_capture,
-        ), patch("app.services.openrouter_service.settings") as mock_settings:
-            mock_settings.groq_api_key = "test-key"
+        ), patch(
+            "app.services.openrouter_service.has_usable_llm_key",
+            return_value=True,
+        ):
             await generate_news_headline(
                 [{"title": "T", "source": "S", "snippet": "Sn", "date": "d"}],
                 template_variant="pro-2",
@@ -76,10 +80,12 @@ def test_generate_news_headline_pro1_prompt_mentions_highlights():
 
     async def _run():
         with patch(
-            "app.services.openrouter_service.generate_blog_seo_content",
+            "app.services.openrouter_service.generate_content",
             side_effect=_capture,
-        ), patch("app.services.openrouter_service.settings") as mock_settings:
-            mock_settings.groq_api_key = "test-key"
+        ), patch(
+            "app.services.openrouter_service.has_usable_llm_key",
+            return_value=True,
+        ):
             await generate_news_headline(
                 [{"title": "T", "source": "S", "snippet": "Sn", "date": "d"}],
                 template_variant="pro-1",
@@ -95,11 +101,13 @@ def test_generate_news_headline_classic_two_lines_max():
 
     async def _run():
         with patch(
-            "app.services.openrouter_service.generate_blog_seo_content",
+            "app.services.openrouter_service.generate_content",
             new_callable=AsyncMock,
             return_value=raw,
-        ), patch("app.services.openrouter_service.settings") as mock_settings:
-            mock_settings.groq_api_key = "test-key"
+        ), patch(
+            "app.services.openrouter_service.has_usable_llm_key",
+            return_value=True,
+        ):
             return await generate_news_headline(
                 [{"title": "T", "source": "S", "snippet": "Sn", "date": "d"}],
             )
