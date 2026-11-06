@@ -16,7 +16,15 @@ from app.services.wordpress_service import decrypt_api_key, encrypt_api_key
 
 Provider = Literal["gemini", "openrouter", "groq", "cloudflare", "mistral", "cohere", "nvidia"]
 PreferredProvider = Literal[
-    "default", "gemini", "openrouter", "groq", "cloudflare", "mistral", "cohere", "nvidia"
+    "default",
+    "gemini",
+    "openrouter",
+    "groq",
+    "cloudflare",
+    "mistral",
+    "cohere",
+    "nvidia",
+    "claude_routine",
 ]
 ApiKeyProvider = Literal[
     "gemini",
@@ -99,6 +107,8 @@ class LlmCredentials:
     model: str
     source: Literal["user", "platform"]
     account_id: Optional[str] = None  # Cloudflare account id
+    user_id: Optional[int] = None
+    try_claude_routine: bool = False
 
 
 def normalize_fallback_order(raw: Optional[Sequence[str]]) -> List[Provider]:
@@ -300,6 +310,17 @@ def to_public_response(
         nvidia_configured=bool(getattr(row, "nvidia_api_key", None)),
         nvidia_hint=_mask_hint(getattr(row, "nvidia_api_key", None)),
         nvidia_platform_available=platform_flag("nvidia"),
+        claude_routine_url=(getattr(row, "claude_routine_url", None) or None),
+        claude_routine_configured=_is_claude_routine_row_ready(row),
+        claude_routine_token_configured=bool(getattr(row, "claude_routine_token", None)),
+        claude_routine_token_hint=_mask_hint(getattr(row, "claude_routine_token", None)),
+        claude_routine_callback_secret_configured=bool(
+            getattr(row, "claude_routine_callback_secret", None)
+        ),
+        claude_routine_callback_secret_hint=_mask_hint(
+            getattr(row, "claude_routine_callback_secret", None)
+        ),
+        claude_routine_webhook_path="/api/webhooks/claude-routine",
         trending_fallback_groq_configured=bool(row.trending_fallback_groq_api_key),
         trending_fallback_groq_hint=_mask_hint(row.trending_fallback_groq_api_key),
         trending_fallback_groq_platform_available=platform_flag("trending_fallback_groq"),
@@ -322,6 +343,16 @@ def to_public_response(
         preferred_model=row.preferred_model,
         fallback_order=normalize_fallback_order(row.fallback_order),  # type: ignore[arg-type]
         updated_at=row.updated_at,
+    )
+
+
+def _is_claude_routine_row_ready(row: UserLlmSettings) -> bool:
+    from app.services.claude_routine_service import is_valid_fire_url
+
+    return bool(
+        is_valid_fire_url(getattr(row, "claude_routine_url", None))
+        and getattr(row, "claude_routine_token", None)
+        and getattr(row, "claude_routine_callback_secret", None)
     )
 
 
@@ -350,6 +381,9 @@ def upsert_settings(
     mistral_api_key: Optional[str] = None,
     cohere_api_key: Optional[str] = None,
     nvidia_api_key: Optional[str] = None,
+    claude_routine_url: Optional[str] = None,
+    claude_routine_token: Optional[str] = None,
+    claude_routine_callback_secret: Optional[str] = None,
     trending_fallback_groq_api_key: Optional[str] = None,
     blog_fallback_groq_api_key: Optional[str] = None,
     serpapi_api_key: Optional[str] = None,
@@ -363,6 +397,7 @@ def upsert_settings(
     clear_mistral_api_key: bool = False,
     clear_cohere_api_key: bool = False,
     clear_nvidia_api_key: bool = False,
+    clear_claude_routine: bool = False,
     clear_trending_fallback_groq_api_key: bool = False,
     clear_blog_fallback_groq_api_key: bool = False,
     clear_serpapi_api_key: bool = False,
@@ -387,6 +422,28 @@ def upsert_settings(
     _apply_key_field(row, "mistral_api_key", value=mistral_api_key, clear=clear_mistral_api_key)
     _apply_key_field(row, "cohere_api_key", value=cohere_api_key, clear=clear_cohere_api_key)
     _apply_key_field(row, "nvidia_api_key", value=nvidia_api_key, clear=clear_nvidia_api_key)
+    if clear_claude_routine:
+        row.claude_routine_url = None
+        row.claude_routine_token = None
+        row.claude_routine_callback_secret = None
+    else:
+        if claude_routine_url is not None:
+            cleaned_url = claude_routine_url.strip()
+            if cleaned_url:
+                from app.services.claude_routine_service import validate_fire_url
+
+                row.claude_routine_url = validate_fire_url(cleaned_url)
+            else:
+                row.claude_routine_url = None
+        _apply_key_field(
+            row, "claude_routine_token", value=claude_routine_token, clear=False
+        )
+        _apply_key_field(
+            row,
+            "claude_routine_callback_secret",
+            value=claude_routine_callback_secret,
+            clear=False,
+        )
     _apply_key_field(
         row,
         "trending_fallback_groq_api_key",
@@ -405,11 +462,11 @@ def upsert_settings(
     _apply_key_field(row, "apify_api_key", value=apify_api_key, clear=clear_apify_api_key)
 
     if preferred_provider is not None:
-        allowed = {"default", *DEFAULT_FALLBACK_ORDER}
+        allowed = {"default", "claude_routine", *DEFAULT_FALLBACK_ORDER}
         if preferred_provider not in allowed:
             raise ValueError(
-                "preferred_provider must be default, gemini, openrouter, groq, "
-                "cloudflare, mistral, cohere, or nvidia"
+                "preferred_provider must be default, claude_routine, gemini, openrouter, "
+                "groq, cloudflare, mistral, cohere, or nvidia"
             )
         row.preferred_provider = preferred_provider
 
@@ -538,6 +595,7 @@ def resolve_llm_credentials(
     preferred: PreferredProvider = "default"
     preferred_model: Optional[str] = None
     fallback = list(DEFAULT_FALLBACK_ORDER)
+    try_claude_routine = False
 
     keys: dict[Provider, tuple[Optional[str], Optional[str]]] = {
         "gemini": (None, None),
@@ -551,7 +609,14 @@ def resolve_llm_credentials(
 
     owner = is_platform_owner(user)
     if row:
-        preferred = (row.preferred_provider or "default")  # type: ignore[assignment]
+        raw_preferred = (row.preferred_provider or "default")
+        from app.services.claude_routine_service import is_routine_configured
+
+        if raw_preferred == "claude_routine":
+            try_claude_routine = is_routine_configured(db, user.id)
+            preferred = "default"
+        else:
+            preferred = raw_preferred  # type: ignore[assignment]
         preferred_model = row.preferred_model
         fallback = normalize_fallback_order(row.fallback_order)
         keys = {
@@ -596,6 +661,20 @@ def resolve_llm_credentials(
             model=model,
             source=source,
             account_id=account_id if provider == "cloudflare" else None,
+            user_id=user.id,
+            try_claude_routine=try_claude_routine,
+        )
+
+    if try_claude_routine:
+        # Routine-only mode: still return a stub so callers can try the webhook path.
+        # generate_content will fire the routine; if it fails, raise a clear error.
+        return LlmCredentials(
+            provider="gemini",
+            api_key="",
+            model=_platform_default_model("gemini"),
+            source="user",
+            user_id=user.id,
+            try_claude_routine=True,
         )
 
     raise ValueError(

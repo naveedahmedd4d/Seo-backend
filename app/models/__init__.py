@@ -72,6 +72,7 @@ from app.models.weekly_content import (
     WeeklyContentSettings,
     WeeklySocialItem,
 )
+from app.models.claude_routine import ClaudeRoutineJob
 
 __all__ = [
     "User",
@@ -142,5 +143,6 @@ __all__ = [
     "WeeklyContentRun",
     "WeeklyContentSettings",
     "WeeklySocialItem",
+    "ClaudeRoutineJob",
 ]
 

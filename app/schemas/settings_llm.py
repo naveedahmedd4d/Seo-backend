@@ -22,6 +22,7 @@ PreferredProvider = Literal[
     "mistral",
     "cohere",
     "nvidia",
+    "claude_routine",
 ]
 ApiKeyProvider = Literal[
     "gemini",
@@ -88,6 +89,14 @@ class LlmSettingsResponse(BaseModel):
     nvidia_hint: Optional[str] = None
     nvidia_platform_available: bool = False
 
+    claude_routine_url: Optional[str] = None
+    claude_routine_configured: bool = False
+    claude_routine_token_configured: bool = False
+    claude_routine_token_hint: Optional[str] = None
+    claude_routine_callback_secret_configured: bool = False
+    claude_routine_callback_secret_hint: Optional[str] = None
+    claude_routine_webhook_path: str = "/api/webhooks/claude-routine"
+
     trending_fallback_groq_configured: bool = False
     trending_fallback_groq_hint: Optional[str] = None
     trending_fallback_groq_platform_available: bool = False
@@ -127,6 +136,9 @@ class LlmSettingsUpdateRequest(BaseModel):
     mistral_api_key: Optional[str] = None
     cohere_api_key: Optional[str] = None
     nvidia_api_key: Optional[str] = None
+    claude_routine_url: Optional[str] = None
+    claude_routine_token: Optional[str] = None
+    claude_routine_callback_secret: Optional[str] = None
     trending_fallback_groq_api_key: Optional[str] = None
     blog_fallback_groq_api_key: Optional[str] = None
     serpapi_api_key: Optional[str] = None
@@ -141,6 +153,7 @@ class LlmSettingsUpdateRequest(BaseModel):
     clear_mistral_api_key: bool = False
     clear_cohere_api_key: bool = False
     clear_nvidia_api_key: bool = False
+    clear_claude_routine: bool = False
     clear_trending_fallback_groq_api_key: bool = False
     clear_blog_fallback_groq_api_key: bool = False
     clear_serpapi_api_key: bool = False
