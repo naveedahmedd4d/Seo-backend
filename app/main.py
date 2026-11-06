@@ -71,28 +71,54 @@ app.include_router(
 
 @app.on_event("startup")
 def create_tables_if_missing():
-    """Create any new tables (e.g. published_posts) without Alembic.
+    """Create missing tables/columns when Alembic was not run on deploy.
     Non-blocking: if the DB is unreachable the app still starts."""
+    log = logging.getLogger(__name__)
     try:
         import app.models  # noqa: ensure all models registered
         from sqlalchemy import inspect, text
-        # Quick connectivity check with short timeout
+
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
+        # Prefer Alembic when available (adds columns + stamps revision).
+        try:
+            from alembic import command
+            from alembic.config import Config
+
+            cfg = Config("alembic.ini")
+            command.upgrade(cfg, "head")
+            log.info("Alembic upgrade head completed on startup")
+        except Exception as alembic_err:
+            log.warning("Alembic startup upgrade skipped: %s", alembic_err)
+
         inspector = inspect(engine)
         existing = set(inspector.get_table_names())
         alembic_managed_prefixes = ("authority_",)
         for table in Base.metadata.sorted_tables:
             if table.name not in existing:
                 if table.name.startswith(alembic_managed_prefixes):
-                    logging.getLogger(__name__).info(
-                        "Skipping startup create for Alembic-managed table: %s", table.name
-                    )
+                    log.info("Skipping startup create for Alembic-managed table: %s", table.name)
                     continue
                 table.create(engine)
-                logging.getLogger(__name__).info("Created missing table: %s", table.name)
+                log.info("Created missing table: %s", table.name)
+                continue
+
+            # Backfill columns on existing tables (e.g. user_llm_settings expansions).
+            existing_cols = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_cols:
+                    continue
+                col_type = column.type.compile(dialect=engine.dialect)
+                ddl = (
+                    f'ALTER TABLE "{table.name}" '
+                    f'ADD COLUMN IF NOT EXISTS "{column.name}" {col_type}'
+                )
+                with engine.begin() as conn:
+                    conn.execute(text(ddl))
+                log.info("Added missing column %s.%s", table.name, column.name)
+                existing_cols.add(column.name)
     except Exception as e:
-        logging.getLogger(__name__).warning("Startup table check skipped: %s", e)
+        log.warning("Startup table check skipped: %s", e)
 
 
 @app.get("/")
