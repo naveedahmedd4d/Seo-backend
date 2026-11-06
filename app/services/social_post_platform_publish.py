@@ -553,11 +553,16 @@ async def _publish_to_facebook(
         caption = message.strip()
         if source_url:
             caption = f"{caption}\n\n{source_url}" if caption else source_url
+
+        # 4:5 social cards get empty side bars on desktop Facebook; pad to 1:1.
+        from app.services.facebook_image_adapt import adapt_social_card_for_facebook_feed
+
+        facebook_bytes = adapt_social_card_for_facebook_feed(resolved_image_bytes)
         result = await publish_page_photo(
             page_token,
             page_id=page_id,
             caption=caption,
-            image_bytes=resolved_image_bytes,
+            image_bytes=facebook_bytes,
         )
         post_id = result.get("post_id") or result.get("id")
         return SocialPostPublishResultItem(
