@@ -165,6 +165,7 @@ def list_events(
     date_from: date,
     date_to: date,
     countries: Optional[list[str]] = None,
+    user_id: Optional[int] = None,
     limit: int = 500,
 ) -> list[CalendarEvent]:
     query = (
@@ -173,9 +174,18 @@ def list_events(
         .order_by(CalendarEvent.event_date.asc(), CalendarEvent.title.asc())
     )
     if countries:
-        scopes = ["INT", *[c.strip().upper() for c in countries if c and c.strip()]]
+        scopes = ["INT", "CUSTOM", *[c.strip().upper() for c in countries if c and c.strip()]]
         query = query.filter(CalendarEvent.country_or_scope.in_(scopes))
-    return query.limit(limit).all()
+    rows = query.limit(limit).all()
+    if user_id is None:
+        return rows
+    # Custom topics are user-scoped via external_id prefix user-{id}-…
+    prefix = f"user-{user_id}-"
+    return [
+        row
+        for row in rows
+        if row.source != "custom" or (row.external_id or "").startswith(prefix)
+    ]
 
 
 def upcoming_week_window(today: Optional[date] = None) -> tuple[date, date]:

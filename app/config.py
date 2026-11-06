@@ -116,6 +116,10 @@ class Settings(BaseSettings):
     upload_post_base_url: str = "https://api.upload-post.com/api"
     # Optional Facebook Page id when posting via Upload-Post (falls back to upload_post_user if numeric).
     upload_post_facebook_page_id: Optional[str] = None
+
+    # Shared secret for the Monday weekly-content cron (GitHub Actions / Render Cron).
+    # Send as Authorization: Bearer <secret> to POST /api/weekly-content/cron/run-due
+    weekly_cron_secret: Optional[str] = None
     
     model_config = {
         "env_file": str(_ENV_FILE),

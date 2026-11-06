@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.auth import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.weekly_content import (
@@ -17,10 +18,14 @@ from app.schemas.weekly_content import (
     KeywordCsvUploadResponse,
     KeywordPlanItemResponse,
     KeywordPlanListResponse,
+    SocialTopicCreate,
+    SocialTopicResponse,
     WeeklyBlogItemResponse,
     WeeklyBlogWeekResponse,
     WeeklyContentSettingsResponse,
     WeeklyContentSettingsUpdate,
+    WeeklyCronRunResponse,
+    WeeklyReadinessResponse,
     WeeklyRunResponse,
     WeeklySocialItemResponse,
     WeeklySocialWeekResponse,
@@ -79,6 +84,7 @@ async def get_events(
         date_from=start,
         date_to=end,
         countries=list(settings.countries or []),
+        user_id=current_user.id,
         limit=1000,
     )
     items = [
@@ -93,6 +99,39 @@ async def get_events(
         for r in rows
     ]
     return CalendarEventsResponse(items=items, total=len(items))
+
+
+@router.post("/social-topics", response_model=SocialTopicResponse, status_code=status.HTTP_201_CREATED)
+async def create_social_topic(
+    body: SocialTopicCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = svc.create_social_topic(
+            db,
+            current_user.id,
+            topic=body.topic,
+            publish_date=body.publish_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return SocialTopicResponse(**data)
+
+
+@router.delete("/social-topics/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_social_topic(
+    event_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        deleted = svc.delete_social_topic(db, current_user.id, event_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+    return None
 
 
 @router.get("/social-week", response_model=WeeklySocialWeekResponse)
@@ -231,3 +270,32 @@ async def run_weekly_now(
         result_summary=run.result_summary,
         error_summary=run.error_summary,
     )
+
+
+@router.get("/readiness", response_model=WeeklyReadinessResponse)
+async def get_readiness(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return WeeklyReadinessResponse(**svc.get_weekly_readiness(db, current_user.id))
+
+
+@router.post("/cron/run-due", response_model=WeeklyCronRunResponse)
+async def cron_run_due(
+    force: bool = Query(default=False),
+    authorization: Optional[str] = Header(default=None),
+):
+    """Scheduler entry for Monday auto-publish. Auth: Bearer WEEKLY_CRON_SECRET."""
+    secret = (settings.weekly_cron_secret or "").strip()
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="WEEKLY_CRON_SECRET is not configured",
+        )
+    token = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token or token != secret:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cron secret")
+    ran = await svc.run_due_weekly_content(force=force)
+    return WeeklyCronRunResponse(ran=ran, iso_week=svc.iso_week_key(), force=force)

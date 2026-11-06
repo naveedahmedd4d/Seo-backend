@@ -1,0 +1,19 @@
+# Optional Render Blueprint for a dedicated Monday cron job (starter plan).
+# Free-tier alternative (already wired): GitHub Actions `.github/workflows/weekly-content.yml`
+# calling POST /api/weekly-content/cron/run-due with WEEKLY_CRON_SECRET.
+#
+# If you create this cron service, copy the same env vars from `seo-backend`
+# (at minimum DATABASE_URL + OPENROUTER_API_KEY + social/WP credentials).
+
+services:
+  - type: cron
+    name: seo-weekly-content
+    runtime: python
+    plan: starter
+    region: ohio
+    schedule: "0 9 * * 1"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.weekly_content
+    autoDeploy: true
+    branch: main
+    repo: https://github.com/naveedahmedd4d/Seo-backend

@@ -6,7 +6,8 @@ import csv
 import io
 import logging
 import re
-from datetime import date, datetime, timezone
+import uuid
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from app.models.weekly_content import (
 from app.models.wordpress_site import WordPressSite
 from app.services.international_events_service import (
     DEFAULT_COUNTRIES,
+    current_iso_week_window,
     list_events,
     sync_calendar_events,
     upcoming_week_window,
@@ -49,6 +51,100 @@ def iso_week_key(d: Optional[date] = None) -> str:
     target = d or date.today()
     year, week, _ = target.isocalendar()
     return f"{year}-W{week:02d}"
+
+
+def week_bucket_for_date(publish_date: date, *, today: Optional[date] = None) -> str:
+    """Classify a publish date relative to today: current | next | upcoming | past."""
+    today = today or date.today()
+    current_start, current_end = current_iso_week_window(today)
+    next_start = current_end + timedelta(days=1)
+    next_end = next_start + timedelta(days=6)
+    if publish_date < current_start:
+        return "past"
+    if current_start <= publish_date <= current_end:
+        return "current"
+    if next_start <= publish_date <= next_end:
+        return "next"
+    return "upcoming"
+
+
+def _custom_topic_external_id(user_id: int) -> str:
+    return f"user-{user_id}-topic-{uuid.uuid4().hex[:12]}"
+
+
+def _is_user_custom_event(event: CalendarEvent, user_id: int) -> bool:
+    return event.source == "custom" and (event.external_id or "").startswith(f"user-{user_id}-")
+
+
+def create_social_topic(
+    db: Session,
+    user_id: int,
+    *,
+    topic: str,
+    publish_date: date,
+) -> dict[str, Any]:
+    """Queue a custom social topic into the ISO week of publish_date."""
+    title = " ".join((topic or "").split()).strip()
+    if not title:
+        raise ValueError("Topic is required")
+    if len(title) > 255:
+        raise ValueError("Topic must be 255 characters or fewer")
+
+    week = iso_week_key(publish_date)
+    bucket = week_bucket_for_date(publish_date)
+    event = CalendarEvent(
+        event_date=publish_date,
+        title=title,
+        country_or_scope="CUSTOM",
+        source="custom",
+        external_id=_custom_topic_external_id(user_id),
+        description=f"Custom social topic scheduled for {publish_date.isoformat()}",
+    )
+    db.add(event)
+    db.flush()
+
+    item = WeeklySocialItem(
+        user_id=user_id,
+        iso_week=week,
+        calendar_event_id=event.id,
+        status="queued",
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(event)
+    db.refresh(item)
+
+    return {
+        "event_id": event.id,
+        "item_id": item.id,
+        "topic": event.title,
+        "publish_date": event.event_date,
+        "iso_week": week,
+        "week_bucket": bucket,
+        "status": item.status,
+        "source": event.source,
+    }
+
+
+def delete_social_topic(db: Session, user_id: int, event_id: int) -> bool:
+    """Delete a custom topic (and its weekly social item). UN/Nager events cannot be deleted."""
+    event = db.query(CalendarEvent).filter(CalendarEvent.id == event_id).first()
+    if not event:
+        return False
+    if not _is_user_custom_event(event, user_id):
+        raise ValueError("Only custom topics you created can be deleted")
+
+    (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user_id,
+            WeeklySocialItem.calendar_event_id == event.id,
+        )
+        .delete(synchronize_session=False)
+    )
+    db.delete(event)
+    db.commit()
+    return True
 
 
 def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
@@ -87,9 +183,9 @@ def update_settings(
         cleaned = [str(c).strip().upper() for c in changes["countries"] if str(c).strip()]
         row.countries = cleaned or list(DEFAULT_COUNTRIES)
     if "max_social_per_week" in changes and changes["max_social_per_week"] is not None:
-        row.max_social_per_week = int(changes["max_social_per_week"])
+        row.max_social_per_week = max(1, min(30, int(changes["max_social_per_week"])))
     if "blogs_per_week" in changes and changes["blogs_per_week"] is not None:
-        row.blogs_per_week = int(changes["blogs_per_week"])
+        row.blogs_per_week = max(1, min(10, int(changes["blogs_per_week"])))
     if "wordpress_site_id" in changes:
         site_id = changes["wordpress_site_id"]
         if site_id is None:
@@ -249,6 +345,63 @@ async def _generate_and_publish_social(
     return history, [r.model_dump(mode="json") for r in results]
 
 
+def _goal1_events_for_week(
+    db: Session,
+    user_id: int,
+    *,
+    week: str,
+    countries: list[str],
+    cap: int,
+) -> list[CalendarEvent]:
+    """UN/Nager events in the rolling week window + this user's custom topics for `week`."""
+    date_from, date_to = upcoming_week_window()
+    events = list_events(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        countries=countries,
+        user_id=user_id,
+    )
+    # Prefer already-queued custom topics for this ISO week even if outside today..+6.
+    queued_custom_ids = [
+        row.calendar_event_id
+        for row in (
+            db.query(WeeklySocialItem)
+            .filter(
+                WeeklySocialItem.user_id == user_id,
+                WeeklySocialItem.iso_week == week,
+                WeeklySocialItem.status.in_(("queued", "failed", "generating")),
+            )
+            .all()
+        )
+    ]
+    if queued_custom_ids:
+        extras = (
+            db.query(CalendarEvent)
+            .filter(
+                CalendarEvent.id.in_(queued_custom_ids),
+                CalendarEvent.source == "custom",
+            )
+            .all()
+        )
+        seen = {e.id for e in events}
+        for event in extras:
+            if event.id not in seen and _is_user_custom_event(event, user_id):
+                events.append(event)
+                seen.add(event.id)
+
+    filtered: list[CalendarEvent] = []
+    for event in events:
+        if event.source == "custom":
+            if not _is_user_custom_event(event, user_id):
+                continue
+            # Only publish custom topics in the ISO week they were scheduled for.
+            if iso_week_key(event.event_date) != week:
+                continue
+        filtered.append(event)
+    return filtered[:cap]
+
+
 async def run_goal1_for_user(
     db: Session,
     user: User,
@@ -256,16 +409,24 @@ async def run_goal1_for_user(
     run: WeeklyContentRun,
 ) -> dict:
     week = run.iso_week
-    date_from, date_to = upcoming_week_window()
     countries = list(settings.countries or DEFAULT_COUNTRIES)
-    events = list_events(db, date_from=date_from, date_to=date_to, countries=countries)
     cap = max(1, int(settings.max_social_per_week or 7))
-    events = events[:cap]
+    events = _goal1_events_for_week(db, user.id, week=week, countries=countries, cap=cap)
 
     platforms = _connected_platforms(db, user.id, include_outreach=False)
     created = 0
     published = 0
     failed = 0
+
+    if not events:
+        logger.info("Goal1 skipped for user %s week %s: no upcoming events", user.id, week)
+        return {
+            "events": 0,
+            "created": 0,
+            "published": 0,
+            "failed": 0,
+            "skipped": "no_upcoming_events",
+        }
 
     if not platforms:
         for event in events:
@@ -330,12 +491,17 @@ async def run_goal1_for_user(
         try:
             item.status = "generating"
             db.commit()
+            snippet = event.description or (
+                f"Custom social topic: {event.title}"
+                if event.source == "custom"
+                else f"International observance: {event.title}"
+            )
             history, results = await _generate_and_publish_social(
                 db,
                 user,
                 query=event.title,
                 source_title=event.title,
-                source_snippet=event.description or f"International observance: {event.title}",
+                source_snippet=snippet,
                 source_url=None,
                 platforms=platforms,
                 settings_snapshot={
@@ -343,6 +509,7 @@ async def run_goal1_for_user(
                     "calendar_event_id": event.id,
                     "iso_week": week,
                     "platforms": platforms,
+                    "custom_topic": event.source == "custom",
                 },
             )
             item.social_post_history_id = history.id
@@ -550,6 +717,20 @@ async def run_goal2_for_user(
         if retries:
             db.commit()
             items = items + retries
+
+    if not items:
+        logger.info(
+            "Goal2 skipped for user %s week %s: empty keyword queue (pending=%s)",
+            user.id,
+            week,
+            pending_keyword_count(db, user.id),
+        )
+        return {
+            "selected": 0,
+            "published": already_used,
+            "failed": 0,
+            "skipped": "empty_keyword_queue",
+        }
 
     platforms = _connected_platforms(db, user.id, include_outreach=True)
     published = 0
@@ -804,7 +985,9 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
 
     db = SessionLocal()
     count = 0
+    week = iso_week_key()
     try:
+        logger.info("Weekly content cron started (week=%s force=%s)", week, force)
         await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
         rows = (
             db.query(WeeklyContentSettings)
@@ -814,11 +997,11 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
             )
             .all()
         )
+        logger.info("Weekly content cron found %s enabled user setting(s)", len(rows))
         for settings in rows:
             user = db.query(User).filter(User.id == settings.user_id).first()
             if not user:
                 continue
-            week = iso_week_key()
             if settings.last_run_iso_week == week and not force:
                 existing = (
                     db.query(WeeklyContentRun)
@@ -830,12 +1013,134 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
                     .first()
                 )
                 if existing:
+                    logger.info("Skipping user %s — already completed %s", user.id, week)
                     continue
             await run_weekly_for_user(db, user, trigger="scheduled", force=force)
             count += 1
+        logger.info("Weekly content cron finished — ran %s user(s)", count)
         return count
     finally:
         db.close()
+
+
+def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
+    """Checklist of what must be true for Monday auto-publish to succeed."""
+    from app.config import settings as app_settings
+
+    row = get_or_create_settings(db, user_id)
+    social_platforms = _connected_platforms(db, user_id, include_outreach=False)
+    outreach_platforms = _connected_platforms(db, user_id, include_outreach=True)
+    pending = pending_keyword_count(db, user_id)
+    date_from, date_to = upcoming_week_window()
+    events = list_events(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        countries=list(row.countries or DEFAULT_COUNTRIES),
+        user_id=user_id,
+    )
+    wp_ok = False
+    wp_name: Optional[str] = None
+    if row.wordpress_site_id:
+        site = (
+            db.query(WordPressSite)
+            .filter(WordPressSite.id == row.wordpress_site_id, WordPressSite.user_id == user_id)
+            .first()
+        )
+        if site:
+            wp_ok = True
+            wp_name = site.name or site.url
+
+    max_social = int(row.max_social_per_week or 7)
+    blogs_week = int(row.blogs_per_week or 2)
+    cron_configured = bool(app_settings.weekly_cron_secret)
+
+    checks: list[dict[str, Any]] = [
+        {
+            "id": "cron_secret",
+            "label": "Monday cron secret configured",
+            "ok": cron_configured,
+            "detail": "WEEKLY_CRON_SECRET is set on the API" if cron_configured else "Set WEEKLY_CRON_SECRET on Render",
+        },
+        {
+            "id": "goal1_enabled",
+            "label": "Goal 1 · Weekly Social auto-publish",
+            "ok": bool(row.goal1_enabled),
+            "detail": "On" if row.goal1_enabled else "Turn on Auto publish on Weekly Social",
+        },
+        {
+            "id": "social_accounts",
+            "label": "Social accounts connected",
+            "ok": len(social_platforms) > 0,
+            "detail": ", ".join(social_platforms) if social_platforms else "Connect at least one social account",
+        },
+        {
+            "id": "upcoming_events",
+            "label": "Upcoming observances this week",
+            "ok": len(events) > 0,
+            "detail": f"{len(events)} event(s) · cap {max_social}/week",
+        },
+        {
+            "id": "goal2_enabled",
+            "label": "Goal 2 · Blogs List auto-publish",
+            "ok": bool(row.goal2_enabled),
+            "detail": "On" if row.goal2_enabled else "Turn on Auto publish on Blogs List",
+        },
+        {
+            "id": "wordpress_site",
+            "label": "WordPress site selected",
+            "ok": wp_ok,
+            "detail": wp_name or "Pick a WordPress site in Settings → Weekly Content",
+        },
+        {
+            "id": "keyword_queue",
+            "label": "Keyword queue stocked",
+            "ok": pending >= blogs_week,
+            "detail": f"{pending} pending · need ≥ {blogs_week}/week",
+        },
+        {
+            "id": "quotas",
+            "label": "Weekly quotas",
+            "ok": max_social >= 1 and blogs_week >= 1,
+            "detail": f"{max_social} social · {blogs_week} blogs per week",
+        },
+    ]
+
+    goal1_ready = bool(row.goal1_enabled) and len(social_platforms) > 0 and len(events) > 0
+    goal2_ready = bool(row.goal2_enabled) and wp_ok and pending >= blogs_week
+    anything_enabled = bool(row.goal1_enabled or row.goal2_enabled)
+    ready = cron_configured and anything_enabled and (
+        (not row.goal1_enabled or goal1_ready) and (not row.goal2_enabled or goal2_ready)
+    )
+
+    last_run = (
+        db.query(WeeklyContentRun)
+        .filter(WeeklyContentRun.user_id == user_id)
+        .order_by(WeeklyContentRun.id.desc())
+        .first()
+    )
+
+    return {
+        "ready": ready,
+        "iso_week": iso_week_key(),
+        "goal1_ready": goal1_ready,
+        "goal2_ready": goal2_ready,
+        "goal1_enabled": bool(row.goal1_enabled),
+        "goal2_enabled": bool(row.goal2_enabled),
+        "max_social_per_week": max_social,
+        "blogs_per_week": blogs_week,
+        "social_platforms": social_platforms,
+        "outreach_platforms": [p for p in outreach_platforms if p in OUTREACH_PLATFORMS],
+        "upcoming_events_count": len(events),
+        "pending_keywords": pending,
+        "wordpress_configured": wp_ok,
+        "wordpress_site_name": wp_name,
+        "cron_secret_configured": cron_configured,
+        "last_run_at": row.last_run_at,
+        "last_run_iso_week": row.last_run_iso_week,
+        "last_run_status": last_run.status if last_run else None,
+        "checks": checks,
+    }
 
 
 def get_social_week(db: Session, user_id: int, *, week: Optional[str] = None) -> dict:
@@ -847,6 +1152,7 @@ def get_social_week(db: Session, user_id: int, *, week: Optional[str] = None) ->
         date_from=date_from,
         date_to=date_to,
         countries=list(settings.countries or DEFAULT_COUNTRIES),
+        user_id=user_id,
     )
     items = (
         db.query(WeeklySocialItem)
@@ -876,6 +1182,7 @@ def get_social_week(db: Session, user_id: int, *, week: Optional[str] = None) ->
             "event_date": event.event_date if event else date.today(),
             "event_title": event.title if event else "Unknown event",
             "event_scope": event.country_or_scope if event else "INT",
+            "source": event.source if event else None,
             "social_post_history_id": item.social_post_history_id,
             "headline": history.headline if history else None,
             "publish_results": item.publish_results,

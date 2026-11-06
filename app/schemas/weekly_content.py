@@ -47,7 +47,36 @@ class CalendarEventsResponse(BaseModel):
     total: int
 
 
+class SocialTopicCreate(BaseModel):
+    topic: str = Field(..., min_length=1, max_length=255)
+    publish_date: date
+
+
+class SocialTopicResponse(BaseModel):
+    event_id: int
+    item_id: int
+    topic: str
+    publish_date: date
+    iso_week: str
+    week_bucket: str  # current | next | upcoming | past
+    status: str
+    source: str = "custom"
+
+
 class WeeklySocialItemResponse(BaseModel):
+    id: int
+    iso_week: str
+    status: str
+    event_id: int
+    event_date: date
+    event_title: str
+    event_scope: str
+    source: Optional[str] = None
+    social_post_history_id: Optional[int] = None
+    headline: Optional[str] = None
+    publish_results: Optional[Any] = None
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
     id: int
     iso_week: str
     status: str
@@ -123,3 +152,38 @@ class WeeklyRunResponse(BaseModel):
     trigger: str
     result_summary: Optional[Any] = None
     error_summary: Optional[str] = None
+
+
+class WeeklyReadinessCheck(BaseModel):
+    id: str
+    label: str
+    ok: bool
+    detail: str
+
+
+class WeeklyReadinessResponse(BaseModel):
+    ready: bool
+    iso_week: str
+    goal1_ready: bool
+    goal2_ready: bool
+    goal1_enabled: bool
+    goal2_enabled: bool
+    max_social_per_week: int
+    blogs_per_week: int
+    social_platforms: list[str]
+    outreach_platforms: list[str]
+    upcoming_events_count: int
+    pending_keywords: int
+    wordpress_configured: bool
+    wordpress_site_name: Optional[str] = None
+    cron_secret_configured: bool
+    last_run_at: Optional[datetime] = None
+    last_run_iso_week: Optional[str] = None
+    last_run_status: Optional[str] = None
+    checks: list[WeeklyReadinessCheck]
+
+
+class WeeklyCronRunResponse(BaseModel):
+    ran: int
+    iso_week: str
+    force: bool

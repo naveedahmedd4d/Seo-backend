@@ -9,12 +9,19 @@ from app.database import Base
 from app.models.user import User
 from app.services.auth_service import get_password_hash
 from app.services.international_events_service import _load_seed, upcoming_week_window
+from datetime import date, timedelta
+
 from app.services.weekly_content_service import (
+    create_social_topic,
     delete_keyword_plan_item,
+    delete_social_topic,
+    get_or_create_settings,
+    get_weekly_readiness,
     import_keywords_csv,
     iso_week_key,
+    week_bucket_for_date,
 )
-from app.models.weekly_content import KeywordPlanItem
+from app.models.weekly_content import CalendarEvent, KeywordPlanItem, WeeklySocialItem
 
 
 engine = create_engine(
@@ -123,3 +130,63 @@ def test_delete_keyword_plan_item(db_session, test_user):
     )
     assert [r.keyword for r in remaining] == ["keep me"]
     assert delete_keyword_plan_item(db_session, test_user.id, to_delete.id) is False
+
+
+def test_default_weekly_quotas(db_session, test_user):
+    row = get_or_create_settings(db_session, test_user.id)
+    assert row.max_social_per_week == 7
+    assert row.blogs_per_week == 2
+    assert row.goal1_enabled is False
+    assert row.goal2_enabled is False
+
+
+def test_weekly_readiness_checklist(db_session, test_user):
+    data = get_weekly_readiness(db_session, test_user.id)
+    assert data["iso_week"] == iso_week_key()
+    assert data["max_social_per_week"] == 7
+    assert data["blogs_per_week"] == 2
+    assert data["ready"] is False
+    ids = {c["id"] for c in data["checks"]}
+    assert "cron_secret" in ids
+    assert "goal1_enabled" in ids
+    assert "keyword_queue" in ids
+
+
+def test_week_bucket_for_date():
+    today = date(2026, 11, 4)  # Wednesday ISO week
+    monday = date(2026, 11, 2)
+    next_monday = date(2026, 11, 9)
+    later = date(2026, 11, 20)
+    past = date(2026, 10, 20)
+    assert week_bucket_for_date(monday, today=today) == "current"
+    assert week_bucket_for_date(next_monday, today=today) == "next"
+    assert week_bucket_for_date(later, today=today) == "upcoming"
+    assert week_bucket_for_date(past, today=today) == "past"
+
+
+def test_create_and_delete_social_topic(db_session, test_user):
+    publish = date.today() + timedelta(days=3)
+    created = create_social_topic(
+        db_session,
+        test_user.id,
+        topic="  Launch AI tips  ",
+        publish_date=publish,
+    )
+    assert created["topic"] == "Launch AI tips"
+    assert created["iso_week"] == iso_week_key(publish)
+    assert created["week_bucket"] in {"current", "next", "upcoming"}
+    assert created["status"] == "queued"
+
+    event = db_session.query(CalendarEvent).filter(CalendarEvent.id == created["event_id"]).one()
+    assert event.source == "custom"
+    assert event.external_id.startswith(f"user-{test_user.id}-")
+
+    item = db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == created["item_id"]).one()
+    assert item.iso_week == created["iso_week"]
+
+    assert delete_social_topic(db_session, test_user.id, created["event_id"]) is True
+    assert db_session.query(CalendarEvent).filter(CalendarEvent.id == created["event_id"]).first() is None
+    assert (
+        db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == created["item_id"]).first()
+        is None
+    )
