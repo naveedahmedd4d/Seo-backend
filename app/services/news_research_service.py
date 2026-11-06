@@ -86,6 +86,43 @@ def format_news_bundle_for_llm(bundle: NewsResearchBundle) -> str:
     return "\n".join(lines)
 
 
+async def build_bundle_from_items(
+    items: List[Dict[str, Any]],
+    *,
+    query: str,
+    template_variant: Optional[str] = None,
+    hashtag_count: int = 12,
+) -> Optional[NewsResearchBundle]:
+    """Run the copy generators over already-gathered source items.
+
+    Split out of build_news_bundle so a published article can reuse the exact
+    same sequence: the article is handed over as a single item, so an article
+    post comes out in the same shape as a news post.
+    """
+    if not items:
+        return None
+    headline = await generate_news_headline(
+        items, query, template_variant=template_variant
+    )
+    description = await generate_social_post_description(
+        items, headline=headline, query=query
+    )
+    story_description = await generate_social_post_story_description(
+        items, headline=headline, query=query
+    )
+    hashtags = await generate_social_post_hashtags(
+        items, headline=headline, query=query, count=hashtag_count
+    )
+    return NewsResearchBundle(
+        query=query,
+        headline=headline,
+        story_description=story_description,
+        description=description,
+        hashtags=hashtags or [],
+        news_results=items,
+    )
+
+
 async def build_news_bundle(
     query: str,
     *,
@@ -113,25 +150,11 @@ async def build_news_bundle(
             logger.info("No news results for query: %s", q)
             return None
 
-        headline = await generate_news_headline(
-            news_results, q, template_variant=template_variant
-        )
-        description = await generate_social_post_description(
-            news_results, headline=headline, query=q
-        )
-        story_description = await generate_social_post_story_description(
-            news_results, headline=headline, query=q
-        )
-        hashtags = await generate_social_post_hashtags(
-            news_results, headline=headline, query=q, count=hashtag_count
-        )
-        return NewsResearchBundle(
+        return await build_bundle_from_items(
+            news_results,
             query=q,
-            headline=headline,
-            story_description=story_description,
-            description=description,
-            hashtags=hashtags or [],
-            news_results=news_results,
+            template_variant=template_variant,
+            hashtag_count=hashtag_count,
         )
     except Exception as e:
         logger.warning("build_news_bundle failed for %s: %s", q, e)

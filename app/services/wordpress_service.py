@@ -713,6 +713,7 @@ async def get_wp_post(site: WordPressSite, wp_post_id: int, post_type: str = "po
         "link": data.get("link"),
         "title": title.get("raw") or title.get("rendered") or "",
         "content": content.get("raw") or content.get("rendered") or "",
+        "featured_media": data.get("featured_media"),
         "meta": meta,
     }
 
@@ -860,3 +861,22 @@ async def fetch_wp_sitemap_url(site: WordPressSite) -> Optional[str]:
 
     return candidates[0]
 
+
+
+async def get_wp_media(site: WordPressSite, media_id: int) -> Optional[str]:
+    """Resolve a media id to its source URL, or None.
+
+    Used to turn a post's `featured_media` id into a usable image URL. Returns
+    None rather than raising: a missing image must not stop a post being built.
+    """
+    if not media_id:
+        return None
+    url = site.url.rstrip("/")
+    api_url = f"{url}/wp-json/wp/v2/media/{media_id}"
+    decrypted_key = decrypt_api_key(site.api_key)
+    async with httpx.AsyncClient(verify=httpx_verify(), timeout=30.0) as client:
+        response = await client.get(api_url, auth=(site.username, decrypted_key))
+    if response.status_code >= 400:
+        return None
+    data = response.json()
+    return data.get("source_url") or None

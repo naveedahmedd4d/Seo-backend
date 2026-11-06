@@ -12,7 +12,13 @@ from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
 from app.models.published_post import PublishedPost
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
+import logging
+
+from app.services import article_social_service
+from app.services.wordpress_service import get_wp_media, get_wp_post
+from app.services.serpapi_service import search_images
 from app.services.news_research_service import (
+    build_bundle_from_items,
     build_news_bundle,
     estimate_engagement_score,
     suggested_platforms_for_headline,
@@ -48,6 +54,8 @@ from app.schemas.social_post import (
     SocialPostTemplatePresetsSaveRequest,
     SocialPostTemplatePresetsStore,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -252,6 +260,96 @@ async def save_social_post_template_presets(
         )
 
 
+
+async def _resolve_article_image(
+    site, wp_post: dict, content_html: str, title: str,
+    target_keyword, serp_key,
+) -> tuple[str | None, str | None]:
+    """Featured media, else a body image, else a keyword image search.
+
+    Each step is best-effort: an article with no image must still generate a
+    post, because the copy is the point and the background can be set by hand.
+    """
+    featured_id = wp_post.get("featured_media")
+    if featured_id:
+        try:
+            media = await get_wp_media(site, int(featured_id))
+            if media:
+                return media, "featured"
+        except Exception as exc:
+            logger.info("featured media lookup failed: %s", exc)
+
+    body_image = article_social_service.first_body_image(content_html)
+    if body_image:
+        return body_image, "body"
+
+    keyword = article_social_service.image_keyword(title, target_keyword)
+    if keyword and serp_key:
+        try:
+            results = await search_images(keyword, num_results=10, api_key=serp_key)
+            for item in results or []:
+                url = item.get("original") or item.get("thumbnail")
+                if url:
+                    return url, "search"
+        except Exception as exc:
+            logger.info("image search failed for %r: %s", keyword, exc)
+    return None, None
+
+
+async def _bundle_from_article(db, current_user, request, serp_key):
+    """Build the post from the user's own article rather than the news."""
+    if not request.published_post_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Select a published article.",
+        )
+    row = (
+        db.query(PublishedPost)
+        .filter(
+            PublishedPost.id == request.published_post_id,
+            PublishedPost.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That published article was not found.",
+        )
+
+    site = row.wordpress_site
+    wp_post = await get_wp_post(site, row.wp_post_id)
+    if not wp_post.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not read that article from WordPress.",
+        )
+
+    title = wp_post.get("title") or row.title or ""
+    content_html = wp_post.get("content") or ""
+    item = article_social_service.as_news_result(
+        title=title,
+        content_html=content_html,
+        url=row.canonical_url or row.wp_link,
+        site=getattr(site, "name", None),
+    )
+    if not item["title"] and not item["snippet"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="That article has no readable content to write from.",
+        )
+
+    bundle = await build_bundle_from_items(
+        [item],
+        query=title,
+        template_variant=request.template_variant,
+    )
+    image_url, image_source = await _resolve_article_image(
+        site, wp_post, content_html, title, row.target_keyword, serp_key,
+    )
+    return bundle, image_url, image_source
+
+
 @router.post("/generate", response_model=SocialPostGenerateResponse)
 async def generate_social_post(
     request: SocialPostGenerateRequest,
@@ -263,15 +361,29 @@ async def generate_social_post(
     then use the LLM to produce a single compelling headline.
     """
     llm_token = None
+    image_url = None
+    image_source = None
     try:
         serp_key = resolve_api_key(db, current_user, "serpapi")
         creds = resolve_llm_credentials(db, current_user.id)
         llm_token = set_llm_context(creds)
-        bundle = await build_news_bundle(
-            request.query,
-            template_variant=request.template_variant,
-            serpapi_api_key=serp_key,
-        )
+
+        if request.source == "article":
+            bundle, image_url, image_source = await _bundle_from_article(
+                db, current_user, request, serp_key
+            )
+        else:
+            query = (request.query or "").strip()
+            if not query:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Enter a topic or search query.",
+                )
+            bundle = await build_news_bundle(
+                query,
+                template_variant=request.template_variant,
+                serpapi_api_key=serp_key,
+            )
         if not bundle:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -302,6 +414,8 @@ async def generate_social_post(
             summary=summary,
             description=bundle.description,
             story_description=bundle.story_description,
+            image_url=image_url,
+            image_source=image_source,
         )
     except HTTPException:
         raise

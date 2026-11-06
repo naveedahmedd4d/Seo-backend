@@ -1,10 +1,18 @@
-from pydantic import BaseModel
-from typing import List, Optional, Any
+from pydantic import BaseModel, Field
+from typing import List, Optional, Any, Literal
 
 
 class SocialPostGenerateRequest(BaseModel):
-    query: str
+    """Either a news query or a published article, never both.
+
+    `source` says which one the caller filled in. It defaults to "query" so
+    existing callers that send only `query` keep working unchanged.
+    """
+
+    query: Optional[str] = None
     template_variant: Optional[str] = None
+    source: Literal["query", "article"] = "query"
+    published_post_id: Optional[int] = None
 
 
 class NewsResultItem(BaseModel):
@@ -26,6 +34,18 @@ class SocialPostGenerateResponse(BaseModel):
     summary: str
     description: Optional[str] = None
     story_description: Optional[str] = None
+    image_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Background image for the card when generating from an article: "
+            "the post's featured media, else its first body image, else a "
+            "keyword image search. None when nothing was found."
+        ),
+    )
+    image_source: Optional[Literal["featured", "body", "search"]] = Field(
+        default=None,
+        description="Where image_url came from, so the UI can say so.",
+    )
 
 
 class SocialPostHistorySaveRequest(BaseModel):
