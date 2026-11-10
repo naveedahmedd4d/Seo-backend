@@ -17,6 +17,7 @@ class WeeklyContentSettingsResponse(BaseModel):
     wordpress_site_id: Optional[int] = None
     cron_weekday: int
     cron_time_utc: str
+    run_frequency: str = "weekly"
     last_run_at: Optional[datetime] = None
     last_run_iso_week: Optional[str] = None
     updated_at: Optional[datetime] = None
@@ -31,6 +32,7 @@ class WeeklyContentSettingsUpdate(BaseModel):
     wordpress_site_id: Optional[int] = None
     cron_weekday: Optional[int] = Field(default=None, ge=0, le=6)
     cron_time_utc: Optional[str] = None
+    run_frequency: Optional[str] = Field(default=None, pattern="^(weekly|daily)$")
 
 
 class CalendarEventItem(BaseModel):

@@ -190,3 +190,79 @@ def test_create_and_delete_social_topic(db_session, test_user):
         db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == created["item_id"]).first()
         is None
     )
+
+
+# --- schedule gate -------------------------------------------------------
+
+from datetime import datetime, timezone as _tz
+
+from app.models.weekly_content import WeeklyContentSettings
+from app.services.weekly_content_service import is_run_due
+
+
+def _settings(**kw) -> WeeklyContentSettings:
+    row = WeeklyContentSettings(user_id=1)
+    row.run_frequency = kw.get("run_frequency", "weekly")
+    row.cron_weekday = kw.get("cron_weekday", 0)
+    row.cron_time_utc = kw.get("cron_time_utc", "09:00")
+    row.last_run_iso_week = kw.get("last_run_iso_week")
+    row.last_run_date = kw.get("last_run_date")
+    return row
+
+
+def _utc(y, m, d, hh, mm=0) -> datetime:
+    return datetime(y, m, d, hh, mm, tzinfo=_tz.utc)
+
+
+def test_weekly_fires_on_chosen_weekday_and_time():
+    # Tuesday 2026-11-10, 11:30 UTC == 16:30 GMT+5.
+    row = _settings(cron_weekday=1, cron_time_utc="11:30")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 11, 30)) is True
+
+
+def test_weekly_does_not_fire_before_chosen_time():
+    row = _settings(cron_weekday=1, cron_time_utc="11:30")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 11, 0)) is False
+
+
+def test_weekly_does_not_fire_on_other_weekday():
+    row = _settings(cron_weekday=1, cron_time_utc="11:30")
+    # Wednesday, same time.
+    assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is False
+
+
+def test_weekly_fires_within_grace_after_cold_start():
+    row = _settings(cron_weekday=1, cron_time_utc="11:30")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 12, 30)) is True
+
+
+def test_weekly_skips_long_after_slot():
+    row = _settings(cron_weekday=1, cron_time_utc="11:30")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 20, 0)) is False
+
+
+def test_weekly_does_not_refire_same_iso_week():
+    row = _settings(cron_weekday=1, cron_time_utc="11:30", last_run_iso_week="2026-W46")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 11, 30)) is False
+
+
+def test_daily_ignores_weekday():
+    row = _settings(run_frequency="daily", cron_weekday=0, cron_time_utc="11:30")
+    # Wednesday — weekly would skip, daily should fire.
+    assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is True
+
+
+def test_daily_fires_once_per_day():
+    row = _settings(
+        run_frequency="daily",
+        cron_time_utc="11:30",
+        last_run_date=_utc(2026, 11, 11, 11, 30).date(),
+    )
+    assert is_run_due(row, now=_utc(2026, 11, 11, 12, 0)) is False
+    # Next day's slot is due again.
+    assert is_run_due(row, now=_utc(2026, 11, 12, 11, 30)) is True
+
+
+def test_malformed_time_falls_back_to_0900():
+    row = _settings(cron_weekday=1, cron_time_utc="not-a-time")
+    assert is_run_due(row, now=_utc(2026, 11, 10, 9, 0)) is True

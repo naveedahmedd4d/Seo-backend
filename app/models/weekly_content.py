@@ -50,7 +50,10 @@ class WeeklyContentSettings(Base):
     )
     cron_weekday = Column(Integer, nullable=False, server_default="0")  # 0=Monday
     cron_time_utc = Column(String(8), nullable=False, server_default="09:00")
+    # "weekly" honours cron_weekday + cron_time_utc; "daily" honours the time only.
+    run_frequency = Column(String(16), nullable=False, server_default="weekly")
     last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_run_date = Column(Date, nullable=True)
     last_run_iso_week = Column(String(16), nullable=True)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

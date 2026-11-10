@@ -160,6 +160,7 @@ def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
         countries=list(DEFAULT_COUNTRIES),
         max_social_per_week=7,
         blogs_per_week=2,
+        run_frequency="weekly",
         goal1_enabled=False,
         goal2_enabled=False,
     )
@@ -201,6 +202,11 @@ def update_settings(
             row.wordpress_site_id = site.id
     if "cron_weekday" in changes and changes["cron_weekday"] is not None:
         row.cron_weekday = max(0, min(6, int(changes["cron_weekday"])))
+    if "run_frequency" in changes and changes["run_frequency"] is not None:
+        value = str(changes["run_frequency"]).strip().lower()
+        if value not in ("weekly", "daily"):
+            raise ValueError("run_frequency must be 'weekly' or 'daily'")
+        row.run_frequency = value
     if "cron_time_utc" in changes and changes["cron_time_utc"] is not None:
         value = str(changes["cron_time_utc"]).strip()
         if not re.fullmatch(r"\d{1,2}:\d{2}", value):
@@ -222,6 +228,7 @@ def settings_to_dict(row: WeeklyContentSettings) -> dict:
         "wordpress_site_id": row.wordpress_site_id,
         "cron_weekday": int(row.cron_weekday if row.cron_weekday is not None else 0),
         "cron_time_utc": row.cron_time_utc or "09:00",
+        "run_frequency": (row.run_frequency or "weekly"),
         "last_run_at": row.last_run_at,
         "last_run_iso_week": row.last_run_iso_week,
         "updated_at": row.updated_at,
@@ -900,6 +907,59 @@ async def run_goal2_for_user(
     return {"selected": len(items), "published": published, "failed": failed}
 
 
+DEFAULT_CRON_TIME_UTC = "09:00"
+# How far past the chosen time a tick may still fire. The scheduler wakes hourly
+# and a cold free-tier instance can take ~50s, so a tick that lands late in the
+# hour must still count as "due" rather than skipping the whole week.
+RUN_DUE_GRACE_MINUTES = 90
+
+
+def _parse_hhmm(value: Optional[str]) -> tuple[int, int]:
+    """Parse a stored HH:MM, falling back to 09:00 on anything malformed."""
+    raw = (value or DEFAULT_CRON_TIME_UTC).strip()
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", raw)
+    if not match:
+        return 9, 0
+    hour = max(0, min(23, int(match.group(1))))
+    minute = max(0, min(59, int(match.group(2))))
+    return hour, minute
+
+
+def is_run_due(
+    settings: WeeklyContentSettings,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Has this user's configured schedule arrived in the current period?
+
+    Weekly honours cron_weekday + cron_time_utc; daily honours the time only and
+    fires once per calendar day. Both compare in UTC, which is how the settings
+    are stored — the UI converts to the user's zone for display.
+    """
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    frequency = (settings.run_frequency or "weekly").strip().lower()
+    hour, minute = _parse_hhmm(settings.cron_time_utc)
+
+    scheduled = moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if frequency == "daily":
+        # Already fired today, so wait for tomorrow's slot.
+        if settings.last_run_date == moment.date():
+            return False
+    else:
+        weekday = int(settings.cron_weekday if settings.cron_weekday is not None else 0)
+        weekday = max(0, min(6, weekday))
+        if moment.weekday() != weekday:
+            return False
+        if settings.last_run_iso_week == iso_week_key(moment.date()):
+            return False
+
+    if moment < scheduled:
+        return False
+    # Guard against a tick that wakes hours late firing an off-schedule run.
+    return (moment - scheduled) <= timedelta(minutes=RUN_DUE_GRACE_MINUTES)
+
+
 def _is_stale_running(run: WeeklyContentRun, *, max_age_hours: int = 2) -> bool:
     if run.status != "running" or not run.started_at:
         return False
@@ -965,6 +1025,7 @@ async def run_weekly_for_user(
         run.finished_at = datetime.now(timezone.utc)
         settings.last_run_at = run.finished_at
         settings.last_run_iso_week = week
+        settings.last_run_date = run.finished_at.date()
         db.commit()
         db.refresh(run)
         return run
@@ -988,7 +1049,6 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
     week = iso_week_key()
     try:
         logger.info("Weekly content cron started (week=%s force=%s)", week, force)
-        await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
         rows = (
             db.query(WeeklyContentSettings)
             .filter(
@@ -998,7 +1058,14 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
             .all()
         )
         logger.info("Weekly content cron found %s enabled user setting(s)", len(rows))
-        for settings in rows:
+        now = datetime.now(timezone.utc)
+        due = [s for s in rows if force or is_run_due(s, now=now)]
+        logger.info("Weekly content cron: %s of %s user(s) due at %s UTC", len(due), len(rows), now.isoformat())
+        if not due:
+            return 0
+        # Only pay for the calendar sync once a run is actually happening.
+        await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
+        for settings in due:
             user = db.query(User).filter(User.id == settings.user_id).first()
             if not user:
                 continue

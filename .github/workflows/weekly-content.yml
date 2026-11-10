@@ -1,9 +1,11 @@
 name: Weekly Content Cron
 
-# Mondays 09:00 UTC — triggers Goal1 (≤7 social) + Goal2 (≤2 blogs) for enabled users.
+# Hourly. The API decides who is actually due from each user's saved
+# run_frequency + cron_weekday + cron_time_utc, so the schedule lives in the
+# database, not here. Ticks with nobody due return after one indexed query.
 on:
   schedule:
-    - cron: "0 9 * * 1"
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       force:

@@ -1,4 +1,4 @@
-# Optional Render Blueprint for a dedicated Monday cron job (starter plan).
+# Optional Render Blueprint for a dedicated hourly cron job (starter plan).
 # Free-tier alternative (already wired): GitHub Actions `.github/workflows/weekly-content.yml`
 # calling POST /api/weekly-content/cron/run-due with WEEKLY_CRON_SECRET.
 #
@@ -11,7 +11,7 @@ services:
     runtime: python
     plan: starter
     region: ohio
-    schedule: "0 9 * * 1"
+    schedule: "0 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.weekly_content
     autoDeploy: true
