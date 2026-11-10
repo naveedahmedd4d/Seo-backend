@@ -4611,6 +4611,32 @@ Respond with ONLY the category name (e.g., "Sports" or "Finance & Economy"). Do 
     return None
 
 
+def _parse_image_choice_index(text: str, n: int) -> int:
+    """Parse an LLM reply into a 0-based image index; default 0."""
+    raw = (text or "").strip()
+    match = re.search(r"\b(10|\d)\b", raw)
+    if match:
+        one_based = int(match.group(1))
+        if 1 <= one_based <= n:
+            return one_based - 1
+    for part in raw.replace(",", " ").split():
+        if part.isdigit():
+            idx = int(part)
+            if 1 <= idx <= n:
+                return idx - 1
+    return 0
+
+
+def _format_image_candidate_lines(images: List[Dict[str, Any]]) -> str:
+    lines = []
+    for i, img in enumerate(images, 1):
+        title = img.get("title", "")[:200]
+        source = img.get("source", "")[:100]
+        link = (img.get("original") or img.get("link") or "")[:150]
+        lines.append(f"{i}. Title: {title} | Source: {source} | Link: {link}")
+    return "\n".join(lines)
+
+
 async def select_featured_image(
     blog_title: str,
     blog_meta: str,
@@ -4624,13 +4650,7 @@ async def select_featured_image(
         return 0
     if len(images) == 1:
         return 0
-    lines = []
-    for i, img in enumerate(images, 1):
-        title = img.get("title", "")[:200]
-        source = img.get("source", "")[:100]
-        link = img.get("link", "")[:150]
-        lines.append(f"{i}. Title: {title} | Source: {source} | Link: {link}")
-    images_block = "\n".join(lines)
+    images_block = _format_image_candidate_lines(images)
     n = len(images)
     prompt = f"""Given this blog post, choose the single best image to use as the featured image.
 
@@ -4647,19 +4667,45 @@ Reply with ONLY the number (1 to {n}) of the most relevant and high-quality imag
             max_tokens=50,
             temperature=0.3,
         )
-        text = (response or "").strip()
-        # Extract first number found (1-10 or 1-n)
-        match = re.search(r"\b(10|\d)\b", text)
-        if match:
-            one_based = int(match.group(1))
-            if 1 <= one_based <= n:
-                return one_based - 1
-        for part in text.replace(",", " ").split():
-            if part.isdigit():
-                idx = int(part)
-                if 1 <= idx <= n:
-                    return idx - 1
-        return 0
+        return _parse_image_choice_index(response or "", n)
     except Exception:
         return 0
+
+
+async def select_social_background_image(
+    event_title: str,
+    headline: str,
+    description: str,
+    images: List[Dict[str, Any]],
+) -> int:
+    """Pick the best SerpAPI image as a Facebook social-card background. Returns 0-based index."""
+    if not images:
+        return 0
+    if len(images) == 1:
+        return 0
+    images_block = _format_image_candidate_lines(images)
+    n = len(images)
+    prompt = f"""Choose the single best PHOTO background for a Facebook social media card.
+
+Prefer a relevant, high-quality photographic image. Avoid logos, screenshots of UI, charts
+with tiny text, and watermark-heavy stock. The image will sit behind a large headline.
+
+Event / topic: {event_title[:200]}
+Headline: {headline[:240]}
+Caption: {description[:300]}
+
+Images (choose one by number 1-{n}):
+{images_block}
+
+Reply with ONLY the number (1 to {n}). No other text."""
+    try:
+        response = await generate_content(
+            prompt,
+            max_tokens=50,
+            temperature=0.3,
+        )
+        return _parse_image_choice_index(response or "", n)
+    except Exception:
+        # Manual UI often defaults to the 3rd result when enough candidates exist.
+        return 2 if n >= 3 else 0
 

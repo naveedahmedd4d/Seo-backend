@@ -324,6 +324,30 @@ async def _generate_and_publish_social(
     if not platforms:
         return history, []
 
+    needs_image = any(p in SOCIAL_IMAGE_PLATFORMS for p in platforms)
+    resolved_image_url = image_url
+    if needs_image and not (resolved_image_url and str(resolved_image_url).startswith(("http://", "https://"))):
+        from app.services.weekly_social_media import ensure_weekly_social_media
+
+        # Keep LLM context for the photo picker (same credentials as caption gen).
+        pick_token = set_llm_context(resolve_llm_credentials(db, user.id))
+        try:
+            resolved_image_url = await ensure_weekly_social_media(
+                db,
+                user,
+                history,
+                query=query,
+                headline=headline,
+                description=description or "",
+                story=story,
+                hashtags=hashtags if isinstance(hashtags, list) else None,
+                existing_image_url=image_url,
+            )
+        finally:
+            reset_llm_context(pick_token)
+
+    from app.schemas.social_post import SocialPostPublishResultItem
+
     ctx = PublishCopyContext(
         headline=headline,
         short_description=description,
@@ -337,13 +361,34 @@ async def _generate_and_publish_social(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user.id, history)
             platform_ctx = replace(ctx, source_url=first_party_url)
+            if not resolved_image_url:
+                results.append(
+                    SocialPostPublishResultItem(
+                        platform="facebook",
+                        success=False,
+                        error=(
+                            "No image available for Facebook Page posts "
+                            "(card render and image search both failed)"
+                        ),
+                    )
+                )
+                continue
+        if platform == "instagram" and not resolved_image_url:
+            results.append(
+                SocialPostPublishResultItem(
+                    platform="instagram",
+                    success=False,
+                    error="No image available for Instagram posts",
+                )
+            )
+            continue
         results.append(
             await publish_to_platform(
                 db,
                 user.id,
                 platform,
                 ctx=platform_ctx,
-                image_url=image_url,
+                image_url=resolved_image_url,
                 platform_options={},
             )
         )
