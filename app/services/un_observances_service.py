@@ -119,7 +119,10 @@ def sync_un_observances_for_years(
                 month = int(item["month"])
                 day = int(item["day"])
                 title = str(item["title"]).strip()
-                external_id = f"{item.get('external_id') or _slug(title)}-{year}"
+                # Include month/day so twice-yearly observances (e.g. World
+                # Migratory Bird Day in May and October) do not share one key.
+                base = item.get("external_id") or _slug(title)
+                external_id = f"{base}-{month:02d}-{day:02d}-{year}"
                 event_date = date(year, month, day)
             except (KeyError, TypeError, ValueError) as exc:
                 logger.warning("Skipping bad UN observance row %s: %s", item, exc)

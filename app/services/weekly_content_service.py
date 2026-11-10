@@ -1064,7 +1064,18 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
         if not due:
             return 0
         # Only pay for the calendar sync once a run is actually happening.
-        await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
+        # Keep publishing even if the public calendar feed has a bad row —
+        # existing events in DB are enough for the week.
+        try:
+            await sync_calendar_events(db, countries=DEFAULT_COUNTRIES)
+        except Exception:
+            logger.exception(
+                "Calendar sync failed during weekly cron; continuing with existing events"
+            )
+            try:
+                db.rollback()
+            except Exception:
+                logger.exception("Rollback after calendar sync failure also failed")
         for settings in due:
             user = db.query(User).filter(User.id == settings.user_id).first()
             if not user:
@@ -1091,7 +1102,7 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
 
 
 def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
-    """Checklist of what must be true for Monday auto-publish to succeed."""
+    """Checklist of what must be true for scheduled auto-publish to succeed."""
     from app.config import settings as app_settings
 
     row = get_or_create_settings(db, user_id)
@@ -1125,9 +1136,13 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
     checks: list[dict[str, Any]] = [
         {
             "id": "cron_secret",
-            "label": "Monday cron secret configured",
+            "label": "Scheduler secret configured",
             "ok": cron_configured,
-            "detail": "WEEKLY_CRON_SECRET is set on the API" if cron_configured else "Set WEEKLY_CRON_SECRET on Render",
+            "detail": (
+                "WEEKLY_CRON_SECRET is set on the API"
+                if cron_configured
+                else "Add WEEKLY_CRON_SECRET in the Render dashboard (Environment), then add the same value plus WEEKLY_CRON_URL as GitHub Actions repo secrets"
+            ),
         },
         {
             "id": "goal1_enabled",

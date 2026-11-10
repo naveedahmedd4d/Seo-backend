@@ -40,11 +40,27 @@ def _upsert_event(
     external_id: str,
     description: Optional[str] = None,
 ) -> CalendarEvent:
+    """Insert-or-update by (external_id, source).
+
+    SessionLocal uses autoflush=False, so a second upsert of the same key in the
+    same transaction cannot see the first pending INSERT via SQL. Check
+    ``session.new`` before adding another row, otherwise commit raises
+    UniqueViolation (e.g. World Migratory Bird Day appears twice a year).
+    """
     row = (
         db.query(CalendarEvent)
         .filter(CalendarEvent.external_id == external_id, CalendarEvent.source == source)
         .first()
     )
+    if row is None:
+        for pending in db.new:
+            if (
+                isinstance(pending, CalendarEvent)
+                and pending.external_id == external_id
+                and pending.source == source
+            ):
+                row = pending
+                break
     if row:
         row.event_date = event_date
         row.title = title

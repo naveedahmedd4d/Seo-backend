@@ -285,7 +285,10 @@ async def cron_run_due(
     force: bool = Query(default=False),
     authorization: Optional[str] = Header(default=None),
 ):
-    """Scheduler entry for Monday auto-publish. Auth: Bearer WEEKLY_CRON_SECRET."""
+    """Scheduler entry for auto-publish. Auth: Bearer WEEKLY_CRON_SECRET.
+
+    Ticks hourly; each user runs only when their saved schedule is due.
+    """
     secret = (settings.weekly_cron_secret or "").strip()
     if not secret:
         raise HTTPException(
@@ -297,5 +300,13 @@ async def cron_run_due(
         token = authorization[7:].strip()
     if not token or token != secret:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid cron secret")
-    ran = await svc.run_due_weekly_content(force=force)
+    try:
+        ran = await svc.run_due_weekly_content(force=force)
+    except Exception as exc:
+        # Surface the root cause to the scheduler log / operator; generic 500s
+        # hide DB/calendar failures and make free-tier debugging impossible.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"cron run-due failed: {type(exc).__name__}: {exc}",
+        ) from exc
     return WeeklyCronRunResponse(ran=ran, iso_week=svc.iso_week_key(), force=force)
