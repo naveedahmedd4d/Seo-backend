@@ -1148,6 +1148,25 @@ def _parse_hhmm(value: Optional[str]) -> tuple[int, int]:
     return hour, minute
 
 
+def _schedule_time_reached(
+    settings: WeeklyContentSettings,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """True when today's/this week's chosen UTC clock time has arrived."""
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    frequency = (settings.run_frequency or "weekly").strip().lower()
+    hour, minute = _parse_hhmm(settings.cron_time_utc)
+    scheduled = moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if frequency != "daily":
+        weekday = int(settings.cron_weekday if settings.cron_weekday is not None else 0)
+        weekday = max(0, min(6, weekday))
+        if moment.weekday() != weekday:
+            return False
+    return moment >= scheduled
+
+
 def is_run_due(
     settings: WeeklyContentSettings,
     *,
@@ -1164,25 +1183,16 @@ def is_run_due(
     """
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     frequency = (settings.run_frequency or "weekly").strip().lower()
-    hour, minute = _parse_hhmm(settings.cron_time_utc)
-
-    scheduled = moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
     if frequency == "daily":
         # Already fired today, so wait for tomorrow's slot.
         if settings.last_run_date == moment.date():
             return False
     else:
-        weekday = int(settings.cron_weekday if settings.cron_weekday is not None else 0)
-        weekday = max(0, min(6, weekday))
-        if moment.weekday() != weekday:
-            return False
         if settings.last_run_iso_week == iso_week_key(moment.date()):
             return False
 
-    if moment < scheduled:
-        return False
-    return True
+    return _schedule_time_reached(settings, now=moment)
 
 
 def _is_stale_running(run: WeeklyContentRun, *, max_age_hours: int = 2) -> bool:
@@ -1265,6 +1275,48 @@ async def run_weekly_for_user(
         return run
 
 
+def _goal1_has_pending_work(
+    db: Session,
+    user_id: int,
+    settings: WeeklyContentSettings,
+    week: str,
+) -> bool:
+    """True when auto-social still has unpublished or failed rows for this week."""
+    if not settings.goal1_enabled:
+        return False
+    pending_items = (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user_id,
+            WeeklySocialItem.iso_week == week,
+            WeeklySocialItem.status.in_(("queued", "failed", "generating")),
+        )
+        .count()
+    )
+    if pending_items:
+        return True
+    # Fresh week / empty auto-post list: events still need a first pass.
+    published = (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user_id,
+            WeeklySocialItem.iso_week == week,
+            WeeklySocialItem.status == "published",
+        )
+        .count()
+    )
+    if published:
+        return False
+    events = _goal1_events_for_week(
+        db,
+        user_id,
+        week=week,
+        countries=list(settings.countries or DEFAULT_COUNTRIES),
+        cap=max(1, int(settings.max_social_per_week or 7)),
+    )
+    return bool(events)
+
+
 async def run_due_weekly_content(*, force: bool = False) -> int:
     """Cron entry: sync events globally then run enabled users for the current ISO week."""
     from app.database import SessionLocal
@@ -1284,8 +1336,26 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
         )
         logger.info("Weekly content cron found %s enabled user setting(s)", len(rows))
         now = datetime.now(timezone.utc)
-        due = [s for s in rows if force or is_run_due(s, now=now)]
-        logger.info("Weekly content cron: %s of %s user(s) due at %s UTC", len(due), len(rows), now.isoformat())
+        due: list[tuple[WeeklyContentSettings, bool]] = []
+        for settings in rows:
+            if force or is_run_due(settings, now=now):
+                due.append((settings, force))
+                continue
+            # A completed week that left failed/queued posts should still auto-retry
+            # after the scheduled time, without waiting for next week.
+            if (
+                settings.goal1_enabled
+                and settings.last_run_iso_week == week
+                and _schedule_time_reached(settings, now=now)
+                and _goal1_has_pending_work(db, settings.user_id, settings, week)
+            ):
+                due.append((settings, True))
+        logger.info(
+            "Weekly content cron: %s of %s user(s) due at %s UTC",
+            len(due),
+            len(rows),
+            now.isoformat(),
+        )
         if not due:
             return 0
         # Only pay for the calendar sync once a run is actually happening.
@@ -1301,11 +1371,11 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
                 db.rollback()
             except Exception:
                 logger.exception("Rollback after calendar sync failure also failed")
-        for settings in due:
+        for settings, run_force in due:
             user = db.query(User).filter(User.id == settings.user_id).first()
             if not user:
                 continue
-            if settings.last_run_iso_week == week and not force:
+            if settings.last_run_iso_week == week and not run_force:
                 existing = (
                     db.query(WeeklyContentRun)
                     .filter(
@@ -1315,10 +1385,12 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
                     )
                     .first()
                 )
-                if existing:
+                if existing and not _goal1_has_pending_work(db, user.id, settings, week):
                     logger.info("Skipping user %s — already completed %s", user.id, week)
                     continue
-            await run_weekly_for_user(db, user, trigger="scheduled", force=force)
+                if existing and _goal1_has_pending_work(db, user.id, settings, week):
+                    run_force = True
+            await run_weekly_for_user(db, user, trigger="scheduled", force=run_force)
             count += 1
         logger.info("Weekly content cron finished — ran %s user(s)", count)
         return count
