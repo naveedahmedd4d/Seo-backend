@@ -10,6 +10,7 @@ from app.services.meta_graph_service import (
     exchange_code_for_user_token,
     exchange_long_lived_user_token,
     fetch_user_pages,
+    fetch_user_permissions,
     graph_post,
     graph_post_multipart,
 )
@@ -56,8 +57,38 @@ async def save_facebook_account_from_code(
 
     pages = await fetch_user_pages(user_token)
     if not pages:
+        granted: set[str] = set()
+        try:
+            granted = await fetch_user_permissions(user_token)
+        except Exception:  # noqa: BLE001 - best-effort diagnostics only
+            logger.exception(
+                "Facebook connect for user_id=%s returned 0 Pages; permission lookup failed",
+                user_id,
+            )
+        else:
+            logger.warning(
+                "Facebook connect for user_id=%s returned 0 Pages; granted=%s",
+                user_id,
+                sorted(granted),
+            )
+        missing = sorted(
+            {
+                "pages_show_list",
+                "pages_manage_posts",
+                "pages_read_engagement",
+            }
+            - granted
+        )
+        hint = (
+            f" Missing permissions: {', '.join(missing)}."
+            if missing
+            else " Permissions look granted, but Meta returned no manageable Pages."
+        )
         raise ValueError(
-            "No Facebook Pages found. Create a Page and grant access during login."
+            "No Facebook Pages found."
+            + hint
+            + " On Meta's dialog click Edit settings (not Continue), select every Page"
+            " you manage, then confirm. Personal profiles cannot be connected."
         )
 
     default_page = pages[0]

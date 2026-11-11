@@ -52,6 +52,9 @@ def build_meta_authorization_url(
         "state": state,
         "scope": scopes,
         "response_type": "code",
+        # Force Meta to re-prompt declined/missing Page permissions instead of
+        # "Continue with previous settings", which often returns zero Pages.
+        "auth_type": "rerequest",
     }
     return f"{META_AUTH_URL}?{urlencode(params)}"
 

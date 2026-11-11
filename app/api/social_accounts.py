@@ -1,3 +1,4 @@
+import logging
 from typing import List
 from urllib.parse import urlencode
 
@@ -10,6 +11,8 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.services.oauth_utils import sanitize_oauth_error
+
+logger = logging.getLogger(__name__)
 from app.schemas.social_account import (
     ApiKeyConnectRequest,
     ApiKeyConnectResponse,
@@ -159,8 +162,9 @@ def _is_platform_owner(current_user: User) -> bool:
 
 def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
     """Describe where Meta App ID/secret come from and whether this user can edit them."""
+    from app.services.social_platform_app_service import _get_platform_owner_facebook_app
+
     environment_managed = bool(settings.meta_app_id and settings.meta_app_secret)
-    user_app = get_user_platform_app(db, current_user.id, "facebook")
     if environment_managed:
         return {
             "credentials_source": "environment",
@@ -168,6 +172,20 @@ def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
             "can_clear_credentials": False,
             "client_id": None,
         }
+
+    # Prefer the shared platform app over any personal BYO keys so the UI matches
+    # what OAuth actually uses.
+    owner_app = _get_platform_owner_facebook_app(db)
+    if owner_app:
+        is_owner = _is_platform_owner(current_user)
+        return {
+            "credentials_source": "platform_shared",
+            "credentials_editable": is_owner,
+            "can_clear_credentials": is_owner,
+            "client_id": owner_app.client_id if is_owner else None,
+        }
+
+    user_app = get_user_platform_app(db, current_user.id, "facebook")
     if user_app:
         return {
             "credentials_source": "user",
@@ -175,27 +193,6 @@ def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
             "can_clear_credentials": True,
             "client_id": user_app.client_id,
         }
-
-    owner_email = (settings.platform_owner_email or "").strip().casefold()
-    if owner_email:
-        from app.models.user import User as UserModel
-        from sqlalchemy import func as sa_func
-
-        owner = (
-            db.query(UserModel)
-            .filter(sa_func.lower(UserModel.email) == owner_email)
-            .first()
-        )
-        if owner:
-            owner_app = get_user_platform_app(db, owner.id, "facebook")
-            if owner_app:
-                is_owner = _is_platform_owner(current_user)
-                return {
-                    "credentials_source": "platform_shared",
-                    "credentials_editable": is_owner,
-                    "can_clear_credentials": is_owner,
-                    "client_id": owner_app.client_id if is_owner else None,
-                }
 
     return {
         "credentials_source": None,
@@ -1121,12 +1118,16 @@ async def facebook_connect(
     db: Session = Depends(get_db),
 ):
     redirect_uri = get_facebook_redirect_uri(http_request)
+    from app.services.social_platform_app_service import _get_platform_owner_facebook_app
 
-    # Allow BYO Meta app when server env is not forcing platform credentials.
+    # Allow BYO Meta app only when neither env nor a shared platform app is set.
+    # Otherwise personal App IDs override nothing useful and break connect.
+    shared_app = _get_platform_owner_facebook_app(db)
     if (
         request.client_id
         and request.client_secret
         and not (settings.meta_app_id and settings.meta_app_secret)
+        and not shared_app
     ):
         try:
             upsert_user_platform_app(
@@ -1182,6 +1183,11 @@ async def facebook_callback(
             db, user.id, code, redirect_uri=redirect_uri
         )
     except Exception as exc:
+        logger.warning(
+            "Facebook OAuth callback failed for user_id=%s: %s",
+            user.id,
+            exc,
+        )
         return _oauth_callback_redirect("facebook", error=str(exc))
 
     return _oauth_callback_redirect("facebook")

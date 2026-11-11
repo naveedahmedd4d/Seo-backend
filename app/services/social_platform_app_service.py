@@ -332,6 +332,23 @@ def get_linkedin_app_credentials(
     )
 
 
+def _get_platform_owner_facebook_app(db: Session):
+    """Return the platform-owner's saved Facebook Meta app row, if any."""
+    from app.config import settings
+    from app.models.user import User
+
+    if not settings.platform_owner_email:
+        return None
+    owner = (
+        db.query(User)
+        .filter(func.lower(User.email) == settings.platform_owner_email.strip().casefold())
+        .first()
+    )
+    if not owner:
+        return None
+    return get_user_platform_app(db, owner.id, "facebook")
+
+
 def get_facebook_app_credentials(
     db: Session,
     user_id: int,
@@ -340,7 +357,11 @@ def get_facebook_app_credentials(
 ) -> Optional[OAuthAppCredentials]:
     """Resolve Meta app credentials for Facebook Pages OAuth.
 
-    Order: server env → the user's own Meta app → platform-owner shared app.
+    Order: server env → platform-owner shared app → the user's own Meta app.
+
+    Shared credentials win over per-user BYO keys so every account authorizes
+    against the same working Meta app (a mismatched personal App ID is what
+    left new users redirected but still disconnected).
     """
     from app.config import settings
 
@@ -352,6 +373,16 @@ def get_facebook_app_credentials(
             redirect_uri=resolved_redirect_uri,
         )
 
+    # Admin-entered platform credentials are stored encrypted against the
+    # designated owner account, then shared for server-side OAuth calls.
+    shared_row = _get_platform_owner_facebook_app(db)
+    if shared_row:
+        return OAuthAppCredentials(
+            client_id=shared_row.client_id,
+            client_secret=decrypt_api_key(shared_row.client_secret),
+            redirect_uri=resolved_redirect_uri,
+        )
+
     user_row = get_user_platform_app(db, user_id, "facebook")
     if user_row:
         return OAuthAppCredentials(
@@ -360,28 +391,7 @@ def get_facebook_app_credentials(
             redirect_uri=resolved_redirect_uri,
         )
 
-    if not settings.platform_owner_email:
-        return None
-
-    # Admin-entered platform credentials are stored encrypted against the
-    # designated owner account, then shared for server-side OAuth calls.
-    from app.models.user import User
-
-    owner = (
-        db.query(User)
-        .filter(func.lower(User.email) == settings.platform_owner_email.strip().casefold())
-        .first()
-    )
-    if not owner:
-        return None
-    row = get_user_platform_app(db, owner.id, "facebook")
-    if not row:
-        return None
-    return OAuthAppCredentials(
-        client_id=row.client_id,
-        client_secret=decrypt_api_key(row.client_secret),
-        redirect_uri=resolved_redirect_uri,
-    )
+    return None
 
 
 def get_instagram_app_credentials(
