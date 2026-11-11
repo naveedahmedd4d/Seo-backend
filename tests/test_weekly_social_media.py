@@ -185,8 +185,8 @@ async def test_ensure_weekly_social_media_returns_none_when_no_image():
 
 
 @pytest.mark.asyncio
-async def test_generate_and_publish_skips_facebook_without_image():
-    """When media resolution fails, Facebook is skipped with an explicit error."""
+async def test_generate_and_publish_drafts_socials_without_image():
+    """When media is missing, social networks stay draft for manual action."""
     from app.services import weekly_content_service as wcs
 
     db = MagicMock()
@@ -219,7 +219,7 @@ async def test_generate_and_publish_skips_facebook_without_image():
     ), patch(
         "app.services.openrouter_service.generate_platform_social_captions",
         new_callable=AsyncMock,
-        return_value={"facebook": "Story"},
+        return_value={"facebook": "Story", "x": "Story", "linkedin": "Story"},
     ), patch(
         "app.services.weekly_social_media.active_template_settings",
         return_value={"templateVariant": "pro-1"},
@@ -238,23 +238,25 @@ async def test_generate_and_publish_skips_facebook_without_image():
         "app.services.social_post_publish_service.record_publications",
     ), patch(
         "app.services.social_post_publish_service.finalize_history_status",
-    ):
-        _history, results = await wcs._generate_and_publish_social(
+    ) as mock_finalize:
+        history, results = await wcs._generate_and_publish_social(
             db,
             user,
             query="World Science Day",
             source_title="World Science Day",
             source_snippet="UN observance",
             source_url=None,
-            platforms=["facebook"],
+            platforms=["facebook", "x", "linkedin"],
             settings_snapshot={"source": "test"},
         )
 
     mock_publish.assert_not_awaited()
-    assert len(results) == 1
-    assert results[0]["platform"] == "facebook"
-    assert results[0]["success"] is False
-    assert "No image available" in results[0]["error"]
+    mock_finalize.assert_not_called()
+    assert history.publish_status == "draft"
+    assert history.settings_snapshot.get("awaiting_image") is True
+    assert {row["platform"] for row in results} == {"facebook", "x", "linkedin"}
+    assert all(row["success"] is False for row in results)
+    assert all("draft" in (row["error"] or "").lower() for row in results)
 
 
 @pytest.mark.asyncio

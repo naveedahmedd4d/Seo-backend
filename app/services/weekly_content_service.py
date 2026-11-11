@@ -45,6 +45,32 @@ SOCIAL_IMAGE_PLATFORMS = {
     "bluesky",
     "reddit",
 }
+DRAFT_NO_IMAGE_MSG = "Image not ready — post saved as draft for manual publish"
+
+
+def _social_image_is_ready(
+    *,
+    resolved_image_url: Optional[str],
+    image_bytes: Optional[bytes],
+) -> bool:
+    if image_bytes:
+        return True
+    return bool(
+        isinstance(resolved_image_url, str)
+        and resolved_image_url.startswith(("http://", "https://"))
+    )
+
+
+def _weekly_item_status_from_publish(
+    history: SocialPostHistory,
+    results: list[dict],
+) -> tuple[str, Optional[str]]:
+    """Map publish outcome to a WeeklySocialItem status for auto/manual runs."""
+    if any(r.get("success") for r in results):
+        return "published", None
+    if (history.publish_status or "") == "draft":
+        return "draft", DRAFT_NO_IMAGE_MSG
+    return "failed", _summarize_publish_failures(results)
 
 
 def _summarize_publish_failures(results: list[dict]) -> str:
@@ -380,11 +406,7 @@ async def publish_calendar_event_now(
         )
         item.social_post_history_id = history.id
         item.publish_results = results
-        item.status = "published" if any(r.get("success") for r in results) else "failed"
-        if item.status == "failed":
-            item.error_message = _summarize_publish_failures(results)
-        else:
-            item.error_message = None
+        item.status, item.error_message = _weekly_item_status_from_publish(history, results)
         db.commit()
     except Exception as exc:
         logger.exception("Manual publish failed for user %s event %s", user.id, event.id)
@@ -698,6 +720,14 @@ async def _generate_and_publish_social(
         except Exception:
             image_bytes = None
 
+    has_image = _social_image_is_ready(
+        resolved_image_url=resolved_image_url if isinstance(resolved_image_url, str) else None,
+        image_bytes=image_bytes,
+    )
+    social_platforms = [p for p in platforms if p in SOCIAL_IMAGE_PLATFORMS]
+    outreach_platforms = [p for p in platforms if p in OUTREACH_PLATFORMS]
+    held_for_draft = bool(social_platforms) and not has_image
+
     ctx = PublishCopyContext(
         headline=headline,
         short_description=description,
@@ -706,8 +736,26 @@ async def _generate_and_publish_social(
         source_url=source_url,
     )
     article_body = (body_html or "").strip()[:20000] if body_html else ""
-    results = []
-    for platform in platforms:
+    results: list[SocialPostPublishResultItem] = []
+
+    if held_for_draft:
+        snap = dict(history.settings_snapshot or {})
+        snap["awaiting_image"] = True
+        snap["draft_reason"] = DRAFT_NO_IMAGE_MSG
+        history.settings_snapshot = snap
+        history.publish_status = "draft"
+        db.commit()
+        for platform in social_platforms:
+            results.append(
+                SocialPostPublishResultItem(
+                    platform=platform,
+                    success=False,
+                    error=DRAFT_NO_IMAGE_MSG,
+                )
+            )
+        social_platforms = []
+
+    for platform in [*social_platforms, *outreach_platforms]:
         platform_ctx = ctx
         if platform in OUTREACH_PLATFORMS and article_body:
             platform_ctx = replace(ctx, story_caption=article_body)
@@ -716,27 +764,6 @@ async def _generate_and_publish_social(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user.id, history)
             platform_ctx = replace(platform_ctx, source_url=first_party_url)
-            if not resolved_image_url and not image_bytes:
-                results.append(
-                    SocialPostPublishResultItem(
-                        platform="facebook",
-                        success=False,
-                        error=(
-                            "No image available for Facebook Page posts "
-                            "(card render and image search both failed)"
-                        ),
-                    )
-                )
-                continue
-        if platform == "instagram" and not resolved_image_url:
-            results.append(
-                SocialPostPublishResultItem(
-                    platform="instagram",
-                    success=False,
-                    error="No image available for Instagram posts",
-                )
-            )
-            continue
         results.append(
             await publish_to_platform(
                 db,
@@ -748,8 +775,15 @@ async def _generate_and_publish_social(
                 platform_options={},
             )
         )
+
     record_publications(db, user.id, history.id, results)
-    finalize_history_status(db, history, results)
+    if held_for_draft and not any(r.success for r in results):
+        # Keep draft for manual action — do not mark the history row failed.
+        history.publish_status = "draft"
+        db.commit()
+        db.refresh(history)
+    else:
+        finalize_history_status(db, history, results)
     return history, [r.model_dump(mode="json") for r in results]
 
 
@@ -868,10 +902,27 @@ async def run_goal1_for_user(
             if len(events) >= remaining:
                 break
 
+    # Don't re-attempt posts already live or held as drafts for manual image fix.
+    settled_ids = {
+        row.calendar_event_id
+        for row in (
+            db.query(WeeklySocialItem)
+            .filter(
+                WeeklySocialItem.user_id == user.id,
+                WeeklySocialItem.iso_week == week,
+                WeeklySocialItem.status.in_(("published", "draft")),
+            )
+            .all()
+        )
+    }
+    if settled_ids:
+        events = [event for event in events if event.id not in settled_ids][:remaining]
+
     platforms = _connected_platforms(db, user.id, include_outreach=False)
     created = 0
     published = 0
     failed = 0
+    drafted = 0
 
     if not events:
         logger.info("Goal1 skipped for user %s week %s: no upcoming events", user.id, week)
@@ -880,6 +931,7 @@ async def run_goal1_for_user(
             "created": 0,
             "published": already_published,
             "failed": 0,
+            "drafted": 0,
             "skipped": "no_upcoming_events",
         }
 
@@ -910,7 +962,13 @@ async def run_goal1_for_user(
                 item.run_id = run.id
             failed += 1
         db.commit()
-        return {"events": len(events), "created": created, "published": published, "failed": failed}
+        return {
+            "events": len(events),
+            "created": created,
+            "published": published,
+            "failed": failed,
+            "drafted": drafted,
+        }
 
     for event in events:
         item = (
@@ -924,6 +982,9 @@ async def run_goal1_for_user(
         )
         if item and item.status == "published":
             published += 1
+            continue
+        if item and item.status == "draft":
+            drafted += 1
             continue
         if not item:
             item = WeeklySocialItem(
@@ -969,12 +1030,13 @@ async def run_goal1_for_user(
             )
             item.social_post_history_id = history.id
             item.publish_results = results
-            item.status = "published" if any(r.get("success") for r in results) else "failed"
-            if item.status == "failed":
-                item.error_message = _summarize_publish_failures(results)
-                failed += 1
-            else:
+            item.status, item.error_message = _weekly_item_status_from_publish(history, results)
+            if item.status == "published":
                 published += 1
+            elif item.status == "draft":
+                drafted += 1
+            else:
+                failed += 1
             db.commit()
         except Exception as exc:
             logger.exception("Goal1 social failed for user %s event %s", user.id, event.id)
@@ -983,7 +1045,13 @@ async def run_goal1_for_user(
             failed += 1
             db.commit()
 
-    return {"events": len(events), "created": created, "published": published, "failed": failed}
+    return {
+        "events": len(events),
+        "created": created,
+        "published": published,
+        "failed": failed,
+        "drafted": drafted,
+    }
 
 
 def import_keywords_csv(
