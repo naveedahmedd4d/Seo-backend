@@ -162,8 +162,6 @@ def _is_platform_owner(current_user: User) -> bool:
 
 def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
     """Describe where Meta App ID/secret come from and whether this user can edit them."""
-    from app.services.social_platform_app_service import _get_platform_owner_facebook_app
-
     environment_managed = bool(settings.meta_app_id and settings.meta_app_secret)
     if environment_managed:
         return {
@@ -173,18 +171,8 @@ def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
             "client_id": None,
         }
 
-    # Prefer the shared platform app over any personal BYO keys so the UI matches
-    # what OAuth actually uses.
-    owner_app = _get_platform_owner_facebook_app(db)
-    if owner_app:
-        is_owner = _is_platform_owner(current_user)
-        return {
-            "credentials_source": "platform_shared",
-            "credentials_editable": is_owner,
-            "can_clear_credentials": is_owner,
-            "client_id": owner_app.client_id if is_owner else None,
-        }
-
+    # Each account stores its own Meta app. Do not present another tenant's keys
+    # as already configured — that breaks different Facebook accounts/websites.
     user_app = get_user_platform_app(db, current_user.id, "facebook")
     if user_app:
         return {
@@ -1118,16 +1106,13 @@ async def facebook_connect(
     db: Session = Depends(get_db),
 ):
     redirect_uri = get_facebook_redirect_uri(http_request)
-    from app.services.social_platform_app_service import _get_platform_owner_facebook_app
 
-    # Allow BYO Meta app only when neither env nor a shared platform app is set.
-    # Otherwise personal App IDs override nothing useful and break connect.
-    shared_app = _get_platform_owner_facebook_app(db)
+    # Allow each user to save their own Meta app (different Facebook account /
+    # website) unless server env forces platform credentials.
     if (
         request.client_id
         and request.client_secret
         and not (settings.meta_app_id and settings.meta_app_secret)
-        and not shared_app
     ):
         try:
             upsert_user_platform_app(

@@ -357,11 +357,11 @@ def get_facebook_app_credentials(
 ) -> Optional[OAuthAppCredentials]:
     """Resolve Meta app credentials for Facebook Pages OAuth.
 
-    Order: server env → platform-owner shared app → the user's own Meta app.
+    Order: server env → this user's own Meta app.
 
-    Shared credentials win over per-user BYO keys so every account authorizes
-    against the same working Meta app (a mismatched personal App ID is what
-    left new users redirected but still disconnected).
+    Do not fall back to another tenant's Meta app. Different websites use
+    different Facebook accounts, and Meta Development-mode apps only authorize
+    users who belong to that specific app.
     """
     from app.config import settings
 
@@ -370,16 +370,6 @@ def get_facebook_app_credentials(
         return OAuthAppCredentials(
             client_id=settings.meta_app_id.strip(),
             client_secret=settings.meta_app_secret.strip(),
-            redirect_uri=resolved_redirect_uri,
-        )
-
-    # Admin-entered platform credentials are stored encrypted against the
-    # designated owner account, then shared for server-side OAuth calls.
-    shared_row = _get_platform_owner_facebook_app(db)
-    if shared_row:
-        return OAuthAppCredentials(
-            client_id=shared_row.client_id,
-            client_secret=decrypt_api_key(shared_row.client_secret),
             redirect_uri=resolved_redirect_uri,
         )
 

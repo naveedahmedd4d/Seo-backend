@@ -286,35 +286,37 @@ def test_owner_can_save_shared_facebook_app(client, auth_headers, monkeypatch):
     assert "auth_type=rerequest" in authorization_url
 
 
-def test_facebook_shared_app_wins_over_user_byo_keys(client, auth_headers, monkeypatch):
-    """Personal Meta App IDs must not override the workspace shared app."""
-    monkeypatch.setattr("app.config.settings.platform_owner_email", "social@test.com")
+def test_facebook_other_users_do_not_inherit_owner_meta_app(
+    client, auth_headers, db_session, monkeypatch
+):
+    """Owner Meta keys must not authorize a different tenant's Facebook account."""
+    monkeypatch.setattr("app.config.settings.platform_owner_email", "owner-only@example.com")
     monkeypatch.setattr("app.config.settings.meta_app_id", None)
     monkeypatch.setattr("app.config.settings.meta_app_secret", None)
 
-    owner_setup = client.put(
-        "/api/social-accounts/facebook/admin/setup",
-        headers=auth_headers,
-        json={"client_id": "shared-meta-app", "client_secret": "shared-meta-secret"},
-    )
-    assert owner_setup.status_code == 200
+    from app.models.user import User
+    from app.services.social_platform_app_service import upsert_user_platform_app
 
-    # Attempting to save a different personal App ID should be ignored while shared exists.
-    connect = client.post(
-        "/api/social-accounts/facebook/connect",
-        headers=auth_headers,
-        json={"client_id": "personal-meta-app", "client_secret": "personal-meta-secret-value"},
+    other = User(email="other-tenant@example.com", password_hash="x", full_name="Other")
+    db_session.add(other)
+    db_session.commit()
+    db_session.refresh(other)
+    upsert_user_platform_app(
+        db_session, other.id, "facebook", "owner-meta-app", "owner-meta-secret-value"
     )
-    assert connect.status_code == 200
-    authorization_url = connect.json()["authorization_url"]
-    assert "client_id=shared-meta-app" in authorization_url
-    assert "personal-meta-app" not in authorization_url
 
     setup = client.get("/api/social-accounts/facebook/setup", headers=auth_headers)
     assert setup.status_code == 200
-    data = setup.json()
-    assert data["credentials_source"] == "platform_shared"
-    assert data["client_id"] == "shared-meta-app"
+    assert setup.json()["has_app_credentials"] is False
+    assert setup.json()["credentials_source"] is None
+
+    connect = client.post(
+        "/api/social-accounts/facebook/connect",
+        headers=auth_headers,
+        json={},
+    )
+    assert connect.status_code == 400
+    assert "Meta App ID" in connect.json()["detail"]
 
 
 def test_instagram_setup_returns_redirect_uri(client, auth_headers):
