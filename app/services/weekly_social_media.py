@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.social_post_history import SocialPostHistory
+from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 from app.models.user import User
 from app.services.http_ssl import httpx_verify
 from app.services.llm_settings_service import resolve_api_key_optional
@@ -21,6 +22,29 @@ logger = logging.getLogger(__name__)
 
 RENDER_TIMEOUT_SECONDS = 45.0
 SERP_CANDIDATE_COUNT = 12
+PRO_VARIANTS = {"pro-1", "pro-2"}
+
+
+def active_template_settings(db: Session, user_id: int) -> dict[str, Any]:
+    """The brand preset selected on the social post page. Auto posts use this card."""
+    row = (
+        db.query(SocialPostTemplatePrefs)
+        .filter(SocialPostTemplatePrefs.user_id == user_id)
+        .first()
+    )
+    store = row.store if row and isinstance(row.store, dict) else {}
+    presets = store.get("presets") if isinstance(store.get("presets"), list) else []
+    active_id = store.get("activePresetId")
+    chosen = next((item for item in presets if isinstance(item, dict) and item.get("id") == active_id), None)
+    if chosen is None and presets and isinstance(presets[0], dict):
+        chosen = presets[0]
+    settings = chosen.get("settings") if isinstance(chosen, dict) else None
+    if not isinstance(settings, dict):
+        settings = {}
+    variant = str(settings.get("templateVariant") or "pro-1").strip().lower()
+    if variant not in PRO_VARIANTS:
+        variant = "pro-1"
+    return {**settings, "templateVariant": variant}
 
 
 def _candidate_image_url(img: dict[str, Any]) -> str:
@@ -150,6 +174,7 @@ async def _render_social_card_png(
     story: Optional[str],
     hashtags: Optional[list[str]],
     background_image_url: Optional[str],
+    template_settings: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Call Next.js /api/social-card/render; return png base64 or None."""
     frontend_url = (settings.frontend_url or "").rstrip("/")
@@ -163,6 +188,7 @@ async def _render_social_card_png(
         "story": story or "",
         "hashtags": hashtags or [],
         "background_image_url": background_image_url or "",
+        "settings": template_settings or {"templateVariant": "pro-1"},
     }
     try:
         async with httpx.AsyncClient(verify=httpx_verify(), timeout=RENDER_TIMEOUT_SECONDS) as client:
@@ -200,6 +226,7 @@ async def ensure_weekly_social_media(
     story: Optional[str] = None,
     hashtags: Optional[list[str]] = None,
     existing_image_url: Optional[str] = None,
+    template_settings: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Ensure weekly Goal 1 has a publishable image URL.
 
@@ -229,6 +256,7 @@ async def ensure_weekly_social_media(
         story=story,
         hashtags=hashtags,
         background_image_url=background_url,
+        template_settings=template_settings,
     )
     if not png_b64:
         png_b64 = _render_local_fallback_png(

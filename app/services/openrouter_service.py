@@ -594,6 +594,32 @@ def _ensure_pro1_highlight_markup(headline: str) -> str:
     return _highlight_first_n_words(text, 2)
 
 
+def clean_social_description(raw: str) -> str:
+    """Drop the model's instructions and keep the caption sentence.
+
+    Auto posts were publishing text like "We need 1-2 sentences... Sentence: ..."
+    onto the card. Prefer a labelled Sentence, otherwise skip instruction lines.
+    """
+    text = (raw or "").strip().strip('"').strip("'")
+    labelled = re.search(r'(?is)\bsentence\s*:\s*"([^"]+)"', text)
+    if not labelled:
+        labelled = re.search(r"(?is)\bsentence\s*:\s*(.+)$", text)
+    if labelled:
+        text = labelled.group(1).strip().strip('"')
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    kept: list[str] = []
+    instruction = re.compile(
+        r"(?i)\b(?:we need|use facts|that'?s it|provide description|"
+        r"count characters|let'?s craft|140-220|character(?:s)? total)\b"
+    )
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if not sentence or instruction.search(sentence):
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip()
+
+
 async def generate_social_post_description(
     news_results: List[Dict[str, Any]],
     headline: str,
@@ -646,9 +672,7 @@ Output only the description text."""
         max_tokens=120,
         temperature=0.5,
     )
-    desc = (result or "").strip().strip('"').strip("'")
-    # Compact whitespace
-    desc = " ".join(desc.split())
+    desc = clean_social_description(result or "")
     if len(desc) > 240:
         desc = desc[:237] + "..."
     return desc

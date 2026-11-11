@@ -538,7 +538,9 @@ async def _run_social(
                     "link": source_url,
                     "date": utcnow().date().isoformat(),
                 }]
-                headline = await generate_news_headline(source, query=article.get("topic"))
+                headline = await generate_news_headline(
+                    source, query=article.get("topic"), template_variant="pro-1"
+                )
                 description = await generate_social_post_description(source, headline, article.get("topic"))
                 story = await generate_social_post_story_description(source, headline, article.get("topic"))
                 hashtags = await generate_social_post_hashtags(

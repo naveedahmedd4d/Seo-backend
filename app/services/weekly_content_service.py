@@ -458,9 +458,15 @@ async def _generate_and_publish_social(
         "link": source_url,
         "date": date.today().isoformat(),
     }]
+    from app.services.weekly_social_media import active_template_settings
+
+    template_settings = active_template_settings(db, user.id)
+    template_variant = str(template_settings.get("templateVariant") or "pro-1")
     token = set_llm_context(resolve_llm_credentials(db, user.id))
     try:
-        headline = await generate_news_headline(source, query=query)
+        headline = await generate_news_headline(
+            source, query=query, template_variant=template_variant
+        )
         description = await generate_social_post_description(source, headline, query)
         story = await generate_social_post_story_description(source, headline, query)
         hashtags = await generate_social_post_hashtags(source, headline, query, 12)
@@ -479,7 +485,7 @@ async def _generate_and_publish_social(
         description=description,
         story_description=story_for_history,
         hashtags=hashtags,
-        settings_snapshot=settings_snapshot,
+        settings_snapshot={**settings_snapshot, "template": template_settings},
         news_results=source,
         publish_status="draft",
     )
@@ -508,6 +514,7 @@ async def _generate_and_publish_social(
                 story=story,
                 hashtags=hashtags if isinstance(hashtags, list) else None,
                 existing_image_url=image_url,
+                template_settings=template_settings,
             )
         finally:
             reset_llm_context(pick_token)

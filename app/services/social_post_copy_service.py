@@ -96,7 +96,7 @@ def build_bluesky_text(ctx: PublishCopyContext) -> str:
 def build_facebook_message(ctx: PublishCopyContext) -> str:
     """Message = headline + story + hashtags (link passed separately)."""
     parts: list[str] = []
-    headline = (ctx.headline or "").strip()
+    headline = _strip_highlight_markup((ctx.headline or "").strip())
     if headline:
         parts.append(headline)
     story = (ctx.story_caption or ctx.short_description or "").strip()

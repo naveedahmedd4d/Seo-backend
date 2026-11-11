@@ -5,7 +5,17 @@ from unittest.mock import AsyncMock, patch
 
 from app.services.openrouter_service import generate_news_headline
 
-def test_ensure_pro1_highlight_markup_classic_headline():
+def test_clean_social_description_drops_writing_instructions():
+    from app.services.openrouter_service import clean_social_description
+
+    raw = (
+        'We need 1-2 sentences 140-220 characters. Use facts: UN declares Nov 9-15. '
+        'That\'s it. Provide description. Count characters approx. Let\'s craft ~170 chars. '
+        'Sentence: "The United Nations has proclaimed a week of science and peace."'
+    )
+    cleaned = clean_social_description(raw)
+    assert cleaned == "The United Nations has proclaimed a week of science and peace."
+    assert "We need" not in cleaned
     from app.services.openrouter_service import _ensure_pro1_highlight_markup
 
     raw = "SpaceX Starship megarocket— Finds mixed success in debut test flight"
