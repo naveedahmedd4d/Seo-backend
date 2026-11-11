@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # Public API URL (used for social post image URLs — must be reachable by external platforms)
     api_public_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:3000"
+    # Base URL for /api/social-card/render. Falls back to frontend_url.
+    # Set this when OAuth still uses a different FRONTEND_URL than the app that renders cards.
+    social_card_render_url: Optional[str] = None
 
     # Shared secret for the backend to call the Next.js infographic-rendering route
     # (frontend_url + /api/infographic/render). Must match INFOGRAPHIC_RENDER_SECRET on Vercel.

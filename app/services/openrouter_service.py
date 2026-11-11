@@ -405,7 +405,7 @@ Output ONLY the 2-line headline. No quotes, no preamble, no character counts, no
     if len(headline) > max_chars:
         headline = headline[: max_chars - 3] + "..."
     if is_pro_variant:
-        headline = _ensure_pro1_highlight_markup(headline)
+        headline = _repair_highlight_markup(headline)
     return headline
 
 
@@ -570,6 +570,18 @@ def _highlight_phrase_at(line: str, count: int, skip: int) -> str:
     )
 
 
+def _repair_highlight_markup(headline: str) -> str:
+    """Keep paired **highlights**. Rebuild when asterisks are broken, as in 'Word**'."""
+    text = headline or ""
+    pairs = list(re.finditer(r"\*\*[^*\n]{1,48}\*\*", text))
+    if len(pairs) >= 2 and text.count("**") == len(pairs) * 2:
+        return text
+    plain = re.sub(r"\*+", "", text)
+    plain = re.sub(r"[ \t]{2,}", " ", plain)
+    plain = "\n".join(line.strip() for line in plain.splitlines() if line.strip())
+    return _ensure_pro1_highlight_markup(plain)
+
+
 def _ensure_pro1_highlight_markup(headline: str) -> str:
     """Add **highlight** markers when the model omitted them (classic-style output)."""
     if "**" in headline:
@@ -597,23 +609,28 @@ def _ensure_pro1_highlight_markup(headline: str) -> str:
 def clean_social_description(raw: str) -> str:
     """Drop the model's instructions and keep the caption sentence.
 
-    Auto posts were publishing text like "We need 1-2 sentences... Sentence: ..."
-    onto the card. Prefer a labelled Sentence, otherwise skip instruction lines.
+    Auto posts were publishing notes such as "Only fact: ... So description: ..."
+    and "We need 1-2 sentences...". Prefer the labelled caption, otherwise skip
+    instruction sentences.
     """
-    text = (raw or "").strip().strip('"').strip("'")
-    labelled = re.search(r'(?is)\bsentence\s*:\s*"([^"]+)"', text)
-    if not labelled:
-        labelled = re.search(r"(?is)\bsentence\s*:\s*(.+)$", text)
+    text = " ".join((raw or "").split()).strip().strip('"').strip("'")
+    labelled = re.search(
+        r"(?is)(?:so\s+)?(?:description|sentence)\s*:\s*(?:\"([^\"]+)\"|(.+))$",
+        text,
+    )
     if labelled:
-        text = labelled.group(1).strip().strip('"')
+        text = (labelled.group(1) or labelled.group(2) or "").strip().strip('"')
+    quote = re.search(r'"([^"]{40,})"', text)
+    if quote and re.search(r"(?i)\b(?:only facts?|use snippet|so description|we need)\b", text):
+        text = quote.group(1).strip()
     sentences = re.split(r"(?<=[.!?])\s+", text)
     kept: list[str] = []
     instruction = re.compile(
-        r"(?i)\b(?:we need|use facts|that'?s it|provide description|"
-        r"count characters|let'?s craft|140-220|character(?:s)? total)\b"
+        r"(?i)\b(?:we need|use facts|use snippet|only facts?|that'?s it|provide description|"
+        r"count characters|let'?s craft|140-220|character(?:s)? total|so description)\b"
     )
     for sentence in sentences:
-        sentence = sentence.strip()
+        sentence = sentence.strip().strip('"')
         if not sentence or instruction.search(sentence):
             continue
         kept.append(sentence)
@@ -649,23 +666,20 @@ async def generate_social_post_description(
     query_line = f'\n\nUser search query: "{query}"' if query else ""
     headline_clean = (headline or "").replace("\n", " ").strip()
 
-    prompt = f"""Write a short description for a social post.
+    prompt = f"""Write the caption for a social post.
 
-You are given:
-- A headline (already written)
-- 7 news snippets (the only source of truth)
+You are given a headline and news snippets. The snippets are the only source of truth.
 
 Rules:
-- 1–2 sentences.
-- 140–220 characters total.
-- Must match the facts implied by the snippets; do NOT add details not present.
-- No hashtags, no emojis, no quotes, no bullet points.
-- Keep it readable and specific (who/what happened + why it matters).
+- 1–2 sentences, about 140–220 characters.
+- Specific: who did what, and why it matters.
+- No hashtags, emojis, quotes, or bullet points.
+- Do not mention these rules, facts, snippets, or character counts.
 
 Headline: {headline_clean}
 {news_block}{query_line}
 
-Output only the description text."""
+Output only the caption."""
 
     result = await generate_content(
         prompt,

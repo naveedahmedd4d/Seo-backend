@@ -16,6 +16,26 @@ def test_clean_social_description_drops_writing_instructions():
     cleaned = clean_social_description(raw)
     assert cleaned == "The United Nations has proclaimed a week of science and peace."
     assert "We need" not in cleaned
+
+    narrated = (
+        "Only fact: Veterans Day today. So description: Communities across America "
+        "gather to honor brave veterans. \"Communities across the United States are "
+        "gathering today to honor brave veterans, holding remembrance events.\""
+    )
+    cleaned = clean_social_description(narrated)
+    assert cleaned.startswith("Communities across")
+    assert "Only fact" not in cleaned
+    assert "So description" not in cleaned
+
+
+def test_repair_highlight_markup_rebuilds_broken_asterisks():
+    from app.services.openrouter_service import _repair_highlight_markup
+
+    raw = "Veterans** Across America Communities\nUnite in **Remembrance** Today"
+    repaired = _repair_highlight_markup(raw)
+    assert "Veterans**" not in repaired
+    assert repaired.count("**") >= 4
+    assert "Remembrance" in repaired or "America" in repaired
     from app.services.openrouter_service import _ensure_pro1_highlight_markup
 
     raw = "SpaceX Starship megarocket— Finds mixed success in debut test flight"

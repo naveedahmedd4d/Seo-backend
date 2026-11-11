@@ -123,10 +123,8 @@ def _render_local_fallback_png(*, headline: str, description: str) -> Optional[s
         draw = ImageDraw.Draw(img)
         try:
             title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
-            body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
         except Exception:
             title_font = ImageFont.load_default()
-            body_font = title_font
 
         margin = 72
         max_width = width - margin * 2
@@ -150,14 +148,10 @@ def _render_local_fallback_png(*, headline: str, description: str) -> Optional[s
             lines.append(current)
             return lines[:limit]
 
-        title_lines = _wrap((headline or "Weekly update").strip(), title_font, 5)
+        title_lines = _wrap((headline or "Weekly update").replace("**", "").strip(), title_font, 6)
         for line in title_lines:
             draw.text((margin, y), line, fill=(248, 250, 252), font=title_font)
             y += 78
-        y += 36
-        for line in _wrap((description or "").strip(), body_font, 8):
-            draw.text((margin, y), line, fill=(203, 213, 225), font=body_font)
-            y += 48
 
         buf = BytesIO()
         img.save(buf, format="PNG", optimize=True)
@@ -165,6 +159,22 @@ def _render_local_fallback_png(*, headline: str, description: str) -> Optional[s
     except Exception as exc:
         logger.warning("Weekly social media: local fallback card failed: %s", exc)
         return None
+
+
+def _render_settings_payload(template_settings: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Drop embedded images. The topic photo is sent separately as an https URL."""
+    raw = template_settings if isinstance(template_settings, dict) else {}
+    cleaned: dict[str, Any] = {}
+    for key, value in raw.items():
+        if isinstance(value, str) and (value.startswith("data:") or len(value) > 4000):
+            continue
+        cleaned[key] = value
+    cleaned["templateVariant"] = str(cleaned.get("templateVariant") or "pro-1")
+    return cleaned
+
+
+def _card_render_base_url() -> str:
+    return (settings.social_card_render_url or settings.frontend_url or "").rstrip("/")
 
 
 async def _render_social_card_png(
@@ -177,10 +187,12 @@ async def _render_social_card_png(
     template_settings: Optional[dict[str, Any]] = None,
 ) -> Optional[str]:
     """Call Next.js /api/social-card/render; return png base64 or None."""
-    frontend_url = (settings.frontend_url or "").rstrip("/")
+    frontend_url = _card_render_base_url()
     secret = (settings.infographic_render_secret or "").strip()
     if not frontend_url or not secret:
-        logger.info("Weekly social media: card render not configured (FRONTEND_URL / secret)")
+        logger.warning(
+            "Weekly social media: card render not configured (SOCIAL_CARD_RENDER_URL / FRONTEND_URL / secret)"
+        )
         return None
     payload = {
         "headline": headline,
@@ -188,7 +200,7 @@ async def _render_social_card_png(
         "story": story or "",
         "hashtags": hashtags or [],
         "background_image_url": background_image_url or "",
-        "settings": template_settings or {"templateVariant": "pro-1"},
+        "settings": _render_settings_payload(template_settings),
     }
     try:
         async with httpx.AsyncClient(verify=httpx_verify(), timeout=RENDER_TIMEOUT_SECONDS) as client:
