@@ -1,11 +1,13 @@
 name: Weekly Content Cron
 
-# Hourly. The API decides who is actually due from each user's saved
+# Every 15 minutes. The API decides who is actually due from each user's saved
 # run_frequency + cron_weekday + cron_time_utc, so the schedule lives in the
 # database, not here. Ticks with nobody due return after one indexed query.
+# GitHub can delay scheduled jobs by 10–40 minutes, so a 15-minute cadence keeps
+# the chosen local time from being missed until the next hour.
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force:

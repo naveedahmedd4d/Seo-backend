@@ -267,14 +267,11 @@ def test_weekly_does_not_fire_on_other_weekday():
     assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is False
 
 
-def test_weekly_fires_within_grace_after_cold_start():
+def test_weekly_stays_due_after_delayed_scheduler_tick():
     row = _settings(cron_weekday=1, cron_time_utc="11:30")
     assert is_run_due(row, now=_utc(2026, 11, 10, 12, 30)) is True
-
-
-def test_weekly_skips_long_after_slot():
-    row = _settings(cron_weekday=1, cron_time_utc="11:30")
-    assert is_run_due(row, now=_utc(2026, 11, 10, 20, 0)) is False
+    # GitHub can delay hourly jobs by tens of minutes; stay due for the day.
+    assert is_run_due(row, now=_utc(2026, 11, 10, 20, 0)) is True
 
 
 def test_weekly_does_not_refire_same_iso_week():

@@ -1135,10 +1135,6 @@ async def run_goal2_for_user(
 
 
 DEFAULT_CRON_TIME_UTC = "09:00"
-# How far past the chosen time a tick may still fire. The scheduler wakes hourly
-# and a cold free-tier instance can take ~50s, so a tick that lands late in the
-# hour must still count as "due" rather than skipping the whole week.
-RUN_DUE_GRACE_MINUTES = 90
 
 
 def _parse_hhmm(value: Optional[str]) -> tuple[int, int]:
@@ -1162,6 +1158,9 @@ def is_run_due(
     Weekly honours cron_weekday + cron_time_utc; daily honours the time only and
     fires once per calendar day. Both compare in UTC, which is how the settings
     are stored — the UI converts to the user's zone for display.
+
+    Once the chosen time has passed, stay due for the rest of that UTC day so a
+    delayed GitHub Actions tick still fires instead of waiting a week.
     """
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     frequency = (settings.run_frequency or "weekly").strip().lower()
@@ -1183,8 +1182,7 @@ def is_run_due(
 
     if moment < scheduled:
         return False
-    # Guard against a tick that wakes hours late firing an off-schedule run.
-    return (moment - scheduled) <= timedelta(minutes=RUN_DUE_GRACE_MINUTES)
+    return True
 
 
 def _is_stale_running(run: WeeklyContentRun, *, max_age_hours: int = 2) -> bool:
