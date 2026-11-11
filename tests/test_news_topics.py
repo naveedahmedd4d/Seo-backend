@@ -5,6 +5,7 @@ import json
 import pytest
 
 from app.services.news_topics_service import (
+    choose_social_publish_id,
     normalize_source_ids,
     parse_feed_xml,
     parse_llm_pick,
@@ -86,3 +87,18 @@ def test_topic_rows_use_feed_name_and_source():
     ]
     assert rows[0]["topic_date"] == "2026-11-11"
     assert rows[0]["title"] == "Claude joins meetings"
+
+
+def test_social_publish_id_excludes_blog_publish_id():
+    stories = [{"id": i, "title": f"Story {i}"} for i in range(1, 11)]
+    picks = [{"id": 1, "angle": "a"}, {"id": 2, "angle": "b"}, {"id": 3, "angle": "c"}]
+    social_id = choose_social_publish_id(stories, blog_publish_id=1, picks=picks)
+    assert social_id == 2
+    assert social_id != 1
+
+
+def test_social_publish_id_falls_back_to_next_ranked_story():
+    stories = [{"id": i, "title": f"Story {i}"} for i in range(1, 5)]
+    picks = [{"id": 1, "angle": "only"}]
+    social_id = choose_social_publish_id(stories, blog_publish_id=1, picks=picks)
+    assert social_id == 2

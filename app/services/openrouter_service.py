@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import json
 import re
 from contextvars import ContextVar
 from typing import Optional, Dict, Any, List, Tuple, TYPE_CHECKING
@@ -751,6 +752,139 @@ Output only the description text."""
     if len(words) > 100:
         story = " ".join(words[:100]).rstrip() + "..."
     return story
+
+
+PLATFORM_CAPTION_LIMITS: Dict[str, int] = {
+    "x": 280,
+    "twitter": 280,
+    "facebook": 500,
+    "instagram": 2200,
+    "linkedin": 1300,
+    "threads": 500,
+    "mastodon": 500,
+    "bluesky": 300,
+    "reddit": 1000,
+    "pinterest": 500,
+}
+
+
+def _fallback_platform_captions(
+    platforms: List[str],
+    *,
+    headline: str,
+    base_caption: str,
+) -> Dict[str, str]:
+    """Deterministic distinct captions when the LLM call fails or returns junk."""
+    clean_base = " ".join((base_caption or headline or "").split()).strip() or "New update"
+    out: Dict[str, str] = {}
+    for index, platform in enumerate(platforms):
+        key = (platform or "").strip().lower()
+        limit = PLATFORM_CAPTION_LIMITS.get(key, 500)
+        suffix = {
+            "x": " Thread-ready take.",
+            "twitter": " Thread-ready take.",
+            "facebook": " Worth a closer look — full story linked.",
+            "instagram": " Save this if you follow the space.",
+            "linkedin": " What this means for teams shipping product this week.",
+        }.get(key, f" Perspective for {key or 'social'}.")
+        text = f"{clean_base}{suffix if index else ''}".strip()
+        if len(text) > limit:
+            text = text[: max(0, limit - 3)].rstrip() + "..."
+        out[key] = text
+    return out
+
+
+async def generate_platform_social_captions(
+    *,
+    topic: str,
+    headline: str,
+    facts: str,
+    platforms: List[str],
+    base_caption: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Unique LLM captions per connected social network, hard-capped by platform budgets.
+    Returns {platform: caption}. Never returns identical bodies when multiple platforms.
+    """
+    cleaned = []
+    seen: set[str] = set()
+    for platform in platforms:
+        key = (platform or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(key)
+    if not cleaned:
+        return {}
+
+    fallback = _fallback_platform_captions(
+        cleaned,
+        headline=headline,
+        base_caption=base_caption or facts or headline,
+    )
+    if not has_usable_llm_key():
+        return fallback
+
+    limits_block = "\n".join(
+        f"- {platform}: max {PLATFORM_CAPTION_LIMITS.get(platform, 500)} characters"
+        for platform in cleaned
+    )
+    prompt = f"""Write unique social captions for each platform below.
+
+Topic: {topic}
+Headline: {headline}
+Facts / blurb: {(facts or base_caption or headline)[:1200]}
+
+Platforms and hard length budgets:
+{limits_block}
+
+Rules:
+- Different angle and tone per platform (do not reuse the same sentences).
+- No hashtags unless the platform is Instagram (at most 3).
+- No markdown, no bullet lists, no inventing facts.
+- Stay within each platform's character budget.
+- Return JSON only: {{"facebook":"...","x":"...", ...}} with keys for every listed platform.
+"""
+    try:
+        raw = await generate_content(
+            prompt,
+            max_tokens=900,
+            temperature=0.7,
+            system="You write distinct social captions per network. Return only JSON.",
+        )
+    except Exception:
+        return fallback
+
+    match = re.search(r"\{.*\}", raw or "", re.DOTALL)
+    if not match:
+        return fallback
+    try:
+        data = json.loads(match.group(0))
+    except Exception:
+        return fallback
+    if not isinstance(data, dict):
+        return fallback
+
+    out: Dict[str, str] = {}
+    bodies: list[str] = []
+    for platform in cleaned:
+        limit = PLATFORM_CAPTION_LIMITS.get(platform, 500)
+        text = data.get(platform) or data.get(platform.upper()) or ""
+        text = " ".join(str(text).split()).strip()
+        if not text:
+            text = fallback.get(platform, headline)
+        if len(text) > limit:
+            text = text[: max(0, limit - 3)].rstrip() + "..."
+        # Soft uniqueness: if identical to a prior body, append a short platform cue.
+        normalized = text.lower()
+        if normalized in bodies:
+            cue = f" ({platform})"
+            room = max(0, limit - len(cue))
+            text = (text[:room].rstrip() + cue)[:limit]
+            normalized = text.lower()
+        bodies.append(normalized)
+        out[platform] = text
+    return out
 
 
 async def generate_social_post_hashtags(

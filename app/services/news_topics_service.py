@@ -225,6 +225,51 @@ def parse_llm_pick(raw: str, valid_ids: set[int]) -> dict[str, Any]:
     }
 
 
+def choose_social_publish_id(
+    stories: list[dict[str, Any]],
+    *,
+    blog_publish_id: Optional[int],
+    picks: Optional[list[dict[str, Any]]] = None,
+) -> Optional[int]:
+    """Pick a social trending topic id that is never the blog's publish_id."""
+    if not stories:
+        return None
+    ranked_ids = [int(story["id"]) for story in stories if story.get("id") is not None]
+    if not ranked_ids:
+        return None
+    exclude = int(blog_publish_id) if blog_publish_id is not None else None
+    pick_ids: list[int] = []
+    for item in picks or []:
+        try:
+            pick_id = int(item.get("id"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if pick_id in ranked_ids and pick_id not in pick_ids:
+            pick_ids.append(pick_id)
+    # Prefer another LLM pick, then the next ranked story.
+    for candidate in pick_ids + ranked_ids:
+        if exclude is None or candidate != exclude:
+            return candidate
+    return None
+
+
+def social_topic_from_stories(
+    stories: list[dict[str, Any]],
+    social_publish_id: Optional[int],
+) -> Optional[dict[str, Any]]:
+    if social_publish_id is None:
+        return None
+    story = next((item for item in stories if item.get("id") == social_publish_id), None)
+    if not story:
+        return None
+    return {
+        "id": story["id"],
+        "title": story.get("title") or "",
+        "link": story.get("link"),
+        "sources": list(story.get("sources") or []),
+    }
+
+
 def _pick_prompt(stories: list[dict[str, Any]]) -> str:
     lines = [
         f"{story['id']}. {story['title']} (sources: {', '.join(story['sources'])})"
@@ -494,13 +539,60 @@ async def _publish_chosen_blog(
     )
     published = publish_response.model_dump(mode="json")
     state = workflow.state_data if isinstance(workflow.state_data, dict) else {}
+    title = state.get("title") or story["title"]
+    body = state.get("body_content") or ""
+    meta = state.get("meta_description") or ""
+    featured = state.get("featured_image")
+    image_url = featured.get("url") if isinstance(featured, dict) else featured
+    link = published.get("link")
+
+    share: dict[str, Any] = {"status": "skipped", "reason": "share_toggles_off"}
+    try:
+        from app.services.weekly_content_service import (
+            _generate_and_publish_social,
+            get_or_create_settings as get_weekly_settings,
+            platforms_for_blog_share,
+        )
+
+        weekly = get_weekly_settings(db, user.id)
+        platforms = platforms_for_blog_share(db, user.id, weekly)
+        if platforms:
+            history, results = await _generate_and_publish_social(
+                db,
+                user,
+                query=story["title"],
+                source_title=title,
+                source_snippet=meta or (body[:800] if isinstance(body, str) else ""),
+                source_url=link,
+                platforms=platforms,
+                settings_snapshot={
+                    "source": "news_topics_blog",
+                    "story_id": story["id"],
+                    "platforms": platforms,
+                    "match_blog": True,
+                },
+                image_url=image_url if isinstance(image_url, str) else None,
+                body_html=body if isinstance(body, str) else None,
+                match_blog=True,
+            )
+            share = {
+                "status": "shared",
+                "social_post_history_id": history.id,
+                "platforms": platforms,
+                "results": results,
+            }
+    except Exception as exc:
+        logger.exception("News blog share failed for user %s", user.id)
+        share = {"status": "failed", "error": str(exc)[:500]}
+
     return {
         "status": "published",
         "workflow_id": workflow.id,
         "post_id": published.get("post_id"),
-        "link": published.get("link"),
-        "title": state.get("title") or story["title"],
+        "link": link,
+        "title": title,
         "story_id": story["id"],
+        "share": share,
     }
 
 
@@ -549,17 +641,36 @@ async def run_news_topics_for_user(
 
     # Reload in case blog generation committed other changes on this session.
     row = get_or_create_settings(db, user.id)
+    blog_publish_id = (
+        (previous_blog or {}).get("story_id")
+        if already_published and isinstance(previous_blog, dict)
+        else choice.get("publish_id")
+    )
+    previous_social_id = None
+    previous_social_topic = None
+    if isinstance(row.news_topics, dict) and row.news_topics.get("fetched_on") == day:
+        previous_social_id = row.news_topics.get("social_publish_id")
+        previous_social_topic = row.news_topics.get("social_topic")
+    blog_id = blog_publish_id if isinstance(blog_publish_id, int) else None
+    social_publish_id = previous_social_id if isinstance(previous_social_id, int) else None
+    # Always keep social ≠ blog, even if a later publish run changes publish_id.
+    if social_publish_id is None or (blog_id is not None and social_publish_id == blog_id):
+        social_publish_id = choose_social_publish_id(
+            stories,
+            blog_publish_id=blog_id,
+            picks=choice.get("picks") or [],
+        )
+        previous_social_topic = None
+    social_topic = previous_social_topic or social_topic_from_stories(stories, social_publish_id)
     row.news_topics = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
         "fetched_on": day,
         "enabled_sources": source_ids,
         "top10": stories,
         "picks": choice.get("picks") or [],
-        "publish_id": (
-            (previous_blog or {}).get("story_id")
-            if already_published and isinstance(previous_blog, dict)
-            else choice.get("publish_id")
-        ),
+        "publish_id": blog_publish_id,
+        "social_publish_id": social_publish_id,
+        "social_topic": social_topic,
         "why": choice.get("why") or "",
         "pick_error": pick_error,
         "blog": blog,

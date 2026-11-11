@@ -42,6 +42,9 @@ class WeeklyContentSettings(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     goal1_enabled = Column(Boolean, nullable=False, server_default="false")
     goal2_enabled = Column(Boolean, nullable=False, server_default="false")
+    # After WordPress publish: share to FB/IG/LinkedIn/X etc. and/or Dev.to/Hashnode/Blogger.
+    share_blogs_to_social = Column(Boolean, nullable=False, server_default="false")
+    share_blogs_to_outreach = Column(Boolean, nullable=False, server_default="false")
     countries = Column(JSON, nullable=False, default=list)  # e.g. ["US","GB","PK"]
     max_social_per_week = Column(Integer, nullable=False, server_default="7")
     blogs_per_week = Column(Integer, nullable=False, server_default="2")

@@ -88,7 +88,8 @@ def test_pinterest_title_strips_highlight_markup():
 
 def test_facebook_message_headline_story_and_hashtags():
     msg = build_facebook_message(_ctx())
-    assert "Breaking **News** Headline" in msg
+    assert "Breaking News Headline" in msg
+    assert "**" not in msg
     assert "Longer story caption" in msg
     assert msg.endswith("#news #trending")
 
@@ -96,6 +97,16 @@ def test_facebook_message_headline_story_and_hashtags():
 def test_facebook_message_preserves_prefixed_hashtags():
     msg = build_facebook_message(_ctx(hashtags=["#MLB", "Baseball", " "]))
     assert msg.endswith("#MLB #Baseball")
+
+
+def test_facebook_message_rejects_full_article_markdown():
+    article = "## Intro\n\n" + ("Paragraph. " * 80) + "\n\n## Next\n\n- one\n- two\n"
+    msg = build_facebook_message(
+        _ctx(story_caption=article, short_description="A short social blurb about the project.")
+    )
+    assert "## Intro" not in msg
+    assert "A short social blurb about the project." in msg
+    assert len(msg) < 800
 
 
 def test_reddit_title_is_headline():

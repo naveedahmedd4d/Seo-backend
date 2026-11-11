@@ -11,6 +11,8 @@ from pydantic import BaseModel, Field
 class WeeklyContentSettingsResponse(BaseModel):
     goal1_enabled: bool
     goal2_enabled: bool
+    share_blogs_to_social: bool = False
+    share_blogs_to_outreach: bool = False
     countries: list[str]
     max_social_per_week: int
     blogs_per_week: int
@@ -26,6 +28,8 @@ class WeeklyContentSettingsResponse(BaseModel):
 class WeeklyContentSettingsUpdate(BaseModel):
     goal1_enabled: Optional[bool] = None
     goal2_enabled: Optional[bool] = None
+    share_blogs_to_social: Optional[bool] = None
+    share_blogs_to_outreach: Optional[bool] = None
     countries: Optional[list[str]] = None
     max_social_per_week: Optional[int] = Field(default=None, ge=1, le=30)
     blogs_per_week: Optional[int] = Field(default=None, ge=1, le=10)
@@ -168,6 +172,8 @@ class WeeklyReadinessResponse(BaseModel):
     goal2_ready: bool
     goal1_enabled: bool
     goal2_enabled: bool
+    share_blogs_to_social: bool = False
+    share_blogs_to_outreach: bool = False
     max_social_per_week: int
     blogs_per_week: int
     social_platforms: list[str]

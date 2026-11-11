@@ -87,6 +87,95 @@ def _is_user_custom_event(event: CalendarEvent, user_id: int) -> bool:
     return event.source == "custom" and (event.external_id or "").startswith(f"user-{user_id}-")
 
 
+def _is_user_news_trending_event(event: CalendarEvent, user_id: int) -> bool:
+    return (
+        event.source == "news_trending"
+        and (event.external_id or "").startswith(f"user-{user_id}-news-trending-")
+    )
+
+
+async def ensure_social_trending_event(db: Session, user: User) -> Optional[CalendarEvent]:
+    """Create/update today's social trending calendar event (topic ≠ blog publish_id)."""
+    from app.services.llm_settings_service import get_or_create_settings as get_llm_settings
+    from app.services.news_topics_service import (
+        choose_social_publish_id,
+        run_news_topics_for_user,
+        social_topic_from_stories,
+    )
+
+    day = date.today().isoformat()
+    row = get_llm_settings(db, user.id)
+    payload = row.news_topics if isinstance(row.news_topics, dict) else None
+    needs_refresh = (
+        not payload
+        or payload.get("fetched_on") != day
+        or not payload.get("social_topic")
+        or not payload.get("top10")
+    )
+    if needs_refresh:
+        try:
+            await run_news_topics_for_user(db, user, publish=False)
+        except Exception:
+            logger.exception("Could not refresh news topics for social trending user %s", user.id)
+            return None
+        row = get_llm_settings(db, user.id)
+        payload = row.news_topics if isinstance(row.news_topics, dict) else None
+    if not isinstance(payload, dict):
+        return None
+
+    stories = payload.get("top10") if isinstance(payload.get("top10"), list) else []
+    social_id = payload.get("social_publish_id")
+    if social_id is None and stories:
+        social_id = choose_social_publish_id(
+            stories,
+            blog_publish_id=payload.get("publish_id")
+            if isinstance(payload.get("publish_id"), int)
+            else None,
+            picks=payload.get("picks") if isinstance(payload.get("picks"), list) else [],
+        )
+        topic = social_topic_from_stories(stories, social_id)
+        payload = {
+            **payload,
+            "social_publish_id": social_id,
+            "social_topic": topic,
+        }
+        row.news_topics = payload
+        db.commit()
+    topic = payload.get("social_topic") if isinstance(payload.get("social_topic"), dict) else None
+    title = (topic or {}).get("title") if topic else None
+    if not title:
+        return None
+
+    external_id = f"user-{user.id}-news-trending-{day}"
+    event = (
+        db.query(CalendarEvent)
+        .filter(
+            CalendarEvent.external_id == external_id,
+            CalendarEvent.source == "news_trending",
+        )
+        .first()
+    )
+    if event:
+        if event.title != title[:255]:
+            event.title = title[:255]
+            db.commit()
+            db.refresh(event)
+        return event
+
+    event = CalendarEvent(
+        event_date=date.today(),
+        title=title[:255],
+        country_or_scope="TRENDING",
+        source="news_trending",
+        external_id=external_id,
+        description="Daily social trending topic (separate from the blog pick)",
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
 def create_social_topic(
     db: Session,
     user_id: int,
@@ -186,6 +275,8 @@ async def publish_calendar_event_now(
     if not event:
         raise ValueError("Event not found")
     if event.source == "custom" and not _is_user_custom_event(event, user.id):
+        raise ValueError("Event not found")
+    if event.source == "news_trending" and not _is_user_news_trending_event(event, user.id):
         raise ValueError("Event not found")
 
     platforms = _connected_platforms(db, user.id, include_outreach=False)
@@ -329,6 +420,8 @@ def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
         run_frequency="weekly",
         goal1_enabled=False,
         goal2_enabled=False,
+        share_blogs_to_social=False,
+        share_blogs_to_outreach=False,
     )
     db.add(row)
     db.commit()
@@ -346,6 +439,10 @@ def update_settings(
         row.goal1_enabled = bool(changes["goal1_enabled"])
     if "goal2_enabled" in changes and changes["goal2_enabled"] is not None:
         row.goal2_enabled = bool(changes["goal2_enabled"])
+    if "share_blogs_to_social" in changes and changes["share_blogs_to_social"] is not None:
+        row.share_blogs_to_social = bool(changes["share_blogs_to_social"])
+    if "share_blogs_to_outreach" in changes and changes["share_blogs_to_outreach"] is not None:
+        row.share_blogs_to_outreach = bool(changes["share_blogs_to_outreach"])
     if "countries" in changes and changes["countries"] is not None:
         cleaned = [str(c).strip().upper() for c in changes["countries"] if str(c).strip()]
         row.countries = cleaned or list(DEFAULT_COUNTRIES)
@@ -388,6 +485,8 @@ def settings_to_dict(row: WeeklyContentSettings) -> dict:
     return {
         "goal1_enabled": bool(row.goal1_enabled),
         "goal2_enabled": bool(row.goal2_enabled),
+        "share_blogs_to_social": bool(getattr(row, "share_blogs_to_social", False)),
+        "share_blogs_to_outreach": bool(getattr(row, "share_blogs_to_outreach", False)),
         "countries": list(row.countries or DEFAULT_COUNTRIES),
         "max_social_per_week": int(row.max_social_per_week or 7),
         "blogs_per_week": int(row.blogs_per_week or 2),
@@ -399,6 +498,43 @@ def settings_to_dict(row: WeeklyContentSettings) -> dict:
         "last_run_iso_week": row.last_run_iso_week,
         "updated_at": row.updated_at,
     }
+
+
+def platforms_for_blog_share(
+    db: Session,
+    user_id: int,
+    settings: WeeklyContentSettings | None = None,
+    *,
+    share_social: bool | None = None,
+    share_outreach: bool | None = None,
+) -> list[str]:
+    """Connected platforms allowed after a WordPress publish, gated by Settings toggles."""
+    if settings is not None:
+        if share_social is None:
+            share_social = bool(getattr(settings, "share_blogs_to_social", False))
+        if share_outreach is None:
+            share_outreach = bool(getattr(settings, "share_blogs_to_outreach", False))
+    want_social = bool(share_social)
+    want_outreach = bool(share_outreach)
+    if not want_social and not want_outreach:
+        return []
+    accounts = get_user_social_accounts(db, user_id)
+    platforms: list[str] = []
+    for account in accounts:
+        platform = (account.platform or "").strip().lower()
+        if not platform:
+            continue
+        if want_social and platform in SOCIAL_IMAGE_PLATFORMS:
+            platforms.append(platform)
+        elif want_outreach and platform in OUTREACH_PLATFORMS:
+            platforms.append(platform)
+    seen: set[str] = set()
+    unique: list[str] = []
+    for platform in platforms:
+        if platform not in seen:
+            seen.add(platform)
+            unique.append(platform)
+    return unique
 
 
 def _connected_platforms(db: Session, user_id: int, *, include_outreach: bool) -> list[str]:
@@ -434,12 +570,15 @@ async def _generate_and_publish_social(
     settings_snapshot: dict,
     image_url: Optional[str] = None,
     body_html: Optional[str] = None,
+    match_blog: bool = False,
 ) -> tuple[SocialPostHistory, list[dict]]:
     from dataclasses import replace
 
     from app.services.llm_settings_service import resolve_llm_credentials
     from app.services.openrouter_service import (
+        _ensure_pro1_highlight_markup,
         generate_news_headline,
+        generate_platform_social_captions,
         generate_social_post_description,
         generate_social_post_hashtags,
         generate_social_post_story_description,
@@ -463,29 +602,59 @@ async def _generate_and_publish_social(
     template_settings = active_template_settings(db, user.id)
     template_variant = str(template_settings.get("templateVariant") or "pro-1")
     token = set_llm_context(resolve_llm_credentials(db, user.id))
+    platform_captions: dict[str, str] = {}
     try:
-        headline = await generate_news_headline(
-            source, query=query, template_variant=template_variant
-        )
-        description = await generate_social_post_description(source, headline, query)
-        story = await generate_social_post_story_description(source, headline, query)
-        hashtags = await generate_social_post_hashtags(source, headline, query, 12)
+        if match_blog:
+            # Goal 2: promote the WordPress post itself — same title, blurb, and link.
+            headline = (source_title or query or "New post").strip()
+            if template_variant in ("pro-1", "pro-2"):
+                headline = _ensure_pro1_highlight_markup(headline)
+            description = (source_snippet or "").strip()[:240] or headline
+            story = description
+            hashtags = await generate_social_post_hashtags(source, headline, query, 12)
+            social_only = [p for p in platforms if p in SOCIAL_IMAGE_PLATFORMS]
+            if social_only:
+                platform_captions = await generate_platform_social_captions(
+                    topic=query or headline,
+                    headline=re.sub(r"<[^>]+>", "", headline),
+                    facts=description,
+                    platforms=social_only,
+                    base_caption=description,
+                )
+        else:
+            headline = await generate_news_headline(
+                source, query=query, template_variant=template_variant
+            )
+            description = await generate_social_post_description(source, headline, query)
+            story = await generate_social_post_story_description(source, headline, query)
+            hashtags = await generate_social_post_hashtags(source, headline, query, 12)
+            social_only = [p for p in platforms if p in SOCIAL_IMAGE_PLATFORMS]
+            if social_only:
+                platform_captions = await generate_platform_social_captions(
+                    topic=query or headline,
+                    headline=re.sub(r"<[^>]+>", "", headline),
+                    facts=story or description,
+                    platforms=social_only,
+                    base_caption=story or description,
+                )
     finally:
         reset_llm_context(token)
 
-    # For outreach article platforms, prefer HTML body as story/caption payload.
-    story_for_history = story
-    if body_html and any(p in OUTREACH_PLATFORMS for p in platforms):
-        story_for_history = body_html[:20000]
-
+    # Keep the short social story on history. Full article bodies are only for
+    # outreach platforms (Dev.to / Hashnode / Blogger) at publish time — never
+    # as the Facebook/LinkedIn/Instagram caption.
     history = SocialPostHistory(
         user_id=user.id,
         query=query,
         headline=headline,
         description=description,
-        story_description=story_for_history,
+        story_description=story,
         hashtags=hashtags,
-        settings_snapshot={**settings_snapshot, "template": template_settings},
+        settings_snapshot={
+            **settings_snapshot,
+            "template": template_settings,
+            "platform_captions": platform_captions,
+        },
         news_results=source,
         publish_status="draft",
     )
@@ -532,16 +701,21 @@ async def _generate_and_publish_social(
     ctx = PublishCopyContext(
         headline=headline,
         short_description=description,
-        story_caption=story_for_history if body_html else story,
+        story_caption=story,
         hashtags=hashtags or [],
         source_url=source_url,
     )
+    article_body = (body_html or "").strip()[:20000] if body_html else ""
     results = []
     for platform in platforms:
         platform_ctx = ctx
+        if platform in OUTREACH_PLATFORMS and article_body:
+            platform_ctx = replace(ctx, story_caption=article_body)
+        elif platform in platform_captions:
+            platform_ctx = replace(ctx, story_caption=platform_captions[platform])
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user.id, history)
-            platform_ctx = replace(ctx, source_url=first_party_url)
+            platform_ctx = replace(platform_ctx, source_url=first_party_url)
             if not resolved_image_url and not image_bytes:
                 results.append(
                     SocialPostPublishResultItem(
@@ -632,6 +806,11 @@ def _goal1_events_for_week(
             # Only publish custom topics in the ISO week they were scheduled for.
             if iso_week_key(event.event_date) != week:
                 continue
+        elif event.source == "news_trending":
+            if not _is_user_news_trending_event(event, user_id):
+                continue
+            if iso_week_key(event.event_date) != week:
+                continue
         filtered.append(event)
     return filtered[:cap]
 
@@ -645,7 +824,49 @@ async def run_goal1_for_user(
     week = run.iso_week
     countries = list(settings.countries or DEFAULT_COUNTRIES)
     cap = max(1, int(settings.max_social_per_week or 7))
-    events = _goal1_events_for_week(db, user.id, week=week, countries=countries, cap=cap)
+    already_published = (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user.id,
+            WeeklySocialItem.iso_week == week,
+            WeeklySocialItem.status == "published",
+        )
+        .count()
+    )
+    remaining = max(0, cap - already_published)
+    if remaining == 0:
+        return {
+            "events": 0,
+            "created": 0,
+            "published": already_published,
+            "failed": 0,
+            "skipped": "week_quota_met",
+        }
+
+    # Leave one slot for today's social trending topic when the remaining cap allows.
+    base_cap = max(0, remaining - 1) if remaining > 1 else remaining
+    events = _goal1_events_for_week(
+        db, user.id, week=week, countries=countries, cap=base_cap
+    )
+    trending = await ensure_social_trending_event(db, user)
+    if trending and iso_week_key(trending.event_date) == week:
+        if all(event.id != trending.id for event in events):
+            if len(events) < remaining:
+                events = [trending] + list(events)
+            elif remaining >= 1:
+                events = [trending] + list(events)[: max(0, remaining - 1)]
+        events = events[:remaining]
+    elif remaining > 1 and len(events) < remaining:
+        more = _goal1_events_for_week(
+            db, user.id, week=week, countries=countries, cap=remaining
+        )
+        seen = {event.id for event in events}
+        for event in more:
+            if event.id not in seen:
+                events.append(event)
+                seen.add(event.id)
+            if len(events) >= remaining:
+                break
 
     platforms = _connected_platforms(db, user.id, include_outreach=False)
     created = 0
@@ -657,7 +878,7 @@ async def run_goal1_for_user(
         return {
             "events": 0,
             "created": 0,
-            "published": 0,
+            "published": already_published,
             "failed": 0,
             "skipped": "no_upcoming_events",
         }
@@ -966,7 +1187,7 @@ async def run_goal2_for_user(
             "skipped": "empty_keyword_queue",
         }
 
-    platforms = _connected_platforms(db, user.id, include_outreach=True)
+    platforms = platforms_for_blog_share(db, user.id, settings)
     published = 0
     failed = 0
 
@@ -1079,9 +1300,11 @@ async def run_goal2_for_user(
                             "keyword_plan_item_id": item.id,
                             "iso_week": week,
                             "platforms": platforms,
+                            "match_blog": True,
                         },
                         image_url=image_url if isinstance(image_url, str) else None,
                         body_html=body if isinstance(body, str) else None,
+                        match_blog=True,
                     )
                     social_history_id = history.id
                 except Exception as social_exc:
@@ -1305,16 +1528,43 @@ def _goal1_has_pending_work(
         )
         .count()
     )
-    if published:
+    cap = max(1, int(settings.max_social_per_week or 7))
+    if published >= cap:
         return False
+    # Room left under the weekly cap — daily trending or observances may still post.
+    remaining = cap - published
     events = _goal1_events_for_week(
         db,
         user_id,
         week=week,
         countries=list(settings.countries or DEFAULT_COUNTRIES),
-        cap=max(1, int(settings.max_social_per_week or 7)),
+        cap=remaining,
     )
-    return bool(events)
+    if events:
+        return True
+    # Today's social trending topic may not be in the calendar list yet.
+    today_key = f"user-{user_id}-news-trending-{date.today().isoformat()}"
+    trending = (
+        db.query(CalendarEvent)
+        .filter(
+            CalendarEvent.source == "news_trending",
+            CalendarEvent.external_id == today_key,
+        )
+        .first()
+    )
+    if not trending:
+        return remaining > 0
+    already = (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user_id,
+            WeeklySocialItem.iso_week == week,
+            WeeklySocialItem.calendar_event_id == trending.id,
+            WeeklySocialItem.status == "published",
+        )
+        .first()
+    )
+    return already is None
 
 
 async def run_due_weekly_content(*, force: bool = False) -> int:
@@ -1429,6 +1679,9 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
     max_social = int(row.max_social_per_week or 7)
     blogs_week = int(row.blogs_per_week or 2)
     cron_configured = bool(app_settings.weekly_cron_secret)
+    share_social = bool(getattr(row, "share_blogs_to_social", False))
+    share_outreach = bool(getattr(row, "share_blogs_to_outreach", False))
+    share_platforms = platforms_for_blog_share(db, user_id, row)
 
     checks: list[dict[str, Any]] = [
         {
@@ -1478,15 +1731,36 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
             "detail": f"{pending} pending · need ≥ {blogs_week}/week",
         },
         {
+            "id": "blog_share",
+            "label": "Blog share destinations",
+            "ok": (not share_social and not share_outreach) or len(share_platforms) > 0,
+            "detail": (
+                "WordPress only"
+                if not share_social and not share_outreach
+                else (
+                    ", ".join(share_platforms)
+                    if share_platforms
+                    else "Turn off share toggles or connect the matching accounts"
+                )
+            ),
+        },
+        {
             "id": "quotas",
             "label": "Weekly quotas",
             "ok": max_social >= 1 and blogs_week >= 1,
-            "detail": f"{max_social} social · {blogs_week} blogs per week",
+            "detail": (
+                f"Daily or weekly run; social posts/week = {max_social}; "
+                f"blogs/week = {blogs_week}"
+            ),
         },
     ]
 
     goal1_ready = bool(row.goal1_enabled) and len(social_platforms) > 0 and len(events) > 0
-    goal2_ready = bool(row.goal2_enabled) and wp_ok and pending >= blogs_week
+    # Goal 2 does not require social accounts unless share-to-social/outreach is on.
+    share_ok = True
+    if share_social or share_outreach:
+        share_ok = len(share_platforms) > 0
+    goal2_ready = bool(row.goal2_enabled) and wp_ok and pending >= blogs_week and share_ok
     anything_enabled = bool(row.goal1_enabled or row.goal2_enabled)
     ready = cron_configured and anything_enabled and (
         (not row.goal1_enabled or goal1_ready) and (not row.goal2_enabled or goal2_ready)
@@ -1506,6 +1780,8 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
         "goal2_ready": goal2_ready,
         "goal1_enabled": bool(row.goal1_enabled),
         "goal2_enabled": bool(row.goal2_enabled),
+        "share_blogs_to_social": share_social,
+        "share_blogs_to_outreach": share_outreach,
         "max_social_per_week": max_social,
         "blogs_per_week": blogs_week,
         "social_platforms": social_platforms,

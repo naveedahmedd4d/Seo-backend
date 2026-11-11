@@ -93,13 +93,27 @@ def build_bluesky_text(ctx: PublishCopyContext) -> str:
     return _build_image_card_caption(ctx)
 
 
+def _facebook_story_text(ctx: PublishCopyContext) -> str:
+    """Prefer the short story. Never paste a full article/markdown dump into FB."""
+    story = (ctx.story_caption or "").strip()
+    short = (ctx.short_description or "").strip()
+    # Article bodies (markdown headers, long HTML) belong on the blog, not the caption.
+    if story and (
+        len(story) > 600
+        or re.search(r"(?m)^(#{1,6}\s|<!DOCTYPE|<html\b)", story)
+        or story.count("\n") > 12
+    ):
+        story = short or _truncate(re.sub(r"(?m)^#{1,6}\s*", "", story), 400)
+    return story or short
+
+
 def build_facebook_message(ctx: PublishCopyContext) -> str:
-    """Message = headline + story + hashtags (link passed separately)."""
+    """Message = headline + short story + hashtags (link passed separately)."""
     parts: list[str] = []
     headline = _strip_highlight_markup((ctx.headline or "").strip())
     if headline:
         parts.append(headline)
-    story = (ctx.story_caption or ctx.short_description or "").strip()
+    story = _facebook_story_text(ctx)
     if story:
         parts.append(story)
     tags = _hashtag_line(ctx.hashtags)

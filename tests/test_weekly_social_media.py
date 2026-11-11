@@ -137,6 +137,9 @@ async def test_ensure_weekly_social_media_falls_back_to_raw_url_when_render_fail
         "app.services.weekly_social_media._render_social_card_png",
         new_callable=AsyncMock,
         return_value=None,
+    ), patch(
+        "app.services.weekly_social_media._render_local_fallback_png",
+        return_value=None,
     ):
         url = await ensure_weekly_social_media(
             db,
@@ -164,6 +167,9 @@ async def test_ensure_weekly_social_media_returns_none_when_no_image():
     ), patch(
         "app.services.weekly_social_media._render_social_card_png",
         new_callable=AsyncMock,
+        return_value=None,
+    ), patch(
+        "app.services.weekly_social_media._render_local_fallback_png",
         return_value=None,
     ):
         url = await ensure_weekly_social_media(
@@ -211,6 +217,13 @@ async def test_generate_and_publish_skips_facebook_without_image():
         new_callable=AsyncMock,
         return_value=["#a"],
     ), patch(
+        "app.services.openrouter_service.generate_platform_social_captions",
+        new_callable=AsyncMock,
+        return_value={"facebook": "Story"},
+    ), patch(
+        "app.services.weekly_social_media.active_template_settings",
+        return_value={"templateVariant": "pro-1"},
+    ), patch(
         "app.services.weekly_social_media.ensure_weekly_social_media",
         new_callable=AsyncMock,
         return_value=None,
@@ -242,3 +255,232 @@ async def test_generate_and_publish_skips_facebook_without_image():
     assert results[0]["platform"] == "facebook"
     assert results[0]["success"] is False
     assert "No image available" in results[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_generate_and_publish_keeps_short_story_for_facebook_when_outreach_connected():
+    """Goal 2 must not dump the full blog markdown into the Facebook caption."""
+    from app.services import weekly_content_service as wcs
+
+    db = MagicMock()
+    user = SimpleNamespace(id=9)
+    article = "## How to Make a Successful Website Project\n\n" + ("Step details. " * 200)
+    captured: dict = {}
+
+    async def _capture_publish(_db, _user_id, platform, *, ctx, **_kwargs):
+        captured[platform] = ctx
+        return SimpleNamespace(
+            model_dump=lambda mode="json": {"platform": platform, "success": True}
+        )
+
+    with patch(
+        "app.services.llm_settings_service.resolve_llm_credentials",
+        return_value=object(),
+    ), patch(
+        "app.services.openrouter_service.set_llm_context",
+        return_value="tok",
+    ), patch(
+        "app.services.openrouter_service.reset_llm_context",
+    ), patch(
+        "app.services.openrouter_service.generate_news_headline",
+        new_callable=AsyncMock,
+        return_value="Short headline",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_description",
+        new_callable=AsyncMock,
+        return_value="Short description",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_story_description",
+        new_callable=AsyncMock,
+        return_value="Short story for social feeds.",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_hashtags",
+        new_callable=AsyncMock,
+        return_value=["#web"],
+    ), patch(
+        "app.services.openrouter_service.generate_platform_social_captions",
+        new_callable=AsyncMock,
+        return_value={},
+    ), patch(
+        "app.services.weekly_social_media.active_template_settings",
+        return_value={"templateVariant": "pro-1"},
+    ), patch(
+        "app.services.social_post_link_service.resolve_facebook_destination_url",
+        new_callable=AsyncMock,
+        return_value="https://example.com/post",
+    ), patch(
+        "app.services.social_post_platform_publish.publish_to_platform",
+        new_callable=AsyncMock,
+        side_effect=_capture_publish,
+    ), patch(
+        "app.services.social_post_publish_service.record_publications",
+    ), patch(
+        "app.services.social_post_publish_service.finalize_history_status",
+    ):
+        history, _results = await wcs._generate_and_publish_social(
+            db,
+            user,
+            query="Website project",
+            source_title="Website project",
+            source_snippet="Guide",
+            source_url="https://example.com/post",
+            platforms=["facebook", "devto"],
+            settings_snapshot={"source": "test"},
+            image_url="https://cdn.example/featured.jpg",
+            body_html=article,
+        )
+
+    assert history.story_description == "Short story for social feeds."
+    assert captured["facebook"].story_caption == "Short story for social feeds."
+    assert "## How to Make" not in (captured["facebook"].story_caption or "")
+    assert captured["devto"].story_caption.startswith("## How to Make")
+
+
+@pytest.mark.asyncio
+async def test_generate_and_publish_match_blog_reuses_title_and_meta():
+    """Goal 2 social share must promote the same WordPress title and blurb."""
+    from app.services import weekly_content_service as wcs
+
+    db = MagicMock()
+    user = SimpleNamespace(id=3)
+    captured: dict = {}
+
+    async def _capture_publish(_db, _user_id, platform, *, ctx, **_kwargs):
+        captured[platform] = ctx
+        return SimpleNamespace(
+            model_dump=lambda mode="json": {"platform": platform, "success": True}
+        )
+
+    with patch(
+        "app.services.llm_settings_service.resolve_llm_credentials",
+        return_value=object(),
+    ), patch(
+        "app.services.openrouter_service.set_llm_context",
+        return_value="tok",
+    ), patch(
+        "app.services.openrouter_service.reset_llm_context",
+    ), patch(
+        "app.services.openrouter_service.generate_news_headline",
+        new_callable=AsyncMock,
+        side_effect=AssertionError("match_blog must not invent a new headline"),
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_hashtags",
+        new_callable=AsyncMock,
+        return_value=["#web"],
+    ), patch(
+        "app.services.openrouter_service.generate_platform_social_captions",
+        new_callable=AsyncMock,
+        return_value={},
+    ), patch(
+        "app.services.weekly_social_media.active_template_settings",
+        return_value={"templateVariant": "pro-1"},
+    ), patch(
+        "app.services.social_post_link_service.resolve_facebook_destination_url",
+        new_callable=AsyncMock,
+        return_value="https://example.com/successful-website-project",
+    ), patch(
+        "app.services.social_post_platform_publish.publish_to_platform",
+        new_callable=AsyncMock,
+        side_effect=_capture_publish,
+    ), patch(
+        "app.services.social_post_publish_service.record_publications",
+    ), patch(
+        "app.services.social_post_publish_service.finalize_history_status",
+    ):
+        history, _results = await wcs._generate_and_publish_social(
+            db,
+            user,
+            query="website project",
+            source_title="How to Make a Successful Website Project",
+            source_snippet="A practical guide to goals, scope, and delivery for website builds.",
+            source_url="https://example.com/successful-website-project",
+            platforms=["facebook"],
+            settings_snapshot={"source": "weekly_content_goal2"},
+            image_url="https://cdn.example/featured.jpg",
+            match_blog=True,
+        )
+
+    assert "Successful Website Project" in history.headline.replace("*", "")
+    assert history.description.startswith("A practical guide")
+    assert captured["facebook"].story_caption.startswith("A practical guide")
+    assert captured["facebook"].source_url == "https://example.com/successful-website-project"
+
+
+@pytest.mark.asyncio
+async def test_generate_and_publish_uses_distinct_platform_captions():
+    """Each connected social network gets its own LLM caption."""
+    from app.services import weekly_content_service as wcs
+
+    db = MagicMock()
+    user = SimpleNamespace(id=4)
+    captured: dict = {}
+
+    async def _capture_publish(_db, _user_id, platform, *, ctx, **_kwargs):
+        captured[platform] = ctx
+        return SimpleNamespace(
+            model_dump=lambda mode="json": {"platform": platform, "success": True}
+        )
+
+    with patch(
+        "app.services.llm_settings_service.resolve_llm_credentials",
+        return_value=object(),
+    ), patch(
+        "app.services.openrouter_service.set_llm_context",
+        return_value="tok",
+    ), patch(
+        "app.services.openrouter_service.reset_llm_context",
+    ), patch(
+        "app.services.openrouter_service.generate_news_headline",
+        new_callable=AsyncMock,
+        return_value="Shared headline",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_description",
+        new_callable=AsyncMock,
+        return_value="Shared description",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_story_description",
+        new_callable=AsyncMock,
+        return_value="Shared story",
+    ), patch(
+        "app.services.openrouter_service.generate_social_post_hashtags",
+        new_callable=AsyncMock,
+        return_value=["#ai"],
+    ), patch(
+        "app.services.openrouter_service.generate_platform_social_captions",
+        new_callable=AsyncMock,
+        return_value={
+            "facebook": "Facebook angle on the launch.",
+            "x": "X-ready take on the launch.",
+        },
+    ), patch(
+        "app.services.weekly_social_media.active_template_settings",
+        return_value={"templateVariant": "pro-1"},
+    ), patch(
+        "app.services.social_post_link_service.resolve_facebook_destination_url",
+        new_callable=AsyncMock,
+        return_value="https://example.com/post",
+    ), patch(
+        "app.services.social_post_platform_publish.publish_to_platform",
+        new_callable=AsyncMock,
+        side_effect=_capture_publish,
+    ), patch(
+        "app.services.social_post_publish_service.record_publications",
+    ), patch(
+        "app.services.social_post_publish_service.finalize_history_status",
+    ):
+        history, _results = await wcs._generate_and_publish_social(
+            db,
+            user,
+            query="AI launch",
+            source_title="AI launch",
+            source_snippet="Snippet",
+            source_url="https://example.com/post",
+            platforms=["facebook", "x"],
+            settings_snapshot={"source": "test"},
+            image_url="https://cdn.example/card.jpg",
+        )
+
+    assert history.story_description == "Shared story"
+    assert captured["facebook"].story_caption == "Facebook angle on the launch."
+    assert captured["x"].story_caption == "X-ready take on the launch."
+    assert captured["facebook"].story_caption != captured["x"].story_caption
