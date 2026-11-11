@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -33,6 +33,11 @@ class UserLlmSettings(Base):
     preferred_model = Column(String, nullable=True)
     # Manual fallback lineup, e.g. ["gemini","openrouter","groq","cloudflare","mistral","cohere","nvidia"]
     fallback_order = Column(JSON, nullable=True)
+    # Enabled free news feeds and the last daily topic run (top 10, LLM top 3, one blog).
+    news_topic_sources = Column(JSON, nullable=True)
+    news_topics = Column(JSON, nullable=True)
+    news_daily_blog_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    news_wordpress_site_id = Column(Integer, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="llm_settings")
