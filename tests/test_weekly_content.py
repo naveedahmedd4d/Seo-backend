@@ -20,6 +20,7 @@ from app.services.weekly_content_service import (
     get_weekly_readiness,
     import_keywords_csv,
     iso_week_key,
+    publish_calendar_event_now,
     week_bucket_for_date,
 )
 from app.models.weekly_content import CalendarEvent, KeywordPlanItem, WeeklySocialItem
@@ -208,6 +209,23 @@ def test_delete_weekly_social_item_keeps_event(db_session, test_user):
     )
     assert db_session.query(CalendarEvent).filter(CalendarEvent.id == created["event_id"]).first() is not None
     assert delete_weekly_social_item(db_session, test_user.id, created["item_id"]) is False
+
+
+@pytest.mark.asyncio
+async def test_publish_calendar_event_now_without_platforms(db_session, test_user):
+    publish = date.today()
+    created = create_social_topic(
+        db_session,
+        test_user.id,
+        topic="Manual publish topic",
+        publish_date=publish,
+    )
+    result = await publish_calendar_event_now(db_session, test_user, created["event_id"])
+    assert result["event_id"] == created["event_id"]
+    assert result["status"] == "failed"
+    assert result["error_message"] == "No connected social accounts"
+    item = db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == result["item_id"]).one()
+    assert item.status == "failed"
 
 
 # --- schedule gate -------------------------------------------------------

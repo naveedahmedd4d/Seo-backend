@@ -18,6 +18,7 @@ from app.schemas.weekly_content import (
     KeywordCsvUploadResponse,
     KeywordPlanItemResponse,
     KeywordPlanListResponse,
+    PublishEventResponse,
     SocialTopicCreate,
     SocialTopicResponse,
     WeeklyBlogItemResponse,
@@ -148,7 +149,7 @@ async def get_social_week(
     )
 
 
-@router.delete("/social-week/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/social-week/{item_id}")
 async def delete_social_week_item(
     item_id: int,
     current_user: User = Depends(get_current_user),
@@ -157,7 +158,26 @@ async def delete_social_week_item(
     deleted = svc.delete_weekly_social_item(db, current_user.id, item_id)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Auto post not found")
-    return None
+    return {"ok": True, "id": item_id}
+
+
+@router.post("/events/{event_id}/publish", response_model=PublishEventResponse)
+async def publish_calendar_event(
+    event_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        data = await svc.publish_calendar_event_now(db, current_user, event_id)
+    except ValueError as exc:
+        detail = str(exc)
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if "not found" in detail.lower()
+            else status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+        raise HTTPException(status_code=code, detail=detail) from exc
+    return PublishEventResponse(**{k: v for k, v in data.items() if k != "created"})
 
 
 @router.post("/keywords/csv", response_model=KeywordCsvUploadResponse)

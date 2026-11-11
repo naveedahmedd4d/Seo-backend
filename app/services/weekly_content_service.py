@@ -165,6 +165,143 @@ def delete_weekly_social_item(db: Session, user_id: int, item_id: int) -> bool:
     return True
 
 
+async def publish_calendar_event_now(
+    db: Session,
+    user: User,
+    event_id: int,
+) -> dict[str, Any]:
+    """Generate + publish a single observance/topic to connected social accounts."""
+    event = db.query(CalendarEvent).filter(CalendarEvent.id == event_id).first()
+    if not event:
+        raise ValueError("Event not found")
+    if event.source == "custom" and not _is_user_custom_event(event, user.id):
+        raise ValueError("Event not found")
+
+    platforms = _connected_platforms(db, user.id, include_outreach=False)
+    week = iso_week_key()
+
+    run = (
+        db.query(WeeklyContentRun)
+        .filter(WeeklyContentRun.user_id == user.id, WeeklyContentRun.iso_week == week)
+        .first()
+    )
+    if not run:
+        run = WeeklyContentRun(
+            user_id=user.id,
+            iso_week=week,
+            status="running",
+            trigger="manual_event",
+            started_at=datetime.now(timezone.utc),
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+    item = (
+        db.query(WeeklySocialItem)
+        .filter(
+            WeeklySocialItem.user_id == user.id,
+            WeeklySocialItem.iso_week == week,
+            WeeklySocialItem.calendar_event_id == event.id,
+        )
+        .first()
+    )
+    created = False
+    if not item:
+        item = WeeklySocialItem(
+            user_id=user.id,
+            run_id=run.id,
+            iso_week=week,
+            calendar_event_id=event.id,
+            status="queued",
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        created = True
+    elif item.status == "published":
+        # Already live — do not post again unless the row is cleared/deleted first.
+        return {
+            "event_id": event.id,
+            "item_id": item.id,
+            "iso_week": week,
+            "status": item.status,
+            "event_title": event.title,
+            "error_message": None,
+            "publish_results": item.publish_results,
+            "created": False,
+        }
+    else:
+        item.run_id = run.id
+        item.status = "generating"
+        item.error_message = None
+        db.commit()
+
+    if not platforms:
+        item.status = "failed"
+        item.error_message = "No connected social accounts"
+        db.commit()
+        return {
+            "event_id": event.id,
+            "item_id": item.id,
+            "iso_week": week,
+            "status": item.status,
+            "event_title": event.title,
+            "error_message": item.error_message,
+            "publish_results": None,
+            "created": created,
+        }
+
+    try:
+        item.status = "generating"
+        db.commit()
+        snippet = event.description or (
+            f"Custom social topic: {event.title}"
+            if event.source == "custom"
+            else f"International observance: {event.title}"
+        )
+        history, results = await _generate_and_publish_social(
+            db,
+            user,
+            query=event.title,
+            source_title=event.title,
+            source_snippet=snippet,
+            source_url=None,
+            platforms=platforms,
+            settings_snapshot={
+                "source": "weekly_content_goal1_manual",
+                "calendar_event_id": event.id,
+                "iso_week": week,
+                "platforms": platforms,
+                "custom_topic": event.source == "custom",
+            },
+        )
+        item.social_post_history_id = history.id
+        item.publish_results = results
+        item.status = "published" if any(r.get("success") for r in results) else "failed"
+        if item.status == "failed":
+            item.error_message = "All platform publishes failed"
+        else:
+            item.error_message = None
+        db.commit()
+    except Exception as exc:
+        logger.exception("Manual publish failed for user %s event %s", user.id, event.id)
+        item.status = "failed"
+        item.error_message = str(exc)[:2000]
+        db.commit()
+
+    return {
+        "event_id": event.id,
+        "item_id": item.id,
+        "iso_week": week,
+        "status": item.status,
+        "event_title": event.title,
+        "error_message": item.error_message,
+        "publish_results": item.publish_results,
+        "created": created,
+    }
+
+
 def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
     row = db.query(WeeklyContentSettings).filter(WeeklyContentSettings.user_id == user_id).first()
     if row:

@@ -79,18 +79,16 @@ class WeeklySocialItemResponse(BaseModel):
     publish_results: Optional[Any] = None
     error_message: Optional[str] = None
     created_at: Optional[datetime] = None
-    id: int
+
+
+class PublishEventResponse(BaseModel):
+    event_id: int
+    item_id: int
     iso_week: str
     status: str
-    event_id: int
-    event_date: date
     event_title: str
-    event_scope: str
-    social_post_history_id: Optional[int] = None
-    headline: Optional[str] = None
-    publish_results: Optional[Any] = None
     error_message: Optional[str] = None
-    created_at: Optional[datetime] = None
+    publish_results: Optional[Any] = None
 
 
 class WeeklySocialWeekResponse(BaseModel):
