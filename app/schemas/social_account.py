@@ -53,6 +53,10 @@ class OAuthSetupResponse(BaseModel):
     has_app_credentials: bool
     client_id: Optional[str] = None
     developer_portal_url: str
+    # Facebook (and similar): where App ID/secret come from, and whether this user can edit them.
+    credentials_source: Optional[str] = None  # environment | platform_shared | user
+    credentials_editable: bool = False
+    can_clear_credentials: bool = False
 
 
 class OAuthConnectRequest(BaseModel):

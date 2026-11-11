@@ -182,6 +182,38 @@ def test_facebook_setup_returns_redirect_uri(client, auth_headers):
     data = response.json()
     assert "/api/social-accounts/facebook/callback" in data["redirect_uri"]
     assert data["client_id"] is None
+    assert data.get("credentials_editable") is True
+    assert data.get("can_clear_credentials") is False
+
+
+def test_facebook_user_can_save_and_clear_app_credentials(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.meta_app_id", None)
+    monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+    monkeypatch.setattr("app.config.settings.platform_owner_email", "someone-else@example.com")
+
+    connect = client.post(
+        "/api/social-accounts/facebook/connect",
+        headers=auth_headers,
+        json={"client_id": "user-meta-app", "client_secret": "user-meta-secret-value"},
+    )
+    assert connect.status_code == 200
+
+    setup = client.get("/api/social-accounts/facebook/setup", headers=auth_headers)
+    assert setup.status_code == 200
+    data = setup.json()
+    assert data["has_app_credentials"] is True
+    assert data["credentials_source"] == "user"
+    assert data["credentials_editable"] is True
+    assert data["can_clear_credentials"] is True
+    assert data["client_id"] == "user-meta-app"
+
+    cleared = client.delete("/api/social-accounts/facebook/app", headers=auth_headers)
+    assert cleared.status_code == 204
+
+    setup_after = client.get("/api/social-accounts/facebook/setup", headers=auth_headers)
+    assert setup_after.status_code == 200
+    assert setup_after.json()["has_app_credentials"] is False
+    assert setup_after.json()["can_clear_credentials"] is False
 
 
 def test_facebook_connect_uses_platform_meta_app(client, auth_headers, monkeypatch):
@@ -203,6 +235,7 @@ def test_facebook_connect_uses_platform_meta_app(client, auth_headers, monkeypat
 def test_facebook_connect_requires_platform_configuration(client, auth_headers, monkeypatch):
     monkeypatch.setattr("app.config.settings.meta_app_id", None)
     monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+    monkeypatch.setattr("app.config.settings.platform_owner_email", None)
 
     response = client.post(
         "/api/social-accounts/facebook/connect",
@@ -210,10 +243,8 @@ def test_facebook_connect_requires_platform_configuration(client, auth_headers, 
         json={},
     )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "Facebook connection is not configured. Contact your administrator."
-    )
+    assert response.status_code == 400
+    assert "Meta App ID" in response.json()["detail"]
 
 
 def test_facebook_admin_setup_is_owner_only(client, auth_headers, monkeypatch):

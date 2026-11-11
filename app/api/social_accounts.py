@@ -152,6 +152,59 @@ def _require_platform_owner(current_user: User) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
 
+def _is_platform_owner(current_user: User) -> bool:
+    owner_email = (settings.platform_owner_email or "").strip().casefold()
+    return bool(owner_email) and current_user.email.strip().casefold() == owner_email
+
+
+def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
+    """Describe where Meta App ID/secret come from and whether this user can edit them."""
+    environment_managed = bool(settings.meta_app_id and settings.meta_app_secret)
+    user_app = get_user_platform_app(db, current_user.id, "facebook")
+    if environment_managed:
+        return {
+            "credentials_source": "environment",
+            "credentials_editable": False,
+            "can_clear_credentials": False,
+            "client_id": None,
+        }
+    if user_app:
+        return {
+            "credentials_source": "user",
+            "credentials_editable": True,
+            "can_clear_credentials": True,
+            "client_id": user_app.client_id,
+        }
+
+    owner_email = (settings.platform_owner_email or "").strip().casefold()
+    if owner_email:
+        from app.models.user import User as UserModel
+        from sqlalchemy import func as sa_func
+
+        owner = (
+            db.query(UserModel)
+            .filter(sa_func.lower(UserModel.email) == owner_email)
+            .first()
+        )
+        if owner:
+            owner_app = get_user_platform_app(db, owner.id, "facebook")
+            if owner_app:
+                is_owner = _is_platform_owner(current_user)
+                return {
+                    "credentials_source": "platform_shared",
+                    "credentials_editable": is_owner,
+                    "can_clear_credentials": is_owner,
+                    "client_id": owner_app.client_id if is_owner else None,
+                }
+
+    return {
+        "credentials_source": None,
+        "credentials_editable": True,
+        "can_clear_credentials": False,
+        "client_id": None,
+    }
+
+
 def _account_to_response(account) -> SocialAccountResponse:
     def is_sensitive_key(key: str) -> bool:
         normalized = key.casefold()
@@ -1025,14 +1078,39 @@ async def facebook_setup(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    user_app = get_user_platform_app(db, current_user.id, "facebook")
+    meta = _facebook_setup_credentials_meta(db, current_user)
     return OAuthSetupResponse(
         redirect_uri=get_facebook_redirect_uri(http_request),
         has_app_credentials=user_has_facebook_app(db, current_user.id),
-        # Only expose the caller's own saved App ID — never the platform secret.
-        client_id=user_app.client_id if user_app else None,
+        # Only expose an App ID the caller is allowed to manage — never the secret.
+        client_id=meta["client_id"],
         developer_portal_url="https://developers.facebook.com/apps/",
+        credentials_source=meta["credentials_source"],
+        credentials_editable=meta["credentials_editable"],
+        can_clear_credentials=meta["can_clear_credentials"],
     )
+
+
+@router.delete("/facebook/app", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_facebook_app_credentials(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove this account's saved Meta App ID/secret from social_platform_apps."""
+    if settings.meta_app_id and settings.meta_app_secret:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meta credentials are managed by server environment variables.",
+        )
+
+    user_app = get_user_platform_app(db, current_user.id, "facebook")
+    if not user_app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No saved Meta app credentials to remove for this account.",
+        )
+    delete_user_platform_app(db, current_user.id, "facebook")
+    return None
 
 
 @router.post("/facebook/connect", response_model=SocialAccountConnectResponse)
