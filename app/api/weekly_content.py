@@ -148,6 +148,18 @@ async def get_social_week(
     )
 
 
+@router.delete("/social-week/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_social_week_item(
+    item_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    deleted = svc.delete_weekly_social_item(db, current_user.id, item_id)
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Auto post not found")
+    return None
+
+
 @router.post("/keywords/csv", response_model=KeywordCsvUploadResponse)
 async def upload_keywords_csv(
     file: UploadFile = File(...),

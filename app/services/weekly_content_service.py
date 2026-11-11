@@ -147,6 +147,24 @@ def delete_social_topic(db: Session, user_id: int, event_id: int) -> bool:
     return True
 
 
+def delete_weekly_social_item(db: Session, user_id: int, item_id: int) -> bool:
+    """Remove one auto-post row for this week so it can be retried or cleared.
+
+    Does not delete the calendar event (UN/custom topic stays). Does not
+    unpublish anything already live on social platforms.
+    """
+    row = (
+        db.query(WeeklySocialItem)
+        .filter(WeeklySocialItem.id == item_id, WeeklySocialItem.user_id == user_id)
+        .first()
+    )
+    if not row:
+        return False
+    db.delete(row)
+    db.commit()
+    return True
+
+
 def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
     row = db.query(WeeklyContentSettings).filter(WeeklyContentSettings.user_id == user_id).first()
     if row:

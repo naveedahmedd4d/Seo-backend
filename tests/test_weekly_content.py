@@ -15,6 +15,7 @@ from app.services.weekly_content_service import (
     create_social_topic,
     delete_keyword_plan_item,
     delete_social_topic,
+    delete_weekly_social_item,
     get_or_create_settings,
     get_weekly_readiness,
     import_keywords_csv,
@@ -190,6 +191,23 @@ def test_create_and_delete_social_topic(db_session, test_user):
         db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == created["item_id"]).first()
         is None
     )
+
+
+def test_delete_weekly_social_item_keeps_event(db_session, test_user):
+    publish = date.today() + timedelta(days=2)
+    created = create_social_topic(
+        db_session,
+        test_user.id,
+        topic="Retry failed auto post",
+        publish_date=publish,
+    )
+    assert delete_weekly_social_item(db_session, test_user.id, created["item_id"]) is True
+    assert (
+        db_session.query(WeeklySocialItem).filter(WeeklySocialItem.id == created["item_id"]).first()
+        is None
+    )
+    assert db_session.query(CalendarEvent).filter(CalendarEvent.id == created["event_id"]).first() is not None
+    assert delete_weekly_social_item(db_session, test_user.id, created["item_id"]) is False
 
 
 # --- schedule gate -------------------------------------------------------
