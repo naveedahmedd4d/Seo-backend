@@ -82,6 +82,67 @@ async def _pick_background_url(
     return _candidate_image_url(candidates[idx]) or None
 
 
+def _render_local_fallback_png(*, headline: str, description: str) -> Optional[str]:
+    """Pillow card when SerpAPI / remote /api/social-card/render are unavailable."""
+    import base64
+    from io import BytesIO
+
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception as exc:
+        logger.warning("Weekly social media: Pillow unavailable for fallback card: %s", exc)
+        return None
+
+    try:
+        width, height = 1080, 1350
+        img = Image.new("RGB", (width, height), (18, 24, 38))
+        draw = ImageDraw.Draw(img)
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 64)
+            body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 36)
+        except Exception:
+            title_font = ImageFont.load_default()
+            body_font = title_font
+
+        margin = 72
+        max_width = width - margin * 2
+        y = 180
+
+        def _wrap(text: str, font: Any, limit: int) -> list[str]:
+            words = (text or "").split()
+            if not words:
+                return []
+            lines: list[str] = []
+            current = words[0]
+            for word in words[1:]:
+                trial = f"{current} {word}"
+                if draw.textlength(trial, font=font) <= max_width:
+                    current = trial
+                else:
+                    lines.append(current)
+                    current = word
+                    if len(lines) >= limit:
+                        return lines
+            lines.append(current)
+            return lines[:limit]
+
+        title_lines = _wrap((headline or "Weekly update").strip(), title_font, 5)
+        for line in title_lines:
+            draw.text((margin, y), line, fill=(248, 250, 252), font=title_font)
+            y += 78
+        y += 36
+        for line in _wrap((description or "").strip(), body_font, 8):
+            draw.text((margin, y), line, fill=(203, 213, 225), font=body_font)
+            y += 48
+
+        buf = BytesIO()
+        img.save(buf, format="PNG", optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as exc:
+        logger.warning("Weekly social media: local fallback card failed: %s", exc)
+        return None
+
+
 async def _render_social_card_png(
     *,
     headline: str,
@@ -169,6 +230,11 @@ async def ensure_weekly_social_media(
         hashtags=hashtags,
         background_image_url=background_url,
     )
+    if not png_b64:
+        png_b64 = _render_local_fallback_png(
+            headline=headline or query or "Weekly update",
+            description=description or "",
+        )
     if png_b64:
         try:
             filename = save_png_base64(png_b64)

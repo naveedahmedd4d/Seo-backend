@@ -47,6 +47,17 @@ SOCIAL_IMAGE_PLATFORMS = {
 }
 
 
+def _summarize_publish_failures(results: list[dict]) -> str:
+    parts: list[str] = []
+    for row in results:
+        if row.get("success"):
+            continue
+        platform = str(row.get("platform") or "platform")
+        error = str(row.get("error") or "failed").strip()
+        parts.append(f"{platform}: {error}")
+    return "; ".join(parts)[:2000] or "All platform publishes failed"
+
+
 def iso_week_key(d: Optional[date] = None) -> str:
     target = d or date.today()
     year, week, _ = target.isocalendar()
@@ -280,7 +291,7 @@ async def publish_calendar_event_now(
         item.publish_results = results
         item.status = "published" if any(r.get("success") for r in results) else "failed"
         if item.status == "failed":
-            item.error_message = "All platform publishes failed"
+            item.error_message = _summarize_publish_failures(results)
         else:
             item.error_message = None
         db.commit()
@@ -502,6 +513,14 @@ async def _generate_and_publish_social(
             reset_llm_context(pick_token)
 
     from app.schemas.social_post import SocialPostPublishResultItem
+    from app.services.social_media_storage import resolve_media_path
+
+    image_bytes: Optional[bytes] = None
+    if history.media_filename:
+        try:
+            image_bytes = resolve_media_path(history.media_filename).read_bytes()
+        except Exception:
+            image_bytes = None
 
     ctx = PublishCopyContext(
         headline=headline,
@@ -516,7 +535,7 @@ async def _generate_and_publish_social(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user.id, history)
             platform_ctx = replace(ctx, source_url=first_party_url)
-            if not resolved_image_url:
+            if not resolved_image_url and not image_bytes:
                 results.append(
                     SocialPostPublishResultItem(
                         platform="facebook",
@@ -544,6 +563,7 @@ async def _generate_and_publish_social(
                 platform,
                 ctx=platform_ctx,
                 image_url=resolved_image_url,
+                image_bytes=image_bytes,
                 platform_options={},
             )
         )
@@ -723,7 +743,7 @@ async def run_goal1_for_user(
             item.publish_results = results
             item.status = "published" if any(r.get("success") for r in results) else "failed"
             if item.status == "failed":
-                item.error_message = "All platform publishes failed"
+                item.error_message = _summarize_publish_failures(results)
                 failed += 1
             else:
                 published += 1
