@@ -563,6 +563,41 @@ async def get_social_post_history_item(
         )
 
 
+@router.delete("/history/{history_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_social_post_history_item(
+    history_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Delete a saved social post, its publication records, and its rendered card."""
+    try:
+        history = load_history_post(db, current_user.id, history_id)
+    except HistoryNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Social post not found")
+
+    media_filename = history.media_filename
+    try:
+        db.delete(history)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting social post: {str(e)}",
+        )
+
+    # The row is gone either way; a stale file on disk must not fail the request.
+    if media_filename:
+        try:
+            resolve_media_path(media_filename).unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logger.warning("Could not remove social post media %s", media_filename, exc_info=True)
+
+    return None
+
+
 @router.post("/history/{history_id}/media", response_model=SocialPostImageUploadResponse)
 async def save_social_post_history_media(
     history_id: int,
