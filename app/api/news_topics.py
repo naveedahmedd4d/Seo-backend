@@ -12,6 +12,8 @@ from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.schemas.news_topics import (
+    NewsTopicEntriesResponse,
+    NewsTopicEntryItem,
     NewsTopicsCronResponse,
     NewsTopicsSettingsResponse,
     NewsTopicsSettingsUpdate,
@@ -57,6 +59,27 @@ async def save_news_topics(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     return _response(row)
+
+
+@router.get("/entries", response_model=NewsTopicEntriesResponse)
+async def list_entries(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = svc.list_topic_entries(db, current_user.id)
+    return NewsTopicEntriesResponse(
+        items=[
+            NewsTopicEntryItem(
+                id=row.id,
+                date=row.topic_date.isoformat(),
+                title=row.title,
+                name=row.name,
+                source=row.source,
+                link=row.link,
+            )
+            for row in rows
+        ]
+    )
 
 
 @router.post("/fetch", response_model=NewsTopicsSettingsResponse)

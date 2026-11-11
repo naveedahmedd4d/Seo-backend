@@ -7,12 +7,13 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 import httpx
 from sqlalchemy.orm import Session
 
+from app.models.news_topic_entry import NewsTopicEntry
 from app.models.user import User
 from app.models.user_llm_settings import UserLlmSettings
 from app.models.wordpress_site import WordPressSite
@@ -278,6 +279,78 @@ def _already_published_today(payload: Optional[dict], day: str) -> bool:
     return payload.get("fetched_on") == day and blog.get("status") == "published"
 
 
+_SOURCE_LABELS = {source["id"]: source["label"] for source in NEWS_SOURCES}
+
+
+def topic_entry_rows(day: str, stories: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """One table row per feed that mentioned a story."""
+    rows: list[dict[str, str]] = []
+    for story in stories:
+        title = str(story.get("title") or "").strip()
+        if not title:
+            continue
+        sources = story.get("sources") or []
+        if not sources:
+            sources = ["unknown"]
+        for source_id in sources:
+            source = str(source_id)
+            rows.append(
+                {
+                    "topic_date": day,
+                    "title": title,
+                    "name": _SOURCE_LABELS.get(source, source),
+                    "source": source,
+                    "link": str(story.get("link") or ""),
+                }
+            )
+    return rows
+
+
+def _replace_topic_entries(db: Session, user_id: int, day: str, stories: list[dict[str, Any]]) -> None:
+    topic_day = date.fromisoformat(day)
+    db.query(NewsTopicEntry).filter(
+        NewsTopicEntry.user_id == user_id,
+        NewsTopicEntry.topic_date == topic_day,
+    ).delete(synchronize_session=False)
+    for item in topic_entry_rows(day, stories):
+        db.add(
+            NewsTopicEntry(
+                user_id=user_id,
+                topic_date=topic_day,
+                title=item["title"],
+                name=item["name"],
+                source=item["source"],
+                link=item["link"] or None,
+            )
+        )
+
+
+def list_topic_entries(db: Session, user_id: int) -> list[NewsTopicEntry]:
+    """Return saved daily topics, newest day first. Backfill from the last run if needed."""
+    rows = (
+        db.query(NewsTopicEntry)
+        .filter(NewsTopicEntry.user_id == user_id)
+        .order_by(NewsTopicEntry.topic_date.desc(), NewsTopicEntry.id.asc())
+        .all()
+    )
+    if rows:
+        return rows
+    settings_row = get_or_create_settings(db, user_id)
+    last_run = settings_row.news_topics if isinstance(settings_row.news_topics, dict) else None
+    stories = (last_run or {}).get("top10") if isinstance(last_run, dict) else None
+    day = (last_run or {}).get("fetched_on") if isinstance(last_run, dict) else None
+    if not day or not isinstance(stories, list) or not stories:
+        return []
+    _replace_topic_entries(db, user_id, str(day), stories)
+    db.commit()
+    return (
+        db.query(NewsTopicEntry)
+        .filter(NewsTopicEntry.user_id == user_id)
+        .order_by(NewsTopicEntry.topic_date.desc(), NewsTopicEntry.id.asc())
+        .all()
+    )
+
+
 def settings_payload(row: UserLlmSettings) -> dict[str, Any]:
     sources = row.news_topic_sources if isinstance(row.news_topic_sources, list) else list(SOURCE_IDS)
     sources = [source_id for source_id in sources if source_id in _SOURCE_BY_ID] or list(SOURCE_IDS)
@@ -491,6 +564,7 @@ async def run_news_topics_for_user(
         "pick_error": pick_error,
         "blog": blog,
     }
+    _replace_topic_entries(db, user.id, day, stories)
     db.commit()
     db.refresh(row)
     return settings_payload(row)

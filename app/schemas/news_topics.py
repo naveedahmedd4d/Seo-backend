@@ -24,6 +24,19 @@ class NewsTopicsSettingsResponse(BaseModel):
     last_run: Optional[dict[str, Any]] = None
 
 
+class NewsTopicEntryItem(BaseModel):
+    id: int
+    date: str
+    title: str
+    name: str
+    source: str
+    link: Optional[str] = None
+
+
+class NewsTopicEntriesResponse(BaseModel):
+    items: list[NewsTopicEntryItem]
+
+
 class NewsTopicsCronResponse(BaseModel):
     ran: int = Field(description="Users whose daily news blog was attempted")
     force: bool = False

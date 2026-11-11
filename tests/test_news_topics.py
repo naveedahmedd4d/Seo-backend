@@ -9,6 +9,7 @@ from app.services.news_topics_service import (
     parse_feed_xml,
     parse_llm_pick,
     rank_stories,
+    topic_entry_rows,
 )
 
 
@@ -72,3 +73,16 @@ def test_empty_source_selection_means_all_feeds():
 def test_source_selection_requires_one_real_feed():
     with pytest.raises(ValueError):
         normalize_source_ids(["not-a-feed"])
+
+
+def test_topic_rows_use_feed_name_and_source():
+    rows = topic_entry_rows(
+        "2026-11-11",
+        [{"id": 1, "title": "Claude joins meetings", "sources": ["techcrunch", "verge"], "link": "https://example.com"}],
+    )
+    assert [(row["name"], row["source"]) for row in rows] == [
+        ("TechCrunch AI", "techcrunch"),
+        ("The Verge AI", "verge"),
+    ]
+    assert rows[0]["topic_date"] == "2026-11-11"
+    assert rows[0]["title"] == "Claude joins meetings"

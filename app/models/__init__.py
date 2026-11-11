@@ -29,6 +29,7 @@ from app.models.authority_site import (
     AuthorityLinkStatus,
 )
 from app.models.user_llm_settings import UserLlmSettings
+from app.models.news_topic_entry import NewsTopicEntry
 from app.models.user_blog_settings import UserBlogSettings, UserBlogTemplate
 from app.models.keyword_site_coverage import KeywordSiteCoverage
 from app.models.website_audit_run import WebsiteAuditRun
