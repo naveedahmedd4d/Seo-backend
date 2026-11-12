@@ -123,6 +123,37 @@ async def build_bundle_from_items(
     )
 
 
+async def build_query_only_bundle(
+    query: str,
+    *,
+    hashtag_count: int = 12,
+    template_variant: Optional[str] = None,
+) -> Optional[NewsResearchBundle]:
+    """Generate social copy from the query alone when Google News / SerpAPI is unavailable."""
+    q = (query or "").strip()
+    if not q:
+        return None
+    items = [
+        {
+            "title": q,
+            "link": "",
+            "source": "User query",
+            "snippet": q,
+            "date": "",
+        }
+    ]
+    try:
+        return await build_bundle_from_items(
+            items,
+            query=q,
+            template_variant=template_variant,
+            hashtag_count=hashtag_count,
+        )
+    except Exception as e:
+        logger.warning("build_query_only_bundle failed for %s: %s", q, e)
+        return None
+
+
 async def build_news_bundle(
     query: str,
     *,
@@ -134,31 +165,42 @@ async def build_news_bundle(
 ) -> Optional[NewsResearchBundle]:
     """
     Fetch Google News and generate headline, story caption, short description, hashtags.
-    Returns None on failure (caller should degrade gracefully).
+    When SerpAPI is missing or news fetch fails, falls back to query-only generation.
     """
     q = (query or "").strip()
     if not q:
         return None
-    try:
-        news_results = await fetch_google_news_light(
-            q,
-            num_results=num_results,
-            max_days=max_days,
-            api_key=serpapi_api_key,
-        )
-        if not news_results:
-            logger.info("No news results for query: %s", q)
-            return None
+    serp_key = (serpapi_api_key or "").strip()
+    if serp_key:
+        try:
+            news_results = await fetch_google_news_light(
+                q,
+                num_results=num_results,
+                max_days=max_days,
+                api_key=serp_key,
+            )
+            if news_results:
+                return await build_bundle_from_items(
+                    news_results,
+                    query=q,
+                    template_variant=template_variant,
+                    hashtag_count=hashtag_count,
+                )
+            logger.info("No news results for query: %s; using query-only fallback", q)
+        except Exception as e:
+            logger.warning(
+                "build_news_bundle news fetch failed for %s: %s; using query-only fallback",
+                q,
+                e,
+            )
+    else:
+        logger.info("No SerpAPI key for query %s; using query-only social generation", q)
 
-        return await build_bundle_from_items(
-            news_results,
-            query=q,
-            template_variant=template_variant,
-            hashtag_count=hashtag_count,
-        )
-    except Exception as e:
-        logger.warning("build_news_bundle failed for %s: %s", q, e)
-        return None
+    return await build_query_only_bundle(
+        q,
+        hashtag_count=hashtag_count,
+        template_variant=template_variant,
+    )
 
 
 def estimate_engagement_score(headline: str) -> str:

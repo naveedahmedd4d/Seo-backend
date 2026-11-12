@@ -25,7 +25,6 @@ from app.services.news_research_service import (
     suggested_platforms_for_headline,
 )
 from app.services.llm_settings_service import (
-    resolve_api_key,
     resolve_api_key_optional,
     resolve_llm_credentials,
 )
@@ -405,19 +404,20 @@ async def generate_social_post(
         creds = resolve_llm_credentials(db, current_user.id)
         llm_token = set_llm_context(creds)
 
+        serp_key = resolve_api_key_optional(db, current_user, "serpapi")
         if request.source == "article":
-            serp_key = resolve_api_key_optional(db, current_user, "serpapi")
             bundle, image_url, image_source = await _bundle_from_article(
                 db, current_user, request, serp_key
             )
         else:
-            serp_key = resolve_api_key(db, current_user, "serpapi")
             query = (request.query or "").strip()
             if not query:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Enter a topic or search query.",
                 )
+            # SerpAPI is optional: news when available, otherwise query-only LLM copy.
+            # Background images prefer Custom Image Search Api via /api/images/search.
             bundle = await build_news_bundle(
                 query,
                 template_variant=request.template_variant,
@@ -426,7 +426,7 @@ async def generate_social_post(
         if not bundle:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="No news results found for the given query.",
+                detail="Could not generate a social post for that query.",
             )
         items = [
             NewsResultItem(
