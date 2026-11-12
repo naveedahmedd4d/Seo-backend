@@ -25,6 +25,7 @@ PreferredProvider = Literal[
     "cohere",
     "nvidia",
     "claude_routine",
+    "claude_llm",
 ]
 ApiKeyProvider = Literal[
     "gemini",
@@ -109,6 +110,7 @@ class LlmCredentials:
     account_id: Optional[str] = None  # Cloudflare account id
     user_id: Optional[int] = None
     try_claude_routine: bool = False
+    try_claude_llm: bool = False
 
 
 def normalize_fallback_order(raw: Optional[Sequence[str]]) -> List[Provider]:
@@ -322,6 +324,19 @@ def to_public_response(
             getattr(row, "claude_routine_callback_secret", None)
         ),
         claude_routine_webhook_path="/api/webhooks/claude-routine",
+        claude_llm_configured=_is_claude_llm_row_ready(row),
+        claude_llm_api_key_configured=bool(getattr(row, "claude_llm_api_key", None)),
+        claude_llm_api_key_hint=_mask_hint(getattr(row, "claude_llm_api_key", None)),
+        claude_llm_base_url=(getattr(row, "claude_llm_base_url", None) or None),
+        claude_llm_webhook_secret_configured=bool(
+            getattr(row, "claude_llm_webhook_secret", None)
+        ),
+        claude_llm_webhook_secret_hint=_mask_hint(
+            getattr(row, "claude_llm_webhook_secret", None)
+        ),
+        claude_llm_timeout_ms=int(
+            getattr(row, "claude_llm_timeout_ms", None) or 120_000
+        ),
         trending_fallback_groq_configured=bool(row.trending_fallback_groq_api_key),
         trending_fallback_groq_hint=_mask_hint(row.trending_fallback_groq_api_key),
         trending_fallback_groq_platform_available=platform_flag("trending_fallback_groq"),
@@ -357,6 +372,19 @@ def _is_claude_routine_row_ready(row: UserLlmSettings) -> bool:
     )
 
 
+def _is_claude_llm_row_ready(row: UserLlmSettings) -> bool:
+    if not _decrypt_user_key(getattr(row, "claude_llm_api_key", None)):
+        return False
+    from app.services.claude_llm_service import normalize_base_url, normalize_timeout_ms
+
+    try:
+        normalize_base_url(getattr(row, "claude_llm_base_url", None))
+        normalize_timeout_ms(getattr(row, "claude_llm_timeout_ms", None))
+    except ValueError:
+        return False
+    return True
+
+
 def _apply_key_field(
     row: UserLlmSettings,
     attr: str,
@@ -385,6 +413,10 @@ def upsert_settings(
     claude_routine_url: Optional[str] = None,
     claude_routine_token: Optional[str] = None,
     claude_routine_callback_secret: Optional[str] = None,
+    claude_llm_api_key: Optional[str] = None,
+    claude_llm_base_url: Optional[str] = None,
+    claude_llm_webhook_secret: Optional[str] = None,
+    claude_llm_timeout_ms: Optional[int] = None,
     trending_fallback_groq_api_key: Optional[str] = None,
     blog_fallback_groq_api_key: Optional[str] = None,
     serpapi_api_key: Optional[str] = None,
@@ -399,6 +431,7 @@ def upsert_settings(
     clear_cohere_api_key: bool = False,
     clear_nvidia_api_key: bool = False,
     clear_claude_routine: bool = False,
+    clear_claude_llm: bool = False,
     clear_trending_fallback_groq_api_key: bool = False,
     clear_blog_fallback_groq_api_key: bool = False,
     clear_serpapi_api_key: bool = False,
@@ -445,6 +478,31 @@ def upsert_settings(
             value=claude_routine_callback_secret,
             clear=False,
         )
+    if clear_claude_llm:
+        row.claude_llm_api_key = None
+        row.claude_llm_base_url = None
+        row.claude_llm_webhook_secret = None
+        row.claude_llm_timeout_ms = None
+    else:
+        _apply_key_field(row, "claude_llm_api_key", value=claude_llm_api_key, clear=False)
+        _apply_key_field(
+            row,
+            "claude_llm_webhook_secret",
+            value=claude_llm_webhook_secret,
+            clear=False,
+        )
+        if claude_llm_base_url is not None:
+            cleaned_base = claude_llm_base_url.strip()
+            if cleaned_base:
+                from app.services.claude_llm_service import normalize_base_url
+
+                row.claude_llm_base_url = normalize_base_url(cleaned_base)
+            else:
+                row.claude_llm_base_url = None
+        if claude_llm_timeout_ms is not None:
+            from app.services.claude_llm_service import normalize_timeout_ms
+
+            row.claude_llm_timeout_ms = normalize_timeout_ms(claude_llm_timeout_ms)
     _apply_key_field(
         row,
         "trending_fallback_groq_api_key",
@@ -463,11 +521,11 @@ def upsert_settings(
     _apply_key_field(row, "apify_api_key", value=apify_api_key, clear=clear_apify_api_key)
 
     if preferred_provider is not None:
-        allowed = {"default", "claude_routine", *DEFAULT_FALLBACK_ORDER}
+        allowed = {"default", "claude_routine", "claude_llm", *DEFAULT_FALLBACK_ORDER}
         if preferred_provider not in allowed:
             raise ValueError(
-                "preferred_provider must be default, claude_routine, gemini, openrouter, "
-                "groq, cloudflare, mistral, cohere, or nvidia"
+                "preferred_provider must be default, claude_llm, claude_routine, gemini, "
+                "openrouter, groq, cloudflare, mistral, cohere, or nvidia"
             )
         row.preferred_provider = preferred_provider
 
@@ -597,6 +655,7 @@ def resolve_llm_credentials(
     preferred_model: Optional[str] = None
     fallback = list(DEFAULT_FALLBACK_ORDER)
     try_claude_routine = False
+    try_claude_llm = False
 
     keys: dict[Provider, tuple[Optional[str], Optional[str]]] = {
         "gemini": (None, None),
@@ -611,10 +670,14 @@ def resolve_llm_credentials(
     owner = is_platform_owner(user)
     if row:
         raw_preferred = (row.preferred_provider or "default")
+        from app.services.claude_llm_service import is_claude_llm_configured
         from app.services.claude_routine_service import is_routine_configured
 
         if raw_preferred == "claude_routine":
             try_claude_routine = is_routine_configured(db, user.id)
+            preferred = "default"
+        elif raw_preferred == "claude_llm":
+            try_claude_llm = is_claude_llm_configured(db, user.id)
             preferred = "default"
         else:
             preferred = raw_preferred  # type: ignore[assignment]
@@ -664,23 +727,25 @@ def resolve_llm_credentials(
             account_id=account_id if provider == "cloudflare" else None,
             user_id=user.id,
             try_claude_routine=try_claude_routine,
+            try_claude_llm=try_claude_llm,
         )
 
-    if try_claude_routine:
-        # Routine-only mode: still return a stub so callers can try the webhook path.
-        # generate_content will fire the routine; if it fails, raise a clear error.
+    if try_claude_llm or try_claude_routine:
+        # Relay/routine-only mode: still return a stub so callers can try the
+        # Claude path; if it fails, generate_content raises a clear error.
         return LlmCredentials(
             provider="gemini",
             api_key="",
             model=_platform_default_model("gemini"),
             source="user",
             user_id=user.id,
-            try_claude_routine=True,
+            try_claude_routine=try_claude_routine,
+            try_claude_llm=try_claude_llm,
         )
 
     raise ValueError(
         "Add at least one LLM API key in Settings "
-        "(Gemini, OpenRouter, Groq, Cloudflare, Mistral, Cohere, or NVIDIA)"
+        "(Claude LLM, Gemini, OpenRouter, Groq, Cloudflare, Mistral, Cohere, or NVIDIA)"
     )
 
 

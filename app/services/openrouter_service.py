@@ -49,7 +49,9 @@ def has_usable_llm_key() -> bool:
     ctx = get_llm_context()
     if ctx is not None and (getattr(ctx, "api_key", "") or "").strip():
         return True
-    if ctx is not None and getattr(ctx, "try_claude_routine", False):
+    if ctx is not None and (
+        getattr(ctx, "try_claude_llm", False) or getattr(ctx, "try_claude_routine", False)
+    ):
         return True
     return bool(
         getattr(settings, "groq_api_key", None)
@@ -269,6 +271,17 @@ async def generate_content(
 
     ctx = get_llm_context()
     try:
+        if ctx is not None and getattr(ctx, "try_claude_llm", False) and getattr(ctx, "user_id", None):
+            from app.services.claude_llm_service import generate_via_claude_llm
+
+            claude_text = await generate_via_claude_llm(
+                ctx.user_id,
+                prompt,
+                system=system,
+            )
+            if claude_text:
+                return claude_text
+            # Timed out / relay failed → fall through to normal providers
         if ctx is not None and getattr(ctx, "try_claude_routine", False) and getattr(ctx, "user_id", None):
             from app.services.claude_routine_service import generate_via_claude_routine
 
@@ -283,7 +296,7 @@ async def generate_content(
         if ctx is not None:
             if not (ctx.api_key or "").strip():
                 raise ValueError(
-                    "Claude routine did not respond in time and no fallback LLM key is configured"
+                    "Claude LLM/routine did not respond in time and no fallback LLM key is configured"
                 )
             if ctx.provider == "groq":
                 return await _groq_chat_completion(
@@ -1280,6 +1293,12 @@ async def generate_blog_content_with_groq(
 ) -> str:
     """Generate blog content via LLM_CONTEXT or platform free-first keys."""
     ctx = get_llm_context()
+    if ctx is not None and getattr(ctx, "try_claude_llm", False) and getattr(ctx, "user_id", None):
+        from app.services.claude_llm_service import generate_via_claude_llm
+
+        claude_text = await generate_via_claude_llm(ctx.user_id, prompt)
+        if claude_text:
+            return claude_text
     if ctx is not None and getattr(ctx, "try_claude_routine", False) and getattr(ctx, "user_id", None):
         from app.services.claude_routine_service import generate_via_claude_routine
 
@@ -1289,7 +1308,7 @@ async def generate_blog_content_with_groq(
     if ctx is not None:
         if not (ctx.api_key or "").strip():
             raise ValueError(
-                "Claude routine did not respond in time and no fallback LLM key is configured"
+                "Claude LLM/routine did not respond in time and no fallback LLM key is configured"
             )
         if ctx.provider == "groq":
             return await _groq_chat_completion(

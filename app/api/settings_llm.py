@@ -10,6 +10,7 @@ from app.api.auth import get_current_user
 from app.database import get_db
 from app.models.user import User
 from app.schemas.settings_llm import (
+    ClaudeLlmTestRequest,
     LlmModelsResponse,
     LlmSettingsResponse,
     LlmSettingsUpdateRequest,
@@ -66,6 +67,10 @@ async def update_llm_settings(
             claude_routine_url=body.claude_routine_url,
             claude_routine_token=body.claude_routine_token,
             claude_routine_callback_secret=body.claude_routine_callback_secret,
+            claude_llm_api_key=body.claude_llm_api_key,
+            claude_llm_base_url=body.claude_llm_base_url,
+            claude_llm_webhook_secret=body.claude_llm_webhook_secret,
+            claude_llm_timeout_ms=body.claude_llm_timeout_ms,
             trending_fallback_groq_api_key=body.trending_fallback_groq_api_key,
             blog_fallback_groq_api_key=body.blog_fallback_groq_api_key,
             serpapi_api_key=body.serpapi_api_key,
@@ -80,6 +85,7 @@ async def update_llm_settings(
             clear_cohere_api_key=body.clear_cohere_api_key,
             clear_nvidia_api_key=body.clear_nvidia_api_key,
             clear_claude_routine=body.clear_claude_routine,
+            clear_claude_llm=body.clear_claude_llm,
             clear_trending_fallback_groq_api_key=body.clear_trending_fallback_groq_api_key,
             clear_blog_fallback_groq_api_key=body.clear_blog_fallback_groq_api_key,
             clear_serpapi_api_key=body.clear_serpapi_api_key,
@@ -217,3 +223,56 @@ async def test_llm_key(
         )
     except Exception as e:
         return LlmTestResponse(ok=False, message=f"{model} request failed: {e}")
+
+
+@router.post("/llm/test-claude-llm", response_model=LlmTestResponse)
+async def test_claude_llm(
+    body: ClaudeLlmTestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Submit one short hello job through the Claude LLM relay."""
+    from app.services.claude_llm_service import (
+        DEFAULT_BASE_URL,
+        DEFAULT_TIMEOUT_MS,
+        load_claude_llm_config,
+        normalize_base_url,
+        test_claude_llm_connection,
+    )
+
+    api_key = (body.api_key or "").strip() or None
+    requested_base = (body.base_url or "").strip() or None
+    timeout_ms = body.timeout_ms
+    cfg = load_claude_llm_config(db, current_user.id)
+
+    if not api_key:
+        if not cfg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Claude LLM API key to test. Paste a key or save one first.",
+            )
+        api_key = cfg.api_key
+
+    if requested_base:
+        try:
+            base_url = normalize_base_url(requested_base)
+        except ValueError as exc:
+            return LlmTestResponse(ok=False, message=str(exc))
+        # Never send a saved key to a different origin than the one on file.
+        if not (body.api_key or "").strip() and cfg and base_url != cfg.base_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Paste the API key when testing a different base URL.",
+            )
+    else:
+        base_url = cfg.base_url if cfg else DEFAULT_BASE_URL
+
+    if timeout_ms is None:
+        timeout_ms = cfg.timeout_ms if cfg else DEFAULT_TIMEOUT_MS
+
+    ok, message = await test_claude_llm_connection(
+        api_key=api_key,
+        base_url=base_url,
+        timeout_ms=timeout_ms,
+    )
+    return LlmTestResponse(ok=ok, message=message)

@@ -23,6 +23,7 @@ PreferredProvider = Literal[
     "cohere",
     "nvidia",
     "claude_routine",
+    "claude_llm",
 ]
 ApiKeyProvider = Literal[
     "gemini",
@@ -106,6 +107,14 @@ class LlmSettingsResponse(BaseModel):
     claude_routine_callback_secret_hint: Optional[str] = None
     claude_routine_webhook_path: str = "/api/webhooks/claude-routine"
 
+    claude_llm_configured: bool = False
+    claude_llm_api_key_configured: bool = False
+    claude_llm_api_key_hint: Optional[str] = None
+    claude_llm_base_url: Optional[str] = None
+    claude_llm_webhook_secret_configured: bool = False
+    claude_llm_webhook_secret_hint: Optional[str] = None
+    claude_llm_timeout_ms: int = 120000
+
     trending_fallback_groq_configured: bool = False
     trending_fallback_groq_hint: Optional[str] = None
     trending_fallback_groq_platform_available: bool = False
@@ -148,6 +157,10 @@ class LlmSettingsUpdateRequest(BaseModel):
     claude_routine_url: Optional[str] = None
     claude_routine_token: Optional[str] = None
     claude_routine_callback_secret: Optional[str] = None
+    claude_llm_api_key: Optional[str] = None
+    claude_llm_base_url: Optional[str] = None
+    claude_llm_webhook_secret: Optional[str] = None
+    claude_llm_timeout_ms: Optional[int] = None
     trending_fallback_groq_api_key: Optional[str] = None
     blog_fallback_groq_api_key: Optional[str] = None
     serpapi_api_key: Optional[str] = None
@@ -163,6 +176,7 @@ class LlmSettingsUpdateRequest(BaseModel):
     clear_cohere_api_key: bool = False
     clear_nvidia_api_key: bool = False
     clear_claude_routine: bool = False
+    clear_claude_llm: bool = False
     clear_trending_fallback_groq_api_key: bool = False
     clear_blog_fallback_groq_api_key: bool = False
     clear_serpapi_api_key: bool = False
@@ -204,3 +218,18 @@ class LlmTestRequest(BaseModel):
 class LlmTestResponse(BaseModel):
     ok: bool
     message: str
+
+
+class ClaudeLlmTestRequest(BaseModel):
+    api_key: Optional[str] = Field(
+        default=None,
+        description="Key to test; omit to test the saved Claude LLM key",
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Origin only; omit to use the saved or default base URL",
+    )
+    timeout_ms: Optional[int] = Field(
+        default=None,
+        description="Poll timeout in ms; omit to use the saved or default timeout",
+    )
