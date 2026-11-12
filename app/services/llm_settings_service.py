@@ -324,18 +324,28 @@ def to_public_response(
             getattr(row, "claude_routine_callback_secret", None)
         ),
         claude_routine_webhook_path="/api/webhooks/claude-routine",
-        claude_llm_configured=_is_claude_llm_row_ready(row),
-        claude_llm_api_key_configured=bool(getattr(row, "claude_llm_api_key", None)),
-        claude_llm_api_key_hint=_mask_hint(getattr(row, "claude_llm_api_key", None)),
-        claude_llm_base_url=(getattr(row, "claude_llm_base_url", None) or None),
+        claude_llm_configured=_is_claude_llm_row_ready(row) or _platform_claude_llm_ready(),
+        claude_llm_api_key_configured=bool(getattr(row, "claude_llm_api_key", None))
+        or _platform_claude_llm_ready(),
+        claude_llm_api_key_hint=_mask_hint(getattr(row, "claude_llm_api_key", None))
+        or _platform_claude_llm_key_hint(),
+        claude_llm_base_url=(
+            getattr(row, "claude_llm_base_url", None)
+            or _platform_claude_llm_url()
+            or None
+        ),
         claude_llm_webhook_secret_configured=bool(
             getattr(row, "claude_llm_webhook_secret", None)
-        ),
+        )
+        or _platform_claude_llm_secret_configured(),
         claude_llm_webhook_secret_hint=_mask_hint(
             getattr(row, "claude_llm_webhook_secret", None)
-        ),
+        )
+        or _platform_claude_llm_secret_hint(),
         claude_llm_timeout_ms=int(
-            getattr(row, "claude_llm_timeout_ms", None) or 120_000
+            getattr(row, "claude_llm_timeout_ms", None)
+            or getattr(settings, "claude_llm_timeout_ms", None)
+            or 120_000
         ),
         trending_fallback_groq_configured=bool(row.trending_fallback_groq_api_key),
         trending_fallback_groq_hint=_mask_hint(row.trending_fallback_groq_api_key),
@@ -375,14 +385,57 @@ def _is_claude_routine_row_ready(row: UserLlmSettings) -> bool:
 def _is_claude_llm_row_ready(row: UserLlmSettings) -> bool:
     if not _decrypt_user_key(getattr(row, "claude_llm_api_key", None)):
         return False
-    from app.services.claude_llm_service import normalize_base_url, normalize_timeout_ms
+    from app.services.claude_llm_service import normalize_run_url, normalize_timeout_ms
 
+    raw_url = getattr(row, "claude_llm_base_url", None)
+    if not raw_url or not str(raw_url).strip():
+        return False
     try:
-        normalize_base_url(getattr(row, "claude_llm_base_url", None))
+        normalize_run_url(str(raw_url))
         normalize_timeout_ms(getattr(row, "claude_llm_timeout_ms", None))
     except ValueError:
         return False
     return True
+
+
+def _platform_claude_llm_ready() -> bool:
+    from app.services.claude_llm_service import _platform_env_config
+
+    return _platform_env_config() is not None
+
+
+def _platform_claude_llm_url() -> Optional[str]:
+    raw = getattr(settings, "claude_llm_url", None)
+    if not raw or not str(raw).strip():
+        return None
+    from app.services.claude_llm_service import normalize_run_url
+
+    try:
+        run_url, _origin = normalize_run_url(str(raw))
+    except ValueError:
+        return str(raw).strip()
+    return run_url
+
+
+def _platform_claude_llm_key_hint() -> Optional[str]:
+    key = getattr(settings, "claude_llm_api_key", None)
+    if not key or not str(key).strip():
+        return None
+    raw = str(key).strip()
+    return raw[-4:] if len(raw) > 4 else raw
+
+
+def _platform_claude_llm_secret_configured() -> bool:
+    secret = getattr(settings, "claude_llm_webhook_secret", None)
+    return bool(secret and str(secret).strip())
+
+
+def _platform_claude_llm_secret_hint() -> Optional[str]:
+    secret = getattr(settings, "claude_llm_webhook_secret", None)
+    if not secret or not str(secret).strip():
+        return None
+    raw = str(secret).strip()
+    return raw[-4:] if len(raw) > 4 else raw
 
 
 def _apply_key_field(
@@ -494,9 +547,10 @@ def upsert_settings(
         if claude_llm_base_url is not None:
             cleaned_base = claude_llm_base_url.strip()
             if cleaned_base:
-                from app.services.claude_llm_service import normalize_base_url
+                from app.services.claude_llm_service import normalize_run_url
 
-                row.claude_llm_base_url = normalize_base_url(cleaned_base)
+                run_url, _origin = normalize_run_url(cleaned_base)
+                row.claude_llm_base_url = run_url
             else:
                 row.claude_llm_base_url = None
         if claude_llm_timeout_ms is not None:

@@ -233,10 +233,9 @@ async def test_claude_llm(
 ):
     """Submit one short hello job through the Claude LLM relay."""
     from app.services.claude_llm_service import (
-        DEFAULT_BASE_URL,
         DEFAULT_TIMEOUT_MS,
         load_claude_llm_config,
-        normalize_base_url,
+        normalize_run_url,
         test_claude_llm_connection,
     )
 
@@ -255,17 +254,26 @@ async def test_claude_llm(
 
     if requested_base:
         try:
-            base_url = normalize_base_url(requested_base)
+            run_url, _origin = normalize_run_url(requested_base)
         except ValueError as exc:
             return LlmTestResponse(ok=False, message=str(exc))
-        # Never send a saved key to a different origin than the one on file.
-        if not (body.api_key or "").strip() and cfg and base_url != cfg.base_url:
+        # Never send a saved key to a different run URL than the one on file.
+        if not (body.api_key or "").strip() and cfg and run_url != cfg.run_url:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Paste the API key when testing a different base URL.",
+                detail="Paste the API key when testing a different Claude LLM URL.",
             )
+        base_url = run_url
     else:
-        base_url = cfg.base_url if cfg else DEFAULT_BASE_URL
+        if not cfg:
+            return LlmTestResponse(
+                ok=False,
+                message=(
+                    "Paste the full Claude LLM run URL "
+                    "(…/api/v1/run/<endpoint-id>) to test."
+                ),
+            )
+        base_url = cfg.run_url
 
     if timeout_ms is None:
         timeout_ms = cfg.timeout_ms if cfg else DEFAULT_TIMEOUT_MS

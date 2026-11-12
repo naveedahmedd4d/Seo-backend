@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 # Always load backend/.env regardless of process working directory (e.g. uvicorn from repo root).
@@ -123,11 +124,44 @@ class Settings(BaseSettings):
     # Shared secret for the Monday weekly-content cron (GitHub Actions / Render Cron).
     # Send as Authorization: Bearer <secret> to POST /api/weekly-content/cron/run-due
     weekly_cron_secret: Optional[str] = None
+
+    # Claude LLM relay (https://claude-llm.vercel.app). Prefer the full run URL
+    # including /api/v1/run/<endpoint-id>. Accepts ClaudeLLM_* env names too.
+    claude_llm_api_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CLAUDE_LLM_API_KEY",
+            "ClaudeLLM_API_KEY",
+            "claudellm_api_key",
+        ),
+    )
+    claude_llm_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CLAUDE_LLM_URL",
+            "ClaudeLLM_URL",
+            "CLAUDE_LLM_BASE_URL",
+            "claudellm_url",
+        ),
+    )
+    claude_llm_webhook_secret: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CLAUDE_LLM_WEBHOOK_SECRET",
+            "ClaudeLLM_WEBHOOK_SECRET",
+            "claudellm_webhook_secret",
+        ),
+    )
+    claude_llm_timeout_ms: Optional[int] = Field(
+        default=None,
+        validation_alias=AliasChoices("CLAUDE_LLM_TIMEOUT_MS", "ClaudeLLM_TIMEOUT_MS"),
+    )
     
     model_config = {
         "env_file": str(_ENV_FILE),
         "case_sensitive": False,
         "extra": "ignore",
+        "populate_by_name": True,
     }
 
 
