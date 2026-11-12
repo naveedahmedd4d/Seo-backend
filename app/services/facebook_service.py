@@ -25,7 +25,12 @@ from app.services.social_platform_app_service import OAuthAppCredentials, get_fa
 
 logger = logging.getLogger(__name__)
 
-FACEBOOK_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+# business_management is required for many Business-portfolio Pages; without it
+# /me/accounts often returns [] even when pages_show_list is granted (common on
+# newer "In development" apps like WebKitSolutions vs a Live app like Fact Check).
+FACEBOOK_SCOPES = (
+    "pages_show_list,pages_manage_posts,pages_read_engagement,business_management"
+)
 
 
 def build_authorization_url(credentials: OAuthAppCredentials, state: str) -> str:
@@ -76,6 +81,7 @@ async def save_facebook_account_from_code(
                 "pages_show_list",
                 "pages_manage_posts",
                 "pages_read_engagement",
+                "business_management",
             }
             - granted
         )
@@ -87,8 +93,11 @@ async def save_facebook_account_from_code(
         raise ValueError(
             "No Facebook Pages found."
             + hint
-            + " On Meta's dialog click Edit settings (not Continue), select every Page"
-            " you manage, then confirm. Personal profiles cannot be connected."
+            + " Use a Live Meta app (Fact Check works because it is Live), or keep the"
+            " app In development and ensure this Facebook user is an App Role plus"
+            " Page admin. On Meta's dialog click Edit settings (not Continue) and"
+            " select every Page. If the Page is under a Business Portfolio, grant"
+            " business_management. Personal profiles cannot be connected."
         )
 
     default_page = pages[0]
