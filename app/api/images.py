@@ -1,19 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
 from app.database import get_db
 from app.api.auth import get_current_user
 from app.models.user import User
 from app.models.image_search_history import ImageSearchHistory
+from app.services.custom_image_search_service import (
+    is_custom_image_search_configured,
+    search_social_images,
+)
+from app.services.llm_settings_service import resolve_api_key_optional
 from app.services.serpapi_service import search_images
-from app.services.llm_settings_service import resolve_api_key
 from app.schemas.images import (
     ImageSearchRequest,
     ImageSearchResponse,
     ImageResult,
     ImageSearchHistoryResponse,
 )
-from app.workflows.image_workflow import create_image_workflow
 
 router = APIRouter()
 
@@ -38,18 +40,37 @@ async def search_images_endpoint(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Search images by keyword and save to history."""
+    """Search images by keyword and save to history.
+
+    Prefer Custom Image Search Api when configured (Social Post backgrounds);
+    fall back to SerpAPI. Advanced SerpAPI filters apply only on the SerpAPI path.
+    """
     try:
-        serp_key = resolve_api_key(db, current_user, "serpapi")
-        images_data = await search_images(
-            request.keyword,
-            request.num_results,
-            source=request.source,
-            size=request.size,
-            color=request.color,
-            orientation=request.orientation,
-            api_key=serp_key,
-        )
+        serp_key = resolve_api_key_optional(db, current_user, "serpapi")
+        custom_ready = is_custom_image_search_configured(db, current_user.id)
+        if not custom_ready and not serp_key:
+            raise ValueError(
+                "Add your Custom Image Search Api or SerpAPI key in Settings"
+            )
+
+        if custom_ready:
+            images_data = await search_social_images(
+                db,
+                current_user.id,
+                request.keyword,
+                num_results=request.num_results,
+                serpapi_key=serp_key,
+            )
+        else:
+            images_data = await search_images(
+                request.keyword,
+                request.num_results,
+                source=request.source,
+                size=request.size,
+                color=request.color,
+                orientation=request.orientation,
+                api_key=serp_key,
+            )
         images = [
             ImageResult(
                 title=img.get("title", ""),
@@ -136,4 +157,3 @@ async def delete_image_search_history(
     db.delete(record)
     db.commit()
     return {"ok": True}
-
