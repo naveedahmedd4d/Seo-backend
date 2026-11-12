@@ -356,6 +356,16 @@ def to_public_response(
         serpapi_configured=bool(row.serpapi_api_key),
         serpapi_hint=_mask_hint(row.serpapi_api_key),
         serpapi_platform_available=platform_flag("serpapi"),
+        custom_image_search_configured=_is_custom_image_search_row_ready(row),
+        custom_image_search_api_key_configured=bool(
+            getattr(row, "custom_image_search_api_key", None)
+        ),
+        custom_image_search_api_key_hint=_mask_hint(
+            getattr(row, "custom_image_search_api_key", None)
+        ),
+        custom_image_search_base_url=(
+            getattr(row, "custom_image_search_base_url", None) or None
+        ),
         tavily_configured=bool(row.tavily_api_key),
         tavily_hint=_mask_hint(row.tavily_api_key),
         tavily_platform_available=platform_flag("tavily"),
@@ -393,6 +403,18 @@ def _is_claude_llm_row_ready(row: UserLlmSettings) -> bool:
     try:
         normalize_run_url(str(raw_url))
         normalize_timeout_ms(getattr(row, "claude_llm_timeout_ms", None))
+    except ValueError:
+        return False
+    return True
+
+
+def _is_custom_image_search_row_ready(row: UserLlmSettings) -> bool:
+    if not _decrypt_user_key(getattr(row, "custom_image_search_api_key", None)):
+        return False
+    from app.services.custom_image_search_service import normalize_base_url
+
+    try:
+        normalize_base_url(getattr(row, "custom_image_search_base_url", None))
     except ValueError:
         return False
     return True
@@ -473,6 +495,8 @@ def upsert_settings(
     trending_fallback_groq_api_key: Optional[str] = None,
     blog_fallback_groq_api_key: Optional[str] = None,
     serpapi_api_key: Optional[str] = None,
+    custom_image_search_api_key: Optional[str] = None,
+    custom_image_search_base_url: Optional[str] = None,
     tavily_api_key: Optional[str] = None,
     mangools_api_token: Optional[str] = None,
     apify_api_key: Optional[str] = None,
@@ -488,6 +512,7 @@ def upsert_settings(
     clear_trending_fallback_groq_api_key: bool = False,
     clear_blog_fallback_groq_api_key: bool = False,
     clear_serpapi_api_key: bool = False,
+    clear_custom_image_search: bool = False,
     clear_tavily_api_key: bool = False,
     clear_mangools_api_token: bool = False,
     clear_apify_api_key: bool = False,
@@ -570,6 +595,24 @@ def upsert_settings(
         clear=clear_blog_fallback_groq_api_key,
     )
     _apply_key_field(row, "serpapi_api_key", value=serpapi_api_key, clear=clear_serpapi_api_key)
+    if clear_custom_image_search:
+        row.custom_image_search_api_key = None
+        row.custom_image_search_base_url = None
+    else:
+        _apply_key_field(
+            row,
+            "custom_image_search_api_key",
+            value=custom_image_search_api_key,
+            clear=False,
+        )
+        if custom_image_search_base_url is not None:
+            cleaned_base = custom_image_search_base_url.strip()
+            if cleaned_base:
+                from app.services.custom_image_search_service import normalize_base_url
+
+                row.custom_image_search_base_url = normalize_base_url(cleaned_base)
+            else:
+                row.custom_image_search_base_url = None
     _apply_key_field(row, "tavily_api_key", value=tavily_api_key, clear=clear_tavily_api_key)
     _apply_key_field(row, "mangools_api_token", value=mangools_api_token, clear=clear_mangools_api_token)
     _apply_key_field(row, "apify_api_key", value=apify_api_key, clear=clear_apify_api_key)

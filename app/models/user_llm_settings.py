@@ -31,6 +31,9 @@ class UserLlmSettings(Base):
     trending_fallback_groq_api_key = Column(Text, nullable=True)
     blog_fallback_groq_api_key = Column(Text, nullable=True)
     serpapi_api_key = Column(Text, nullable=True)
+    # Custom Image Search (Blog Booster-compatible) for social post images
+    custom_image_search_api_key = Column(Text, nullable=True)
+    custom_image_search_base_url = Column(Text, nullable=True)
     tavily_api_key = Column(Text, nullable=True)
     mangools_api_token = Column(Text, nullable=True)
     apify_api_key = Column(Text, nullable=True)

@@ -127,6 +127,11 @@ class LlmSettingsResponse(BaseModel):
     serpapi_hint: Optional[str] = None
     serpapi_platform_available: bool = False
 
+    custom_image_search_configured: bool = False
+    custom_image_search_api_key_configured: bool = False
+    custom_image_search_api_key_hint: Optional[str] = None
+    custom_image_search_base_url: Optional[str] = None
+
     tavily_configured: bool = False
     tavily_hint: Optional[str] = None
     tavily_platform_available: bool = False
@@ -164,6 +169,8 @@ class LlmSettingsUpdateRequest(BaseModel):
     trending_fallback_groq_api_key: Optional[str] = None
     blog_fallback_groq_api_key: Optional[str] = None
     serpapi_api_key: Optional[str] = None
+    custom_image_search_api_key: Optional[str] = None
+    custom_image_search_base_url: Optional[str] = None
     tavily_api_key: Optional[str] = None
     mangools_api_token: Optional[str] = None
     apify_api_key: Optional[str] = None
@@ -180,6 +187,7 @@ class LlmSettingsUpdateRequest(BaseModel):
     clear_trending_fallback_groq_api_key: bool = False
     clear_blog_fallback_groq_api_key: bool = False
     clear_serpapi_api_key: bool = False
+    clear_custom_image_search: bool = False
     clear_tavily_api_key: bool = False
     clear_mangools_api_token: bool = False
     clear_apify_api_key: bool = False
@@ -232,4 +240,19 @@ class ClaudeLlmTestRequest(BaseModel):
     timeout_ms: Optional[int] = Field(
         default=None,
         description="Poll timeout in ms; omit to use the saved or default timeout",
+    )
+
+
+class CustomImageSearchTestRequest(BaseModel):
+    api_key: Optional[str] = Field(
+        default=None,
+        description="Key to test; omit to test the saved Custom Image Search key",
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="API origin; omit to use the saved or default base URL",
+    )
+    query: Optional[str] = Field(
+        default="technology",
+        description="Sample search query used for the connection test",
     )

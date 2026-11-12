@@ -13,9 +13,12 @@ from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_template_prefs import SocialPostTemplatePrefs
 from app.models.user import User
 from app.services.http_ssl import httpx_verify
+from app.services.custom_image_search_service import (
+    is_custom_image_search_configured,
+    search_social_images,
+)
 from app.services.llm_settings_service import resolve_api_key_optional
 from app.services.openrouter_service import select_social_background_image
-from app.services.serpapi_service import search_images
 from app.services.social_media_storage import public_image_url, save_png_base64
 
 logger = logging.getLogger(__name__)
@@ -67,17 +70,22 @@ async def _search_background_candidates(
     query: str,
 ) -> list[dict[str, Any]]:
     serp_key = resolve_api_key_optional(db, user, "serpapi")
-    if not serp_key:
-        logger.info("Weekly social media: no SerpAPI key for user %s", user.id)
+    if not serp_key and not is_custom_image_search_configured(db, user.id):
+        logger.info(
+            "Weekly social media: no Custom Image Search or SerpAPI key for user %s",
+            user.id,
+        )
         return []
     try:
-        results = await search_images(
+        results = await search_social_images(
+            db,
+            user.id,
             (query or "").strip() or "news",
             num_results=SERP_CANDIDATE_COUNT,
-            api_key=serp_key,
+            serpapi_key=serp_key,
         )
     except Exception as exc:
-        logger.warning("Weekly social media: SerpAPI search failed: %s", exc)
+        logger.warning("Weekly social media: image search failed: %s", exc)
         return []
     return [r for r in (results or []) if isinstance(r, dict) and _candidate_image_url(r)]
 

@@ -17,14 +17,18 @@ import logging
 
 from app.services import article_social_service
 from app.services.wordpress_service import get_wp_media, get_wp_post
-from app.services.serpapi_service import search_images
+from app.services.custom_image_search_service import search_social_images
 from app.services.news_research_service import (
     build_bundle_from_items,
     build_news_bundle,
     estimate_engagement_score,
     suggested_platforms_for_headline,
 )
-from app.services.llm_settings_service import resolve_api_key, resolve_llm_credentials
+from app.services.llm_settings_service import (
+    resolve_api_key,
+    resolve_api_key_optional,
+    resolve_llm_credentials,
+)
 from app.services.openrouter_service import set_llm_context, reset_llm_context
 from app.services.http_ssl import httpx_verify
 from app.services.social_media_storage import public_image_url, resolve_media_path, save_png_base64
@@ -265,11 +269,15 @@ async def save_social_post_template_presets(
 async def _resolve_article_image(
     site, wp_post: dict, content_html: str, title: str,
     target_keyword, serp_key,
+    *,
+    db=None,
+    user_id=None,
 ) -> tuple[str | None, str | None]:
     """Featured media, else a body image, else a keyword image search.
 
     Each step is best-effort: an article with no image must still generate a
     post, because the copy is the point and the background can be set by hand.
+    Prefer Custom Image Search when configured; otherwise SerpAPI.
     """
     featured_id = wp_post.get("featured_media")
     if featured_id:
@@ -285,9 +293,15 @@ async def _resolve_article_image(
         return body_image, "body"
 
     keyword = article_social_service.image_keyword(title, target_keyword)
-    if keyword and serp_key:
+    if keyword and db is not None and user_id is not None:
         try:
-            results = await search_images(keyword, num_results=10, api_key=serp_key)
+            results = await search_social_images(
+                db,
+                user_id,
+                keyword,
+                num_results=10,
+                serpapi_key=serp_key,
+            )
             for item in results or []:
                 url = item.get("original") or item.get("thumbnail")
                 if url:
@@ -368,6 +382,8 @@ async def _bundle_from_article(db, current_user, request, serp_key):
     image_url, image_source = await _resolve_article_image(
         site, wp_post, content_html, title,
         row.target_keyword if row else None, serp_key,
+        db=db,
+        user_id=current_user.id,
     )
     return bundle, image_url, image_source
 
@@ -386,15 +402,16 @@ async def generate_social_post(
     image_url = None
     image_source = None
     try:
-        serp_key = resolve_api_key(db, current_user, "serpapi")
         creds = resolve_llm_credentials(db, current_user.id)
         llm_token = set_llm_context(creds)
 
         if request.source == "article":
+            serp_key = resolve_api_key_optional(db, current_user, "serpapi")
             bundle, image_url, image_source = await _bundle_from_article(
                 db, current_user, request, serp_key
             )
         else:
+            serp_key = resolve_api_key(db, current_user, "serpapi")
             query = (request.query or "").strip()
             if not query:
                 raise HTTPException(

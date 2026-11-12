@@ -11,6 +11,7 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.settings_llm import (
     ClaudeLlmTestRequest,
+    CustomImageSearchTestRequest,
     LlmModelsResponse,
     LlmSettingsResponse,
     LlmSettingsUpdateRequest,
@@ -74,6 +75,8 @@ async def update_llm_settings(
             trending_fallback_groq_api_key=body.trending_fallback_groq_api_key,
             blog_fallback_groq_api_key=body.blog_fallback_groq_api_key,
             serpapi_api_key=body.serpapi_api_key,
+            custom_image_search_api_key=body.custom_image_search_api_key,
+            custom_image_search_base_url=body.custom_image_search_base_url,
             tavily_api_key=body.tavily_api_key,
             mangools_api_token=body.mangools_api_token,
             apify_api_key=body.apify_api_key,
@@ -89,6 +92,7 @@ async def update_llm_settings(
             clear_trending_fallback_groq_api_key=body.clear_trending_fallback_groq_api_key,
             clear_blog_fallback_groq_api_key=body.clear_blog_fallback_groq_api_key,
             clear_serpapi_api_key=body.clear_serpapi_api_key,
+            clear_custom_image_search=body.clear_custom_image_search,
             clear_tavily_api_key=body.clear_tavily_api_key,
             clear_mangools_api_token=body.clear_mangools_api_token,
             clear_apify_api_key=body.clear_apify_api_key,
@@ -282,5 +286,52 @@ async def test_claude_llm(
         api_key=api_key,
         base_url=base_url,
         timeout_ms=timeout_ms,
+    )
+    return LlmTestResponse(ok=ok, message=message)
+
+
+@router.post("/llm/test-custom-image-search", response_model=LlmTestResponse)
+async def test_custom_image_search(
+    body: CustomImageSearchTestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run one image search against the Custom Image Search API."""
+    from app.services.custom_image_search_service import (
+        DEFAULT_BASE_URL,
+        load_custom_image_search_config,
+        normalize_base_url,
+        test_custom_image_search_connection,
+    )
+
+    api_key = (body.api_key or "").strip() or None
+    requested_base = (body.base_url or "").strip() or None
+    cfg = load_custom_image_search_config(db, current_user.id)
+
+    if not api_key:
+        if not cfg:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No Custom Image Search API key to test. Paste a key or save one first.",
+            )
+        api_key = cfg.api_key
+
+    if requested_base:
+        try:
+            base_url = normalize_base_url(requested_base)
+        except ValueError as exc:
+            return LlmTestResponse(ok=False, message=str(exc))
+        if not (body.api_key or "").strip() and cfg and base_url != cfg.base_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Paste the API key when testing a different Custom Image Search URL.",
+            )
+    else:
+        base_url = cfg.base_url if cfg else DEFAULT_BASE_URL
+
+    ok, message = await test_custom_image_search_connection(
+        api_key=api_key,
+        base_url=base_url,
+        query=(body.query or "technology").strip() or "technology",
     )
     return LlmTestResponse(ok=ok, message=message)

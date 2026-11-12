@@ -99,24 +99,28 @@ async def test_resolve_image_falls_back_to_body_image(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_resolve_image_falls_back_to_keyword_search(monkeypatch):
-    """No featured media and no body image -> search Google Images."""
+    """No featured media and no body image -> Custom Image Search / SerpAPI."""
     from app.api import social_post as api
     seen = {}
 
     async def no_media(site, mid):
         return None
 
-    async def fake_search(keyword, num_results=10, api_key=None):
+    async def fake_search(db, user_id, keyword, num_results=10, *, serpapi_key=None):
         seen["keyword"] = keyword
+        seen["user_id"] = user_id
         return [{"original": "https://ex.com/search.jpg"}]
 
     monkeypatch.setattr(api, "get_wp_media", no_media)
-    monkeypatch.setattr(api, "search_images", fake_search)
+    monkeypatch.setattr(api, "search_social_images", fake_search)
     url, src = await api._resolve_article_image(
         object(), {}, "<p>no images here</p>", "Some Title", "seo tips", "serp-key",
+        db=object(),
+        user_id=7,
     )
     assert (url, src) == ("https://ex.com/search.jpg", "search")
     assert seen["keyword"] == "seo tips", "searches the target keyword"
+    assert seen["user_id"] == 7
 
 
 @pytest.mark.asyncio
@@ -127,12 +131,14 @@ async def test_resolve_image_returns_none_when_everything_fails(monkeypatch):
     async def no_media(site, mid):
         return None
 
-    async def boom(keyword, num_results=10, api_key=None):
-        raise RuntimeError("serpapi down")
+    async def boom(db, user_id, keyword, num_results=10, *, serpapi_key=None):
+        raise RuntimeError("image search down")
 
     monkeypatch.setattr(api, "get_wp_media", no_media)
-    monkeypatch.setattr(api, "search_images", boom)
+    monkeypatch.setattr(api, "search_social_images", boom)
     url, src = await api._resolve_article_image(
         object(), {}, "<p>x</p>", "T", None, "serp-key",
+        db=object(),
+        user_id=1,
     )
     assert (url, src) == (None, None)
