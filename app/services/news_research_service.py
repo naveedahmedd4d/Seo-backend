@@ -98,9 +98,35 @@ async def build_bundle_from_items(
     Split out of build_news_bundle so a published article can reuse the exact
     same sequence: the article is handed over as a single item, so an article
     post comes out in the same shape as a news post.
+
+    When Claude LLM is preferred, use one combined relay job instead of four
+    sequential polls (which routinely time out on social generate).
     """
     if not items:
         return None
+
+    from app.services.openrouter_service import (
+        generate_social_bundle_content,
+        get_llm_context,
+    )
+
+    ctx = get_llm_context()
+    if ctx is not None and getattr(ctx, "try_claude_llm", False):
+        payload = await generate_social_bundle_content(
+            items,
+            query=query,
+            template_variant=template_variant,
+            hashtag_count=hashtag_count,
+        )
+        return NewsResearchBundle(
+            query=query,
+            headline=payload["headline"],
+            story_description=payload["story_description"],
+            description=payload["description"],
+            hashtags=payload.get("hashtags") or [],
+            news_results=items,
+        )
+
     headline = await generate_news_headline(
         items, query, template_variant=template_variant
     )
@@ -149,6 +175,9 @@ async def build_query_only_bundle(
             template_variant=template_variant,
             hashtag_count=hashtag_count,
         )
+    except ValueError:
+        # Surface LLM/config errors (e.g. Claude timeout) to the API caller.
+        raise
     except Exception as e:
         logger.warning("build_query_only_bundle failed for %s: %s", q, e)
         return None
@@ -180,13 +209,25 @@ async def build_news_bundle(
                 api_key=serp_key,
             )
             if news_results:
-                return await build_bundle_from_items(
-                    news_results,
-                    query=q,
-                    template_variant=template_variant,
-                    hashtag_count=hashtag_count,
-                )
-            logger.info("No news results for query: %s; using query-only fallback", q)
+                try:
+                    return await build_bundle_from_items(
+                        news_results,
+                        query=q,
+                        template_variant=template_variant,
+                        hashtag_count=hashtag_count,
+                    )
+                except ValueError:
+                    raise
+                except Exception as e:
+                    logger.warning(
+                        "build_news_bundle LLM failed for %s: %s; trying query-only",
+                        q,
+                        e,
+                    )
+            else:
+                logger.info("No news results for query: %s; using query-only fallback", q)
+        except ValueError:
+            raise
         except Exception as e:
             logger.warning(
                 "build_news_bundle news fetch failed for %s: %s; using query-only fallback",

@@ -426,7 +426,11 @@ async def generate_social_post(
         if not bundle:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Could not generate a social post for that query.",
+                detail=(
+                    "Could not generate a social post for that query. "
+                    "If Claude LLM is your default, check its URL/timeout in Settings "
+                    "or add a fallback LLM key."
+                ),
             )
         items = [
             NewsResultItem(

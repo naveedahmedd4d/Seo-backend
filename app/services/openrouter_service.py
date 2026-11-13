@@ -296,7 +296,9 @@ async def generate_content(
         if ctx is not None:
             if not (ctx.api_key or "").strip():
                 raise ValueError(
-                    "Claude LLM/routine did not respond in time and no fallback LLM key is configured"
+                    "Claude LLM did not finish in time (or returned empty). "
+                    "Raise the Claude LLM timeout in Settings, try Generate again, "
+                    "or add a fallback LLM key (Groq/Gemini/OpenRouter)."
                 )
             if ctx.provider == "groq":
                 return await _groq_chat_completion(
@@ -344,6 +346,144 @@ async def humanize_text(text: str) -> str:
         raise ValueError("Text is empty")
     result = await humanize_pipeline(text)
     return result.humanized
+
+
+async def generate_social_bundle_content(
+    news_results: List[Dict[str, Any]],
+    *,
+    query: Optional[str] = None,
+    template_variant: Optional[str] = None,
+    hashtag_count: int = 12,
+) -> Dict[str, Any]:
+    """One-shot social copy for slow relays (Claude LLM).
+
+    Headline + caption + story + hashtags in a single generate_content call so
+    we do not poll the Claude relay four times per Social Post generate.
+    """
+    if not news_results:
+        raise ValueError("At least one news result is required")
+    if not has_usable_llm_key():
+        raise ValueError("No LLM API key configured. Add one in Settings.")
+
+    try:
+        n = int(hashtag_count)
+    except Exception:
+        n = 12
+    n = max(10, min(15, n))
+
+    lines = []
+    for i, item in enumerate(news_results[:7], 1):
+        title = item.get("title", "")
+        source = item.get("source", "")
+        snippet = (item.get("snippet") or "")[:280]
+        date = item.get("date", "")
+        lines.append(
+            f"{i}. Title: {title}\n   Source: {source}\n   Date: {date}\n   Snippet: {snippet}"
+        )
+    news_block = "\n\n".join(lines)
+    query_line = f'\n\nUser search query: "{query}"' if query else ""
+    variant = (template_variant or "").strip().lower()
+    is_pro_variant = variant in ("pro-1", "pro-2")
+
+    if is_pro_variant:
+        headline_rules = (
+            "headline: 2 lines (3 max), each 4–8 words; wrap exactly 2 short phrases "
+            "in **double asterisks** for highlights; total ~70–120 characters."
+        )
+        max_lines = 3
+        max_chars = 120
+    else:
+        headline_rules = (
+            "headline: exactly 2 lines; line 1 main hook 35–55 chars; line 2 reaction "
+            "35–55 chars; total ~70–110 characters; no markdown except the newline."
+        )
+        max_lines = 2
+        max_chars = 110
+
+    prompt = f"""Create a complete social media post package from the sources below.
+
+Return ONLY valid JSON with these keys:
+- "headline": string ({headline_rules})
+- "description": string (1–2 sentences, ~140–220 characters, no hashtags/emojis)
+- "story_description": string (up to 100 words, narrative caption, no hashtags/emojis)
+- "hashtags": array of exactly {n} strings, each starting with #
+
+Rules:
+- Stay faithful to the sources. Do not invent facts.
+- No preamble, no markdown fences, JSON object only.
+
+Sources:
+{news_block}{query_line}
+"""
+
+    raw = await generate_content(prompt, max_tokens=700, temperature=0.65)
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+
+    parsed: Any = None
+    try:
+        import json
+
+        parsed = json.loads(text)
+    except Exception:
+        # Best-effort: extract the outermost JSON object.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                import json
+
+                parsed = json.loads(text[start : end + 1])
+            except Exception:
+                parsed = None
+
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            "Claude LLM returned social copy that could not be parsed. Try Generate again."
+        )
+
+    headline = clean_headline_output(str(parsed.get("headline") or ""), max_lines=max_lines)
+    if not headline:
+        raise ValueError(
+            "The model returned an empty headline. Try again or adjust your query."
+        )
+    if len(headline) > max_chars:
+        headline = headline[: max_chars - 3] + "..."
+    if is_pro_variant:
+        headline = _repair_highlight_markup(headline)
+
+    description = clean_social_description(str(parsed.get("description") or ""))
+    if len(description) > 240:
+        description = description[:237] + "..."
+
+    story = clean_social_description(str(parsed.get("story_description") or ""))
+    if not story:
+        story = description
+
+    tags_raw = parsed.get("hashtags")
+    tags: List[str] = []
+    if isinstance(tags_raw, list):
+        for item in tags_raw:
+            tag = str(item).strip()
+            if not tag:
+                continue
+            if not tag.startswith("#"):
+                tag = f"#{tag.lstrip('#')}"
+            if tag not in tags:
+                tags.append(tag)
+    if len(tags) < 10 and query:
+        fallback = "#" + re.sub(r"[^A-Za-z0-9]+", "", str(query).title())[:28]
+        if fallback != "#" and fallback not in tags:
+            tags.append(fallback)
+
+    return {
+        "headline": headline,
+        "description": description or headline.replace("\n", " "),
+        "story_description": story or description or headline.replace("\n", " "),
+        "hashtags": tags[:n],
+    }
 
 
 async def generate_news_headline(
@@ -1308,7 +1448,9 @@ async def generate_blog_content_with_groq(
     if ctx is not None:
         if not (ctx.api_key or "").strip():
             raise ValueError(
-                "Claude LLM/routine did not respond in time and no fallback LLM key is configured"
+                "Claude LLM did not finish in time (or returned empty). "
+                "Raise the Claude LLM timeout in Settings, try Generate again, "
+                "or add a fallback LLM key (Groq/Gemini/OpenRouter)."
             )
         if ctx.provider == "groq":
             return await _groq_chat_completion(
