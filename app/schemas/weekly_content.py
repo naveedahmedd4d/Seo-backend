@@ -16,6 +16,8 @@ class WeeklyContentSettingsResponse(BaseModel):
     countries: list[str]
     max_social_per_week: int
     blogs_per_week: int
+    social_posts_per_day: int = 1
+    blog_posts_per_day: int = 1
     wordpress_site_id: Optional[int] = None
     cron_weekday: int
     cron_time_utc: str
@@ -32,7 +34,9 @@ class WeeklyContentSettingsUpdate(BaseModel):
     share_blogs_to_outreach: Optional[bool] = None
     countries: Optional[list[str]] = None
     max_social_per_week: Optional[int] = Field(default=None, ge=1, le=30)
-    blogs_per_week: Optional[int] = Field(default=None, ge=1, le=10)
+    blogs_per_week: Optional[int] = Field(default=None, ge=1, le=35)
+    social_posts_per_day: Optional[int] = Field(default=None, ge=1, le=10)
+    blog_posts_per_day: Optional[int] = Field(default=None, ge=1, le=5)
     wordpress_site_id: Optional[int] = None
     cron_weekday: Optional[int] = Field(default=None, ge=0, le=6)
     cron_time_utc: Optional[str] = None
@@ -176,6 +180,8 @@ class WeeklyReadinessResponse(BaseModel):
     share_blogs_to_outreach: bool = False
     max_social_per_week: int
     blogs_per_week: int
+    social_posts_per_day: int = 1
+    blog_posts_per_day: int = 1
     social_platforms: list[str]
     outreach_platforms: list[str]
     upcoming_events_count: int

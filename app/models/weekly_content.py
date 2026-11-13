@@ -48,12 +48,15 @@ class WeeklyContentSettings(Base):
     countries = Column(JSON, nullable=False, default=list)  # e.g. ["US","GB","PK"]
     max_social_per_week = Column(Integer, nullable=False, server_default="7")
     blogs_per_week = Column(Integer, nullable=False, server_default="2")
+    # Same-day cap for auto social / blog (weekly mode still spreads across the week).
+    social_posts_per_day = Column(Integer, nullable=False, server_default="1")
+    blog_posts_per_day = Column(Integer, nullable=False, server_default="1")
     wordpress_site_id = Column(
         Integer, ForeignKey("wordpress_sites.id", ondelete="SET NULL"), nullable=True
     )
-    cron_weekday = Column(Integer, nullable=False, server_default="0")  # 0=Monday
+    cron_weekday = Column(Integer, nullable=False, server_default="0")  # 0=Monday (legacy)
     cron_time_utc = Column(String(8), nullable=False, server_default="09:00")
-    # "weekly" honours cron_weekday + cron_time_utc; "daily" honours the time only.
+    # Both modes tick daily at cron_time_utc; weekly caps total posts/week and spreads them.
     run_frequency = Column(String(16), nullable=False, server_default="weekly")
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_run_date = Column(Date, nullable=True)

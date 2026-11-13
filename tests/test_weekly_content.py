@@ -250,8 +250,8 @@ def _utc(y, m, d, hh, mm=0) -> datetime:
     return datetime(y, m, d, hh, mm, tzinfo=_tz.utc)
 
 
-def test_weekly_fires_on_chosen_weekday_and_time():
-    # Tuesday 2026-11-10, 11:30 UTC == 16:30 GMT+5.
+def test_weekly_fires_on_chosen_time():
+    # Tuesday 2026-11-10, 11:30 UTC — weekly now ticks daily to spread posts.
     row = _settings(cron_weekday=1, cron_time_utc="11:30")
     assert is_run_due(row, now=_utc(2026, 11, 10, 11, 30)) is True
 
@@ -261,10 +261,10 @@ def test_weekly_does_not_fire_before_chosen_time():
     assert is_run_due(row, now=_utc(2026, 11, 10, 11, 0)) is False
 
 
-def test_weekly_does_not_fire_on_other_weekday():
+def test_weekly_spreads_across_weekdays():
     row = _settings(cron_weekday=1, cron_time_utc="11:30")
-    # Wednesday, same time.
-    assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is False
+    # Wednesday — still due so weekly posts can spread.
+    assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is True
 
 
 def test_weekly_stays_due_after_delayed_scheduler_tick():
@@ -274,14 +274,20 @@ def test_weekly_stays_due_after_delayed_scheduler_tick():
     assert is_run_due(row, now=_utc(2026, 11, 10, 20, 0)) is True
 
 
-def test_weekly_does_not_refire_same_iso_week():
-    row = _settings(cron_weekday=1, cron_time_utc="11:30", last_run_iso_week="2026-W46")
-    assert is_run_due(row, now=_utc(2026, 11, 10, 11, 30)) is False
+def test_weekly_does_not_refire_same_day():
+    row = _settings(
+        cron_weekday=1,
+        cron_time_utc="11:30",
+        last_run_date=_utc(2026, 11, 10, 11, 30).date(),
+        last_run_iso_week="2026-W46",
+    )
+    assert is_run_due(row, now=_utc(2026, 11, 10, 15, 30)) is False
+    # Next day of the same ISO week is due again for spreading.
+    assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is True
 
 
 def test_daily_ignores_weekday():
     row = _settings(run_frequency="daily", cron_weekday=0, cron_time_utc="11:30")
-    # Wednesday — weekly would skip, daily should fire.
     assert is_run_due(row, now=_utc(2026, 11, 11, 11, 30)) is True
 
 

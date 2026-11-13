@@ -46,6 +46,8 @@ SOCIAL_IMAGE_PLATFORMS = {
     "reddit",
 }
 DRAFT_NO_IMAGE_MSG = "Image not ready — post saved as draft for manual publish"
+# Auto social posts (Goal 1 + blog→social) must be ≥4h apart; hourly cron re-checks.
+SOCIAL_AUTO_GAP = timedelta(hours=4)
 
 
 def _social_image_is_ready(
@@ -439,6 +441,8 @@ def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
         countries=list(DEFAULT_COUNTRIES),
         max_social_per_week=7,
         blogs_per_week=2,
+        social_posts_per_day=1,
+        blog_posts_per_day=1,
         run_frequency="weekly",
         goal1_enabled=False,
         goal2_enabled=False,
@@ -471,7 +475,11 @@ def update_settings(
     if "max_social_per_week" in changes and changes["max_social_per_week"] is not None:
         row.max_social_per_week = max(1, min(30, int(changes["max_social_per_week"])))
     if "blogs_per_week" in changes and changes["blogs_per_week"] is not None:
-        row.blogs_per_week = max(1, min(10, int(changes["blogs_per_week"])))
+        row.blogs_per_week = max(1, min(35, int(changes["blogs_per_week"])))
+    if "social_posts_per_day" in changes and changes["social_posts_per_day"] is not None:
+        row.social_posts_per_day = max(1, min(10, int(changes["social_posts_per_day"])))
+    if "blog_posts_per_day" in changes and changes["blog_posts_per_day"] is not None:
+        row.blog_posts_per_day = max(1, min(5, int(changes["blog_posts_per_day"])))
     if "wordpress_site_id" in changes:
         site_id = changes["wordpress_site_id"]
         if site_id is None:
@@ -498,6 +506,12 @@ def update_settings(
             raise ValueError("cron_time_utc must be HH:MM")
         hour, minute = value.split(":")
         row.cron_time_utc = f"{int(hour):02d}:{int(minute):02d}"
+    # Daily mode: week cap is derived from posts/day so the UI can hide max/week.
+    if (row.run_frequency or "weekly").strip().lower() == "daily":
+        per_day = max(1, int(getattr(row, "social_posts_per_day", None) or 1))
+        row.max_social_per_week = max(1, min(30, per_day * 7))
+        blog_day = max(1, int(getattr(row, "blog_posts_per_day", None) or 1))
+        row.blogs_per_week = max(1, min(35, blog_day * 7))
     db.commit()
     db.refresh(row)
     return row
@@ -512,6 +526,8 @@ def settings_to_dict(row: WeeklyContentSettings) -> dict:
         "countries": list(row.countries or DEFAULT_COUNTRIES),
         "max_social_per_week": int(row.max_social_per_week or 7),
         "blogs_per_week": int(row.blogs_per_week or 2),
+        "social_posts_per_day": int(getattr(row, "social_posts_per_day", None) or 1),
+        "blog_posts_per_day": int(getattr(row, "blog_posts_per_day", None) or 1),
         "wordpress_site_id": row.wordpress_site_id,
         "cron_weekday": int(row.cron_weekday if row.cron_weekday is not None else 0),
         "cron_time_utc": row.cron_time_utc or "09:00",
@@ -520,6 +536,89 @@ def settings_to_dict(row: WeeklyContentSettings) -> dict:
         "last_run_iso_week": row.last_run_iso_week,
         "updated_at": row.updated_at,
     }
+
+
+def _utc_day_start(moment: Optional[datetime] = None) -> datetime:
+    now = (moment or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _last_auto_social_publish_at(db: Session, user_id: int) -> Optional[datetime]:
+    """Latest auto social (image-platform) publish used for the 4h stagger gate."""
+    rows = (
+        db.query(SocialPostHistory)
+        .filter(
+            SocialPostHistory.user_id == user_id,
+            SocialPostHistory.published_at.isnot(None),
+            SocialPostHistory.publish_status.in_(("published", "partial")),
+        )
+        .order_by(SocialPostHistory.published_at.desc())
+        .limit(40)
+        .all()
+    )
+    for row in rows:
+        snap = row.settings_snapshot if isinstance(row.settings_snapshot, dict) else {}
+        source = str(snap.get("source") or "")
+        if not source.startswith("weekly_content"):
+            continue
+        platforms = [str(p).strip().lower() for p in (snap.get("platforms") or [])]
+        if any(p in SOCIAL_IMAGE_PLATFORMS for p in platforms):
+            published = row.published_at
+            if published and published.tzinfo is None:
+                published = published.replace(tzinfo=timezone.utc)
+            return published
+    return None
+
+
+def _social_gap_ok(
+    db: Session,
+    user_id: int,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    last = _last_auto_social_publish_at(db, user_id)
+    if not last:
+        return True
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    return (moment - last) >= SOCIAL_AUTO_GAP
+
+
+def _social_published_today(db: Session, user_id: int, *, now: Optional[datetime] = None) -> int:
+    start = _utc_day_start(now)
+    return (
+        db.query(WeeklySocialItem)
+        .join(SocialPostHistory, WeeklySocialItem.social_post_history_id == SocialPostHistory.id)
+        .filter(
+            WeeklySocialItem.user_id == user_id,
+            WeeklySocialItem.status == "published",
+            SocialPostHistory.published_at >= start,
+        )
+        .count()
+    )
+
+
+def _blogs_used_today(db: Session, user_id: int, *, now: Optional[datetime] = None) -> int:
+    start = _utc_day_start(now)
+    return (
+        db.query(KeywordPlanItem)
+        .filter(
+            KeywordPlanItem.user_id == user_id,
+            KeywordPlanItem.status == "used",
+            KeywordPlanItem.used_at >= start,
+        )
+        .count()
+    )
+
+
+def _social_day_slots_remaining(
+    db: Session,
+    user_id: int,
+    settings: WeeklyContentSettings,
+    *,
+    now: Optional[datetime] = None,
+) -> int:
+    per_day = max(1, int(getattr(settings, "social_posts_per_day", None) or 1))
+    return max(0, per_day - _social_published_today(db, user_id, now=now))
 
 
 def platforms_for_blog_share(
@@ -867,8 +966,11 @@ async def run_goal1_for_user(
         )
         .count()
     )
-    remaining = max(0, cap - already_published)
-    if remaining == 0:
+    week_remaining = max(0, cap - already_published)
+    day_remaining = _social_day_slots_remaining(db, user.id, settings)
+    # One successful social publish per cron tick so the 4h gap can be enforced hourly.
+    remaining = min(week_remaining, day_remaining, 1)
+    if week_remaining == 0:
         return {
             "events": 0,
             "created": 0,
@@ -876,31 +978,22 @@ async def run_goal1_for_user(
             "failed": 0,
             "skipped": "week_quota_met",
         }
-
-    # Leave one slot for today's social trending topic when the remaining cap allows.
-    base_cap = max(0, remaining - 1) if remaining > 1 else remaining
-    events = _goal1_events_for_week(
-        db, user.id, week=week, countries=countries, cap=base_cap
-    )
-    trending = await ensure_social_trending_event(db, user)
-    if trending and iso_week_key(trending.event_date) == week:
-        if all(event.id != trending.id for event in events):
-            if len(events) < remaining:
-                events = [trending] + list(events)
-            elif remaining >= 1:
-                events = [trending] + list(events)[: max(0, remaining - 1)]
-        events = events[:remaining]
-    elif remaining > 1 and len(events) < remaining:
-        more = _goal1_events_for_week(
-            db, user.id, week=week, countries=countries, cap=remaining
-        )
-        seen = {event.id for event in events}
-        for event in more:
-            if event.id not in seen:
-                events.append(event)
-                seen.add(event.id)
-            if len(events) >= remaining:
-                break
+    if day_remaining == 0:
+        return {
+            "events": 0,
+            "created": 0,
+            "published": already_published,
+            "failed": 0,
+            "skipped": "day_quota_met",
+        }
+    if not _social_gap_ok(db, user.id):
+        return {
+            "events": 0,
+            "created": 0,
+            "published": already_published,
+            "failed": 0,
+            "skipped": "social_gap",
+        }
 
     # Don't re-attempt posts already live or held as drafts for manual image fix.
     settled_ids = {
@@ -915,8 +1008,30 @@ async def run_goal1_for_user(
             .all()
         )
     }
-    if settled_ids:
-        events = [event for event in events if event.id not in settled_ids][:remaining]
+
+    # Build candidates with settled rows excluded first, then prefer unsettled
+    # trending, then observances — so a single-slot tick is not stuck on a
+    # already-published trending event.
+    pool = _goal1_events_for_week(
+        db, user.id, week=week, countries=countries, cap=max(remaining + 5, 8)
+    )
+    trending = await ensure_social_trending_event(db, user)
+    candidates: list[CalendarEvent] = []
+    if (
+        trending
+        and iso_week_key(trending.event_date) == week
+        and trending.id not in settled_ids
+    ):
+        candidates.append(trending)
+    for event in pool:
+        if event.id in settled_ids:
+            continue
+        if any(c.id == event.id for c in candidates):
+            continue
+        candidates.append(event)
+        if len(candidates) >= remaining:
+            break
+    events = candidates[:remaining]
 
     platforms = _connected_platforms(db, user.id, include_outreach=False)
     created = 0
@@ -1172,6 +1287,107 @@ def delete_keyword_plan_item(db: Session, user_id: int, item_id: int) -> bool:
     return True
 
 
+async def _retry_deferred_blog_social(
+    db: Session,
+    user: User,
+    settings: WeeklyContentSettings,
+) -> dict[str, Any]:
+    """Publish blog→social shares that were deferred by the 4h social gap."""
+    if not bool(getattr(settings, "share_blogs_to_social", False)):
+        return {"shared": 0, "skipped": "share_disabled"}
+    if not _social_gap_ok(db, user.id):
+        return {"shared": 0, "skipped": "social_gap"}
+
+    platforms = platforms_for_blog_share(
+        db, user.id, settings, share_social=True, share_outreach=False
+    )
+    if not platforms:
+        return {"shared": 0, "skipped": "no_social_platforms"}
+
+    candidates = (
+        db.query(KeywordPlanItem)
+        .filter(
+            KeywordPlanItem.user_id == user.id,
+            KeywordPlanItem.status == "used",
+            KeywordPlanItem.wordpress_link.isnot(None),
+        )
+        .order_by(KeywordPlanItem.used_at.asc(), KeywordPlanItem.id.asc())
+        .limit(40)
+        .all()
+    )
+    deferred: list[KeywordPlanItem] = []
+    for item in candidates:
+        payload = item.result_json if isinstance(item.result_json, dict) else {}
+        if payload.get("social_deferred"):
+            deferred.append(item)
+    if not deferred:
+        return {"shared": 0, "skipped": "none"}
+
+    # One share per tick — next deferred item waits for the next 4h window.
+    item = deferred[0]
+    title = item.keyword
+    body = ""
+    meta = ""
+    image_url = None
+    if item.workflow_id:
+        from app.models.workflow_state import WorkflowState
+
+        workflow = (
+            db.query(WorkflowState)
+            .filter(WorkflowState.id == item.workflow_id, WorkflowState.user_id == user.id)
+            .first()
+        )
+        if workflow and isinstance(workflow.state_data, dict):
+            state = workflow.state_data
+            title = state.get("title") or item.keyword
+            body = state.get("body_content") or ""
+            meta = state.get("meta_description") or ""
+            featured = state.get("featured_image")
+            image_url = featured.get("url") if isinstance(featured, dict) else featured
+
+    try:
+        history, social_results = await _generate_and_publish_social(
+            db,
+            user,
+            query=item.keyword,
+            source_title=title,
+            source_snippet=meta or (body[:800] if isinstance(body, str) else ""),
+            source_url=item.wordpress_link,
+            platforms=platforms,
+            settings_snapshot={
+                "source": "weekly_content_goal2",
+                "keyword_plan_item_id": item.id,
+                "iso_week": item.iso_week,
+                "platforms": platforms,
+                "match_blog": True,
+                "deferred_retry": True,
+            },
+            image_url=image_url if isinstance(image_url, str) else None,
+            body_html=body if isinstance(body, str) else None,
+            match_blog=True,
+        )
+        payload = dict(item.result_json) if isinstance(item.result_json, dict) else {}
+        payload["social"] = social_results
+        payload["social_deferred"] = False
+        payload.pop("social_error", None)
+        item.social_post_history_id = history.id
+        item.result_json = payload
+        item.error_message = None
+        db.commit()
+        return {"shared": 1, "item_id": item.id}
+    except Exception as exc:
+        logger.exception(
+            "Deferred blog social share failed for user %s keyword %s", user.id, item.id
+        )
+        payload = dict(item.result_json) if isinstance(item.result_json, dict) else {}
+        payload["social_error"] = str(exc)[:2000]
+        payload["social_deferred"] = True
+        item.result_json = payload
+        item.error_message = str(exc)[:2000]
+        db.commit()
+        return {"shared": 0, "failed": 1, "error": str(exc)[:500]}
+
+
 async def run_goal2_for_user(
     db: Session,
     user: User,
@@ -1181,6 +1397,8 @@ async def run_goal2_for_user(
     from app.api.blog import publish_blog, run_blog_workflow
     from app.models.workflow_state import WorkflowState, WorkflowStatus, WorkflowType
     from app.schemas.blog import BlogPublishRequest
+
+    deferred_share = await _retry_deferred_blog_social(db, user, settings)
 
     week = run.iso_week
     limit = max(1, int(settings.blogs_per_week or 2))
@@ -1194,12 +1412,35 @@ async def run_goal2_for_user(
         )
         .count()
     )
-    remaining = max(0, limit - already_used)
-    if remaining == 0:
-        return {"selected": 0, "published": already_used, "failed": 0, "skipped": "week_quota_met"}
+    week_remaining = max(0, limit - already_used)
+    per_day = max(1, int(getattr(settings, "blog_posts_per_day", None) or 1))
+    day_remaining = max(0, per_day - _blogs_used_today(db, user.id))
+    remaining = min(week_remaining, day_remaining)
+    if week_remaining == 0:
+        return {
+            "selected": 0,
+            "published": already_used,
+            "failed": 0,
+            "skipped": "week_quota_met",
+            "deferred_social": deferred_share,
+        }
+    if day_remaining == 0:
+        return {
+            "selected": 0,
+            "published": already_used,
+            "failed": 0,
+            "skipped": "day_quota_met",
+            "deferred_social": deferred_share,
+        }
 
     if not settings.wordpress_site_id:
-        return {"selected": 0, "published": 0, "failed": 0, "error": "wordpress_site_id not configured"}
+        return {
+            "selected": 0,
+            "published": 0,
+            "failed": 0,
+            "error": "wordpress_site_id not configured",
+            "deferred_social": deferred_share,
+        }
 
     site = (
         db.query(WordPressSite)
@@ -1207,7 +1448,13 @@ async def run_goal2_for_user(
         .first()
     )
     if not site:
-        return {"selected": 0, "published": 0, "failed": 0, "error": "WordPress site not found"}
+        return {
+            "selected": 0,
+            "published": 0,
+            "failed": 0,
+            "error": "WordPress site not found",
+            "deferred_social": deferred_share,
+        }
 
     # Prefer true pending rows; also retry earlier failed items that never published to WP.
     items = (
@@ -1253,9 +1500,10 @@ async def run_goal2_for_user(
             "published": already_used,
             "failed": 0,
             "skipped": "empty_keyword_queue",
+            "deferred_social": deferred_share,
         }
 
-    platforms = platforms_for_blog_share(db, user.id, settings)
+    want_social = bool(getattr(settings, "share_blogs_to_social", False))
     published = 0
     failed = 0
 
@@ -1353,6 +1601,20 @@ async def run_goal2_for_user(
             social_history_id = item.social_post_history_id
             social_results: list[dict] = []
             social_error: str | None = None
+            # Re-check the 4h gate per item so a Goal 1 post earlier in this
+            # run defers blog→social instead of dropping it forever.
+            platforms = platforms_for_blog_share(db, user.id, settings)
+            gap_ok = _social_gap_ok(db, user.id)
+            social_deferred = bool(
+                want_social
+                and not gap_ok
+                and (
+                    any(p in SOCIAL_IMAGE_PLATFORMS for p in platforms)
+                    or not platforms
+                )
+            )
+            if platforms and not gap_ok:
+                platforms = [p for p in platforms if p in OUTREACH_PLATFORMS]
             if platforms and not social_history_id:
                 try:
                     history, social_results = await _generate_and_publish_social(
@@ -1381,7 +1643,7 @@ async def run_goal2_for_user(
                     )
                     social_error = str(social_exc)[:2000]
 
-            # WP success consumes quota even if social sharing failed.
+            # WP success consumes quota even if social sharing failed/deferred.
             live = (
                 db.query(KeywordPlanItem)
                 .filter(KeywordPlanItem.id == item.id, KeywordPlanItem.user_id == user.id)
@@ -1402,6 +1664,7 @@ async def run_goal2_for_user(
                 "publish": publish_data,
                 "social": social_results,
                 "social_error": social_error,
+                "social_deferred": social_deferred,
             }
             live.error_message = social_error
             published += 1
@@ -1422,7 +1685,12 @@ async def run_goal2_for_user(
             failed += 1
             db.commit()
 
-    return {"selected": len(items), "published": published, "failed": failed}
+    return {
+        "selected": len(items),
+        "published": published,
+        "failed": failed,
+        "deferred_social": deferred_share,
+    }
 
 
 DEFAULT_CRON_TIME_UTC = "09:00"
@@ -1444,17 +1712,14 @@ def _schedule_time_reached(
     *,
     now: Optional[datetime] = None,
 ) -> bool:
-    """True when today's/this week's chosen UTC clock time has arrived."""
+    """True when today's chosen UTC clock time has arrived.
+
+    Weekly and daily both tick every day at cron_time_utc so weekly posts can
+    spread across the week; week/day quotas enforce the totals.
+    """
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    frequency = (settings.run_frequency or "weekly").strip().lower()
     hour, minute = _parse_hhmm(settings.cron_time_utc)
     scheduled = moment.replace(hour=hour, minute=minute, second=0, microsecond=0)
-
-    if frequency != "daily":
-        weekday = int(settings.cron_weekday if settings.cron_weekday is not None else 0)
-        weekday = max(0, min(6, weekday))
-        if moment.weekday() != weekday:
-            return False
     return moment >= scheduled
 
 
@@ -1463,26 +1728,19 @@ def is_run_due(
     *,
     now: Optional[datetime] = None,
 ) -> bool:
-    """Has this user's configured schedule arrived in the current period?
+    """Has this user's daily schedule slot arrived?
 
-    Weekly honours cron_weekday + cron_time_utc; daily honours the time only and
-    fires once per calendar day. Both compare in UTC, which is how the settings
-    are stored — the UI converts to the user's zone for display.
+    Both weekly and daily modes fire at most once per UTC calendar day after
+    cron_time_utc. Weekly mode still spreads posts by re-running on later days
+    until the week cap is met. Same-day 4h social stagger uses a separate cron
+    path (_goal1_stagger_retry_due).
 
     Once the chosen time has passed, stay due for the rest of that UTC day so a
-    delayed GitHub Actions tick still fires instead of waiting a week.
+    delayed GitHub Actions tick still fires.
     """
     moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    frequency = (settings.run_frequency or "weekly").strip().lower()
-
-    if frequency == "daily":
-        # Already fired today, so wait for tomorrow's slot.
-        if settings.last_run_date == moment.date():
-            return False
-    else:
-        if settings.last_run_iso_week == iso_week_key(moment.date()):
-            return False
-
+    if settings.last_run_date == moment.date():
+        return False
     return _schedule_time_reached(settings, now=moment)
 
 
@@ -1571,9 +1829,13 @@ def _goal1_has_pending_work(
     user_id: int,
     settings: WeeklyContentSettings,
     week: str,
+    *,
+    now: Optional[datetime] = None,
 ) -> bool:
-    """True when auto-social still has unpublished or failed rows for this week."""
+    """True when auto-social still has room (week + day) and topics left to publish."""
     if not settings.goal1_enabled:
+        return False
+    if _social_day_slots_remaining(db, user_id, settings, now=now) <= 0:
         return False
     pending_items = (
         db.query(WeeklySocialItem)
@@ -1635,6 +1897,59 @@ def _goal1_has_pending_work(
     return already is None
 
 
+def _goal1_stagger_retry_due(
+    db: Session,
+    settings: WeeklyContentSettings,
+    week: str,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """Same-day follow-up tick after the 4h social gap (hourly cron)."""
+    moment = now or datetime.now(timezone.utc)
+    if not settings.goal1_enabled:
+        return False
+    if not _schedule_time_reached(settings, now=moment):
+        return False
+    if not _social_gap_ok(db, settings.user_id, now=moment):
+        return False
+    return _goal1_has_pending_work(db, settings.user_id, settings, week, now=moment)
+
+
+def _has_deferred_blog_social(db: Session, user_id: int) -> bool:
+    for row in (
+        db.query(KeywordPlanItem.result_json)
+        .filter(
+            KeywordPlanItem.user_id == user_id,
+            KeywordPlanItem.status == "used",
+            KeywordPlanItem.wordpress_link.isnot(None),
+        )
+        .order_by(KeywordPlanItem.id.desc())
+        .limit(20)
+        .all()
+    ):
+        payload = row[0] if isinstance(row[0], dict) else {}
+        if payload.get("social_deferred"):
+            return True
+    return False
+
+
+def _deferred_blog_social_due(
+    db: Session,
+    settings: WeeklyContentSettings,
+    *,
+    now: Optional[datetime] = None,
+) -> bool:
+    """True when a deferred blog→social share can run after the 4h gap."""
+    moment = now or datetime.now(timezone.utc)
+    if not bool(getattr(settings, "share_blogs_to_social", False)):
+        return False
+    if not _schedule_time_reached(settings, now=moment):
+        return False
+    if not _social_gap_ok(db, settings.user_id, now=moment):
+        return False
+    return _has_deferred_blog_social(db, settings.user_id)
+
+
 async def run_due_weekly_content(*, force: bool = False) -> int:
     """Cron entry: sync events globally then run enabled users for the current ISO week."""
     from app.database import SessionLocal
@@ -1659,14 +1974,11 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
             if force or is_run_due(settings, now=now):
                 due.append((settings, force))
                 continue
-            # A completed week that left failed/queued posts should still auto-retry
-            # after the scheduled time, without waiting for next week.
-            if (
-                settings.goal1_enabled
-                and settings.last_run_iso_week == week
-                and _schedule_time_reached(settings, now=now)
-                and _goal1_has_pending_work(db, settings.user_id, settings, week)
-            ):
+            # Same-day 4h social stagger, or a week that still has failed/queued work.
+            if _goal1_stagger_retry_due(db, settings, week, now=now):
+                due.append((settings, True))
+                continue
+            if _deferred_blog_social_due(db, settings, now=now):
                 due.append((settings, True))
         logger.info(
             "Weekly content cron: %s of %s user(s) due at %s UTC",
@@ -1703,10 +2015,35 @@ async def run_due_weekly_content(*, force: bool = False) -> int:
                     )
                     .first()
                 )
-                if existing and not _goal1_has_pending_work(db, user.id, settings, week):
+                pending = _goal1_has_pending_work(db, user.id, settings, week, now=now)
+                # Blog day/week quota may still have room even when social is done.
+                blog_pending = False
+                if settings.goal2_enabled:
+                    per_day = max(1, int(getattr(settings, "blog_posts_per_day", None) or 1))
+                    blogs_week_cap = max(1, int(settings.blogs_per_week or 2))
+                    used_week = (
+                        db.query(KeywordPlanItem)
+                        .filter(
+                            KeywordPlanItem.user_id == user.id,
+                            KeywordPlanItem.iso_week == week,
+                            KeywordPlanItem.status == "used",
+                        )
+                        .count()
+                    )
+                    blog_pending = (
+                        used_week < blogs_week_cap
+                        and _blogs_used_today(db, user.id, now=now) < per_day
+                        and pending_keyword_count(db, user.id) > 0
+                    )
+                deferred_social_pending = bool(
+                    getattr(settings, "share_blogs_to_social", False)
+                ) and _social_gap_ok(db, user.id, now=now) and _has_deferred_blog_social(
+                    db, user.id
+                )
+                if existing and not pending and not blog_pending and not deferred_social_pending:
                     logger.info("Skipping user %s — already completed %s", user.id, week)
                     continue
-                if existing and _goal1_has_pending_work(db, user.id, settings, week):
+                if existing and (pending or blog_pending or deferred_social_pending):
                     run_force = True
             await run_weekly_for_user(db, user, trigger="scheduled", force=run_force)
             count += 1
@@ -1746,10 +2083,13 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
 
     max_social = int(row.max_social_per_week or 7)
     blogs_week = int(row.blogs_per_week or 2)
+    social_day = int(getattr(row, "social_posts_per_day", None) or 1)
+    blog_day = int(getattr(row, "blog_posts_per_day", None) or 1)
     cron_configured = bool(app_settings.weekly_cron_secret)
     share_social = bool(getattr(row, "share_blogs_to_social", False))
     share_outreach = bool(getattr(row, "share_blogs_to_outreach", False))
     share_platforms = platforms_for_blog_share(db, user_id, row)
+    frequency = (row.run_frequency or "weekly").strip().lower()
 
     checks: list[dict[str, Any]] = [
         {
@@ -1764,9 +2104,9 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
         },
         {
             "id": "goal1_enabled",
-            "label": "Goal 1 · Weekly Social auto-publish",
+            "label": "Social schedule auto-publish",
             "ok": bool(row.goal1_enabled),
-            "detail": "On" if row.goal1_enabled else "Turn on Auto publish on Weekly Social",
+            "detail": "On" if row.goal1_enabled else "Turn on Social in Settings → Content Schedule",
         },
         {
             "id": "social_accounts",
@@ -1778,19 +2118,19 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
             "id": "upcoming_events",
             "label": "Upcoming observances this week",
             "ok": len(events) > 0,
-            "detail": f"{len(events)} event(s) · cap {max_social}/week",
+            "detail": f"{len(events)} event(s) · {max_social}/week · {social_day}/day · 4h gap",
         },
         {
             "id": "goal2_enabled",
-            "label": "Goal 2 · Blogs List auto-publish",
+            "label": "Blog schedule auto-publish",
             "ok": bool(row.goal2_enabled),
-            "detail": "On" if row.goal2_enabled else "Turn on Auto publish on Blogs List",
+            "detail": "On" if row.goal2_enabled else "Turn on Blogs in Settings → Content Schedule",
         },
         {
             "id": "wordpress_site",
             "label": "WordPress site selected",
             "ok": wp_ok,
-            "detail": wp_name or "Pick a WordPress site in Settings → Weekly Content",
+            "detail": wp_name or "Pick a WordPress site in Settings → Content Schedule",
         },
         {
             "id": "keyword_queue",
@@ -1814,11 +2154,11 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
         },
         {
             "id": "quotas",
-            "label": "Weekly quotas",
-            "ok": max_social >= 1 and blogs_week >= 1,
+            "label": "Content schedule quotas",
+            "ok": max_social >= 1 and blogs_week >= 1 and social_day >= 1 and blog_day >= 1,
             "detail": (
-                f"Daily or weekly run; social posts/week = {max_social}; "
-                f"blogs/week = {blogs_week}"
+                f"{frequency}; social {max_social}/week · {social_day}/day; "
+                f"blogs {blogs_week}/week · {blog_day}/day"
             ),
         },
     ]
@@ -1852,6 +2192,8 @@ def get_weekly_readiness(db: Session, user_id: int) -> dict[str, Any]:
         "share_blogs_to_outreach": share_outreach,
         "max_social_per_week": max_social,
         "blogs_per_week": blogs_week,
+        "social_posts_per_day": social_day,
+        "blog_posts_per_day": blog_day,
         "social_platforms": social_platforms,
         "outreach_platforms": [p for p in outreach_platforms if p in OUTREACH_PLATFORMS],
         "upcoming_events_count": len(events),
