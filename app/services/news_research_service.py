@@ -176,11 +176,12 @@ async def build_query_only_bundle(
             hashtag_count=hashtag_count,
         )
     except ValueError:
-        # Surface LLM/config errors (e.g. Claude timeout) to the API caller.
         raise
     except Exception as e:
+        # Do not hide LLM failures behind a generic "could not generate" — callers
+        # need the Claude/provider message (previously Exception was swallowed).
         logger.warning("build_query_only_bundle failed for %s: %s", q, e)
-        return None
+        raise ValueError(str(e) or "Could not generate social post copy.") from e
 
 
 async def build_news_bundle(

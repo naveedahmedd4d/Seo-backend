@@ -243,14 +243,41 @@ def _extract_text(result: Any) -> Optional[str]:
     if isinstance(result, str):
         text = result.strip()
         return text or None
+    if isinstance(result, (list, tuple)):
+        parts = [_extract_text(item) for item in result]
+        joined = "\n".join(p for p in parts if p)
+        return joined or None
     if isinstance(result, dict):
-        for key in ("text", "content", "output", "greeting", "answer", "body"):
+        for key in (
+            "text",
+            "content",
+            "output",
+            "greeting",
+            "answer",
+            "body",
+            "message",
+            "response",
+            "result",
+        ):
             value = result.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
+            if isinstance(value, (dict, list, tuple)):
+                nested_text = _extract_text(value)
+                if nested_text:
+                    return nested_text
         nested = result.get("data")
         if nested is not None and nested is not result:
             return _extract_text(nested)
+        # Some relays return the full JSON object as the answer (e.g. social bundle).
+        try:
+            import json
+
+            dumped = json.dumps(result, ensure_ascii=False)
+            if dumped and dumped not in ("{}", "[]", "null"):
+                return dumped
+        except Exception:  # noqa: BLE001
+            pass
     return None
 
 

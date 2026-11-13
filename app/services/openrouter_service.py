@@ -334,8 +334,11 @@ async def generate_content(
             presence_penalty=presence_penalty,
             timeout_seconds=timeout_seconds,
         )
+    except ValueError:
+        # Keep typed config/timeout errors so API routes can surface them.
+        raise
     except Exception as e:
-        raise Exception(f"Error generating content: {str(e)}")
+        raise Exception(f"Error generating content: {str(e)}") from e
 
 
 async def humanize_text(text: str) -> str:
