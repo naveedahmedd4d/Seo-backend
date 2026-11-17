@@ -442,7 +442,7 @@ def test_image_tag_is_16_by_9_lazy_and_escaped():
     assert "&quot;best&quot;" in tag
 
 
-def test_first_rendered_infographic_becomes_featured_image():
+def test_rendered_infographic_stays_in_body_not_featured():
     candidates = [_candidate(heading="Choosing a Workflow", headline="First"),
                   _candidate(heading="Rollout Steps", headline="Second")]
     results = {0: {"ok": False, "error": "Layout overlap"}, 1: {"ok": True, "png_base64": TINY_PNG_BASE64}}
@@ -452,8 +452,7 @@ def test_first_rendered_infographic_becomes_featured_image():
     ):
         body, warnings, featured = insert_infographics(BODY, candidates, results)
     assert save.call_args.args[1] == "second"
-    assert featured == {"url": "https://api.example.com/second-abc.png", "thumbnail": "https://api.example.com/second-abc.png",
-                        "title": "Second", "alt": "Three-step rollout plan"}
+    assert featured is None
     assert any("Choosing a Workflow" in w for w in warnings)
     assert body.count("second-abc.png") == 1
 
@@ -551,7 +550,7 @@ async def test_add_infographics_to_article_end_to_end_with_mocked_render():
     assert render.await_args.args[0][0]["source"] == "Rolling Out AI Workflows"
     assert "api/blog/infographics/generated.png" in body
     assert warnings == []
-    assert featured["title"] == "How to roll out the workflow"
+    assert featured is None
 
 
 # --- Shortening over-long text ---
@@ -730,7 +729,7 @@ async def test_article_structure_fills_the_gap_when_the_model_falls_short():
     ):
         body, warnings, featured = await add_infographics_to_article("AI", STRUCTURED_BODY, generate, AsyncMock())
     assert body.count("<img ") == TARGET_INFOGRAPHIC_COUNT
-    assert warnings == [] and featured is not None
+    assert warnings == [] and featured is None
 
 
 @pytest.mark.asyncio

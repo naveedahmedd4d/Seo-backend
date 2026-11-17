@@ -417,6 +417,7 @@ def _build_image_tbs(
     size: str | None = None,
     color: str | None = None,
     orientation: str | None = None,
+    image_type: str | None = None,
 ) -> str | None:
     """Build Google Images tbs filter string for SerpAPI."""
     parts: list[str] = []
@@ -445,6 +446,15 @@ def _build_image_tbs(
     if orientation and orientation in orientation_map:
         parts.append(orientation_map[orientation])
 
+    type_map = {
+        "photo": "itp:photo",
+        "clipart": "itp:clipart",
+        "lineart": "itp:lineart",
+        "animated": "itp:animated",
+    }
+    if image_type and image_type in type_map:
+        parts.append(type_map[image_type])
+
     return ",".join(parts) if parts else None
 
 
@@ -455,6 +465,7 @@ async def search_images(
     size: str | None = None,
     color: str | None = None,
     orientation: str | None = None,
+    image_type: str | None = None,
     *,
     api_key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -478,7 +489,9 @@ async def search_images(
             "num": num_results,
         }
 
-        tbs = _build_image_tbs(size=size, color=color, orientation=orientation)
+        tbs = _build_image_tbs(
+            size=size, color=color, orientation=orientation, image_type=image_type
+        )
         if tbs:
             params["tbs"] = tbs
 

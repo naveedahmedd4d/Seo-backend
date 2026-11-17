@@ -100,6 +100,33 @@ def resolve_celebrity_pool_keyword(focus: str, title: str) -> str:
     return derive_featured_image_keyword((focus or title or "").strip())
 
 
+_NON_GRAPHIC_FEATURED_RE = re.compile(
+    r"\b("
+    r"infographic|screenshot|screen\s*shot|checklist|diagram|flowchart|"
+    r"flow\s*chart|chart|graph|wireframe|mockup|ui\s*kit|dashboard\s*ui|"
+    r"powerpoint|slide\s*deck|presentation"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_non_graphic_featured_candidate(candidate: Dict[str, Any]) -> bool:
+    """True when title/source looks like an infographic or screenshot, not a photo."""
+    blob = " ".join(
+        str(candidate.get(key) or "")
+        for key in ("title", "source", "link", "original")
+    )
+    return bool(_NON_GRAPHIC_FEATURED_RE.search(blob))
+
+
+def graphic_featured_search_keyword(title: str = "", topic: str = "") -> str:
+    """Search query biased toward photographic featured images."""
+    base = derive_featured_image_keyword((title or topic or "").strip())
+    if not base or base == "featured":
+        return "professional workplace photography"
+    return f"{base} professional photo"
+
+
 def _normalize_image_url(url: str) -> str:
     u = (url or "").strip()
     if u.startswith("//"):
@@ -372,6 +399,110 @@ async def _fetch_image_pool(
             logger.warning("Could not save image search to history: %s", e)
             db.rollback()
     return images_data
+
+
+async def _fetch_graphic_featured_candidates(
+    db: Session,
+    user_id: int,
+    keyword: str,
+    *,
+    num_results: int = 24,
+) -> List[Dict[str, Any]]:
+    """Prefer Custom Image Search; fall back to SerpAPI photo/landscape filters."""
+    from app.services.custom_image_search_service import (
+        is_custom_image_search_configured,
+        search_images_for_user,
+    )
+    from app.services.llm_settings_service import resolve_api_key_optional
+
+    if is_custom_image_search_configured(db, user_id):
+        try:
+            images = await search_images_for_user(
+                db, user_id, keyword, num_results=num_results
+            )
+            if images:
+                return images
+            logger.info(
+                "Custom Image Search returned no graphic featured candidates for user %s",
+                user_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Custom Image Search failed for graphic featured (user %s): %s",
+                user_id,
+                exc,
+            )
+
+    serp_key = resolve_api_key_optional(db, user_id, "serpapi")
+    if not serp_key:
+        return []
+    try:
+        return await serpapi_search_images(
+            keyword,
+            num_results,
+            size="large",
+            orientation="landscape",
+            image_type="photo",
+            api_key=serp_key,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("SerpAPI graphic featured search failed for user %s: %s", user_id, exc)
+        return []
+
+
+async def pick_graphic_featured_image(
+    db: Session,
+    user_id: int,
+    *,
+    title: str = "",
+    topic: str = "",
+    meta: str = "",
+) -> Optional[Dict[str, str]]:
+    """Pick a photographic featured image via Custom Image Search (SerpAPI fallback)."""
+    keyword = graphic_featured_search_keyword(title=title, topic=topic)
+    pool = await _fetch_graphic_featured_candidates(db, user_id, keyword)
+    candidates: List[Dict[str, Any]] = []
+    for item in pool:
+        if is_non_graphic_featured_candidate(item):
+            continue
+        display_url = _resolve_display_url(item)
+        if not display_url:
+            continue
+        candidates.append(item)
+        if len(candidates) >= 10:
+            break
+
+    if not candidates:
+        # Retry without title filter if every result was rejected as non-graphic.
+        for item in pool:
+            display_url = _resolve_display_url(item)
+            if display_url:
+                candidates.append(item)
+            if len(candidates) >= 10:
+                break
+    if not candidates:
+        return None
+
+    from app.services.openrouter_service import select_featured_image
+
+    idx = await select_featured_image(
+        title or topic or keyword,
+        meta or "",
+        candidates,
+        prefer_photo=True,
+    )
+    chosen = candidates[min(max(idx, 0), len(candidates) - 1)]
+    display_url = _resolve_display_url(chosen)
+    if not display_url:
+        return None
+    thumb = _normalize_image_url(str(chosen.get("thumbnail") or ""))
+    return {
+        "url": display_url,
+        "thumbnail": thumb or display_url,
+        "title": (chosen.get("title") or "").strip(),
+        "source": (chosen.get("source") or "").strip(),
+        "alt": seo_alt_from_title(title or topic or keyword),
+    }
 
 
 def _pool_keyword_from_state(state_data: Dict[str, Any], blog_key: str = "parent") -> str:

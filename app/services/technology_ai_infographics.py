@@ -1285,11 +1285,10 @@ def insert_infographics(
 ) -> tuple[str, list[str], Optional[dict[str, str]]]:
     """Save and place rendered infographics. Returns (body, warnings, featured_image).
 
-    The first infographic that renders (candidates are ranked best first) doubles as the
-    post's featured image; its 16:9 shape suits social preview cards.
+    Infographics stay in the article body only. The WordPress featured image is picked
+    separately as a photographic/graphic image (Custom Image Search / SerpAPI).
     """
     warnings: list[str] = []
-    featured: Optional[dict[str, str]] = None
     for i, candidate in enumerate(candidates):
         result = render_results.get(i) or {"ok": False, "error": "No render result"}
         if not result.get("ok"):
@@ -1312,9 +1311,7 @@ def insert_infographics(
             warnings.append(f"Infographic for '{candidate['heading']}' could not be placed and was skipped.")
             continue
         body = new_body
-        if featured is None:
-            featured = {"url": url, "thumbnail": url, "title": candidate["headline"], "alt": candidate["alt_text"]}
-    return body, warnings, featured
+    return body, warnings, None
 
 
 async def add_infographics_to_article(

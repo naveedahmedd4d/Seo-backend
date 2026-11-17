@@ -1155,8 +1155,37 @@ async def run_blog_workflow(
                     review["status"] = "needs_revision"
                 review["body_fingerprint"] = content_fingerprint(body_content)
                 state_data["quality_review"] = review
-                if batch.get("featured_image"):
-                    state_data["featured_image"] = batch["featured_image"]
+                # Featured image: photographic/graphic via Custom Image Search (not infographics).
+                auto_featured = True
+                try:
+                    from app.models.user_blog_settings import UserBlogSettings as _UBS
+
+                    _blog_settings = (
+                        db.query(_UBS).filter(_UBS.user_id == user_id).first()
+                    )
+                    if _blog_settings is not None and _blog_settings.auto_featured_image is False:
+                        auto_featured = False
+                except Exception:
+                    pass
+                if auto_featured:
+                    try:
+                        from app.services.blog_image_service import pick_graphic_featured_image
+
+                        featured = await pick_graphic_featured_image(
+                            db,
+                            user_id,
+                            title=title,
+                            topic=topic,
+                            meta=meta_description or "",
+                        )
+                        if featured:
+                            state_data["featured_image"] = featured
+                    except Exception as featured_exc:
+                        logger.warning(
+                            "Graphic featured image pick failed for workflow %s: %s",
+                            workflow_id,
+                            featured_exc,
+                        )
             workflow_state.state_data = state_data
             workflow_state.status = WorkflowStatus.COMPLETED
             db.commit()

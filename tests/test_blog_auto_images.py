@@ -1,7 +1,7 @@
 """Tests for blog auto-image helpers."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.workflow_state import WorkflowStatus
 from app.services.blog_image_service import (
@@ -9,12 +9,16 @@ from app.services.blog_image_service import (
     apply_auto_images_batch,
     apply_auto_images_to_workflow,
     collect_used_urls_from_body,
+    graphic_featured_search_keyword,
     insert_image_after_section,
+    is_non_graphic_featured_candidate,
     pick_from_pool,
+    pick_graphic_featured_image,
     POSITIONAL_PICK_INDICES,
     resolve_verified_url,
     SECTION_HEADINGS,
 )
+from app.services.serpapi_service import _build_image_tbs
 
 SAMPLE_POOL = [
     {"original": f"https://img/{i}.jpg", "link": f"https://img/{i}.jpg", "title": f"Img {i}"}
@@ -342,3 +346,73 @@ async def test_pick_from_pool_skips_empty_candidate():
     picked = await pick_from_pool(pool, used, "Test", pick_slot=0)
     assert picked is not None
     assert "good" in picked["url"]
+
+
+def test_non_graphic_featured_candidate_filter():
+    assert is_non_graphic_featured_candidate(
+        {"title": "SSH triage checklist infographic", "source": "blog"}
+    )
+    assert is_non_graphic_featured_candidate(
+        {"title": "Dashboard screenshot", "source": ""}
+    )
+    assert not is_non_graphic_featured_candidate(
+        {"title": "Team collaborating in modern office", "source": "unsplash"}
+    )
+
+
+def test_graphic_featured_search_keyword_adds_photo_bias():
+    assert "professional photo" in graphic_featured_search_keyword(
+        title="ChatGPT Wallet: Can Agents Pay Safely?"
+    )
+
+
+def test_build_image_tbs_includes_photo_type():
+    tbs = _build_image_tbs(size="large", orientation="landscape", image_type="photo")
+    assert tbs is not None
+    assert "isz:l" in tbs
+    assert "iar:w" in tbs
+    assert "itp:photo" in tbs
+
+
+@pytest.mark.asyncio
+async def test_pick_graphic_featured_image_uses_custom_image_search():
+    db = MagicMock()
+    custom_pool = [
+        {
+            "title": "SSH triage checklist infographic",
+            "original": "https://cdn.example/infographic.png",
+            "thumbnail": "https://cdn.example/infographic.png",
+            "source": "Custom Image Search",
+        },
+        {
+            "title": "Security team in office",
+            "original": "https://cdn.example/office.jpg",
+            "thumbnail": "https://cdn.example/office-t.jpg",
+            "source": "Custom Image Search",
+        },
+    ]
+    with (
+        patch(
+            "app.services.custom_image_search_service.is_custom_image_search_configured",
+            return_value=True,
+        ),
+        patch(
+            "app.services.custom_image_search_service.search_images_for_user",
+            new=AsyncMock(return_value=custom_pool),
+        ) as search_custom,
+        patch(
+            "app.services.openrouter_service.select_featured_image",
+            new=AsyncMock(return_value=0),
+        ),
+    ):
+        picked = await pick_graphic_featured_image(
+            db,
+            user_id=7,
+            title="SSH Vulnerability Under Active Exploitation",
+            topic="SSH Vulnerability",
+            meta="Triage guide",
+        )
+    assert search_custom.await_count == 1
+    assert picked is not None
+    assert picked["url"] == "https://cdn.example/office.jpg"
+    assert "office" in picked["alt"].lower() or "SSH" in picked["alt"]

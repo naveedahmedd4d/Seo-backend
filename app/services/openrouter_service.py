@@ -4977,6 +4977,8 @@ async def select_featured_image(
     blog_title: str,
     blog_meta: str,
     images: List[Dict[str, Any]],
+    *,
+    prefer_photo: bool = False,
 ) -> int:
     """
     Given blog title, meta description, and a list of image dicts (each with title, source, link),
@@ -4988,8 +4990,14 @@ async def select_featured_image(
         return 0
     images_block = _format_image_candidate_lines(images)
     n = len(images)
+    photo_rule = ""
+    if prefer_photo:
+        photo_rule = (
+            "Prefer a high-quality photographic or lifestyle graphic image. "
+            "Avoid infographics, screenshots, checklists, charts, diagrams, and UI mockups.\n"
+        )
     prompt = f"""Given this blog post, choose the single best image to use as the featured image.
-
+{photo_rule}
 Blog title: {blog_title[:200]}
 Meta description: {blog_meta[:300]}
 
