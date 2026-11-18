@@ -38,6 +38,10 @@ class BlogGenerateRequest(BaseModel):
     auto_images: Optional[bool] = None
     creativity: Optional[Literal["factual", "balanced", "expressive"]] = None
     template_article_type: Optional[str] = None
+    # After generation, optionally push to WordPress as draft or publish.
+    # publish requires content + featured image; otherwise the post is saved as draft.
+    publication_mode: Optional[Literal["draft", "publish"]] = None
+    wordpress_site_id: Optional[int] = None
 
     @field_validator("celebrity_content_type")
     @classmethod
@@ -47,6 +51,16 @@ class BlogGenerateRequest(BaseModel):
         allowed = {"biography", "religious", "net_worth"}
         if v not in allowed:
             raise ValueError(f"celebrity_content_type must be one of: {', '.join(sorted(allowed))}")
+        return v
+
+    @field_validator("publication_mode")
+    @classmethod
+    def validate_publication_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        allowed = {"draft", "publish"}
+        if v not in allowed:
+            raise ValueError("publication_mode must be 'draft' or 'publish'")
         return v
 
 

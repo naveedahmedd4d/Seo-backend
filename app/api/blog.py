@@ -274,6 +274,171 @@ def _set_blog_progress(db: Session, workflow_state, step: str, label: str) -> No
     db.commit()
 
 
+_MIN_BODY_WORDS_FOR_LIVE_PUBLISH = 100
+
+
+def _featured_image_url(featured: Any) -> Optional[str]:
+    if not isinstance(featured, dict):
+        return None
+    url = (featured.get("url") or featured.get("original") or "").strip()
+    return url or None
+
+
+def _article_slice_for_publish(state_data: Dict[str, Any], blog_key: str) -> Dict[str, Any]:
+    """Normalize title/body/featured_image for a workflow article slot."""
+    if state_data.get("is_tree"):
+        if blog_key == "parent":
+            article = dict(state_data.get("parent") or {})
+        elif blog_key in ("child_0", "child_1"):
+            idx = 0 if blog_key == "child_0" else 1
+            children = state_data.get("children") or []
+            article = dict(children[idx]) if idx < len(children) else {}
+        else:
+            article = {}
+        return article
+    return {
+        "title": state_data.get("title"),
+        "body_content": state_data.get("body_content"),
+        "featured_image": state_data.get("featured_image"),
+    }
+
+
+def _article_ready_for_live_publish(article: Dict[str, Any]) -> bool:
+    """True when title, substantial body, and featured image are all present."""
+    title = (article.get("title") or "").strip()
+    body = (article.get("body_content") or "").strip()
+    word_count = len(re.findall(r"\S+", body))
+    return bool(
+        title
+        and word_count >= _MIN_BODY_WORDS_FOR_LIVE_PUBLISH
+        and _featured_image_url(article.get("featured_image"))
+    )
+
+
+def _carry_publication_prefs(workflow_state, state_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep generate-time WordPress prefs when replacing state_data on completion."""
+    prev = workflow_state.state_data if isinstance(workflow_state.state_data, dict) else {}
+    out = dict(state_data)
+    for key in ("publication_mode", "wordpress_site_id"):
+        if out.get(key) is None and prev.get(key) is not None:
+            out[key] = prev[key]
+    return out
+
+
+async def _maybe_auto_publish_generated_blog(
+    db: Session,
+    workflow_id: int,
+    user_id: int,
+) -> None:
+    """Push completed blog to WordPress when generate requested draft/publish.
+
+    publication_mode=publish only goes live when content + featured image are complete;
+    otherwise the post is saved as a WordPress draft.
+    """
+    workflow_state = get_workflow_state(db, workflow_id, user_id)
+    if not workflow_state or workflow_state.status != WorkflowStatus.COMPLETED:
+        return
+    state_data = workflow_state.state_data if isinstance(workflow_state.state_data, dict) else {}
+    site_id = state_data.get("wordpress_site_id")
+    mode = str(state_data.get("publication_mode") or "").strip().lower()
+    if not site_id or mode not in ("draft", "publish"):
+        return
+
+    def _store_auto_publish_result(rows: List[Dict[str, Any]]) -> None:
+        refreshed = get_workflow_state(db, workflow_id, user_id)
+        if not refreshed:
+            return
+        merged = dict(refreshed.state_data or {})
+        merged["auto_publish_result"] = rows
+        refreshed.state_data = merged
+        flag_modified(refreshed, "state_data")
+        db.commit()
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        _store_auto_publish_result(
+            [{"success": False, "error": "User not found for WordPress push"}]
+        )
+        return
+
+    if state_data.get("is_tree"):
+        children = state_data.get("children") or []
+        blog_keys = ["parent"] + [f"child_{i}" for i in range(len(children))]
+    else:
+        blog_keys = ["parent"]
+
+    results: List[Dict[str, Any]] = []
+    for blog_key in blog_keys:
+        article = _article_slice_for_publish(state_data, blog_key)
+        want_live = mode == "publish" and _article_ready_for_live_publish(article)
+        wp_status = "publish" if want_live else "draft"
+        try:
+            response = await publish_blog(
+                BlogPublishRequest(
+                    workflow_id=workflow_id,
+                    wordpress_site_id=int(site_id),
+                    status=wp_status,
+                    blog_key=blog_key,
+                    source_category=state_data.get("category"),
+                ),
+                current_user=user,
+                db=db,
+            )
+            results.append(
+                {
+                    "blog_key": blog_key,
+                    "requested_mode": mode,
+                    "wp_status": wp_status,
+                    "forced_draft": mode == "publish" and wp_status == "draft",
+                    "success": bool(response.success),
+                    "post_id": response.post_id,
+                    "link": response.link,
+                    "message": response.message,
+                }
+            )
+        except HTTPException as exc:
+            results.append(
+                {
+                    "blog_key": blog_key,
+                    "requested_mode": mode,
+                    "wp_status": wp_status,
+                    "success": False,
+                    "error": exc.detail,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Auto WordPress push failed for workflow %s (%s): %s",
+                workflow_id,
+                blog_key,
+                exc,
+            )
+            results.append(
+                {
+                    "blog_key": blog_key,
+                    "requested_mode": mode,
+                    "wp_status": wp_status,
+                    "success": False,
+                    "error": str(exc),
+                }
+            )
+
+    _store_auto_publish_result(results)
+
+
+async def _finalize_blog_workflow(
+    db: Session,
+    workflow_state,
+    state_data: Dict[str, Any],
+    user_id: int,
+) -> None:
+    """Mark workflow completed and optionally push to WordPress."""
+    workflow_state.state_data = _carry_publication_prefs(workflow_state, state_data)
+    workflow_state.status = WorkflowStatus.COMPLETED
+    db.commit()
+    await _maybe_auto_publish_generated_blog(db, workflow_state.id, user_id)
+
+
 def _inject_youtube_embed(body: str, youtube_url: Optional[str]) -> str:
     """Replace [YOUTUBE_EMBED: ...] placeholder with a proper YouTube iframe embed. Remove placeholder if no URL."""
     if not body:
@@ -703,9 +868,7 @@ async def _run_celebrity_single_article(
     if research_context:
         state_data["research_summary"] = research_context[:500] + ("..." if len(research_context) > 500 else "")
 
-    workflow_state.state_data = state_data
-    workflow_state.status = WorkflowStatus.COMPLETED
-    db.commit()
+    await _finalize_blog_workflow(db, workflow_state, state_data, workflow_state.user_id)
 
 
 async def _run_cluster_hub_article(
@@ -831,9 +994,7 @@ async def _run_cluster_hub_article(
             "..." if len(research_context) > 500 else ""
         )
 
-    workflow_state.state_data = state_payload
-    workflow_state.status = WorkflowStatus.COMPLETED
-    db.commit()
+    await _finalize_blog_workflow(db, workflow_state, state_payload, workflow_state.user_id)
 
 
 NEWS_CONTENT_INTENTS = {"news_timeline", "news_explainer", "news_opinion"}
@@ -956,9 +1117,7 @@ async def _run_news_article(
             "..." if len(research_context) > 500 else ""
         )
 
-    workflow_state.state_data = state_data
-    workflow_state.status = WorkflowStatus.COMPLETED
-    db.commit()
+    await _finalize_blog_workflow(db, workflow_state, state_data, workflow_state.user_id)
 
 
 async def run_blog_workflow(
@@ -1214,9 +1373,7 @@ async def run_blog_workflow(
                             featured_exc,
                         )
             _set_blog_progress(db, workflow_state, "finalize", "Finalizing article…")
-            workflow_state.state_data = state_data
-            workflow_state.status = WorkflowStatus.COMPLETED
-            db.commit()
+            await _finalize_blog_workflow(db, workflow_state, state_data, user_id)
             return
 
         if celebrity_content_type and celebrity_content_type in CELEBRITY_CONTENT_TYPE_INTENTS:
@@ -1508,9 +1665,7 @@ async def run_blog_workflow(
             state_data["keyword_strategy"] = keyword_strategy
         if research_context:
             state_data["research_summary"] = research_context[:500] + ("..." if len(research_context) > 500 else "")
-        workflow_state.state_data = state_data
-        workflow_state.status = WorkflowStatus.COMPLETED
-        db.commit()
+        await _finalize_blog_workflow(db, workflow_state, state_data, user_id)
 
     except Exception as e:
         workflow_state = get_workflow_state(db, workflow_id, user_id)
@@ -1565,6 +1720,23 @@ async def generate_blog(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="celebrity_content_type is only valid when category is 'Celebrities & Public Figures'",
             )
+        if request.publication_mode and request.wordpress_site_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="wordpress_site_id is required when publication_mode is set",
+            )
+        if request.wordpress_site_id is not None and not request.publication_mode:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="publication_mode is required when wordpress_site_id is set",
+            )
+        if request.wordpress_site_id is not None:
+            site = get_wordpress_site(db, request.wordpress_site_id, current_user.id)
+            if not site:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="WordPress site not found",
+                )
 
         # Create workflow state
         from app.models.workflow_state import WorkflowState
@@ -1606,6 +1778,16 @@ async def generate_blog(
                     }.items()
                     if v is not None
                 },
+                **(
+                    {"publication_mode": request.publication_mode}
+                    if request.publication_mode
+                    else {}
+                ),
+                **(
+                    {"wordpress_site_id": request.wordpress_site_id}
+                    if request.wordpress_site_id is not None
+                    else {}
+                ),
             }
         )
         db.add(workflow_state)
@@ -2220,13 +2402,64 @@ async def inject_sibling_links(
     )
 
 
+async def _delete_wordpress_posts_for_workflow(
+    db: Session,
+    workflow_id: int,
+    user_id: int,
+) -> List[str]:
+    """Delete all WordPress posts linked to this workflow. Returns error messages (non-fatal)."""
+    rows = (
+        db.query(PublishedPost)
+        .filter(
+            PublishedPost.workflow_id == workflow_id,
+            PublishedPost.user_id == user_id,
+        )
+        .all()
+    )
+    errors: List[str] = []
+    for record in rows:
+        site = get_wordpress_site(db, record.wordpress_site_id, user_id)
+        if not site:
+            errors.append(f"WordPress site missing for post #{record.wp_post_id}")
+            db.delete(record)
+            continue
+        result = await delete_post_from_wordpress(site, record.wp_post_id)
+        if not result.get("success"):
+            errors.append(
+                result.get("message")
+                or f"Failed to delete WordPress post #{record.wp_post_id}"
+            )
+            # Still drop the tracking row so the app is not stuck on a dead link.
+        db.delete(record)
+
+    workflow_state = get_workflow_state(db, workflow_id, user_id)
+    if workflow_state and isinstance(workflow_state.state_data, dict):
+        state_data = dict(workflow_state.state_data)
+        state_data.pop("wordpress_post_id", None)
+        state_data.pop("wordpress_post_ids", None)
+        workflow_state.state_data = state_data
+        flag_modified(workflow_state, "state_data")
+    return errors
+
+
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_blog_workflow(
     workflow_id: int,
+    delete_from: str = "app",
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Delete a blog workflow and its saved content."""
+    """Delete a blog from the app, WordPress website, or both.
+
+    Query param delete_from: app | website | both (default app).
+    """
+    scope = (delete_from or "app").strip().lower()
+    if scope not in ("app", "website", "both"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="delete_from must be one of: app, website, both",
+        )
+
     workflow_state = get_workflow_state(db, workflow_id, current_user.id)
     if not workflow_state:
         raise HTTPException(
@@ -2238,7 +2471,25 @@ async def delete_blog_workflow(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Not a blog workflow"
         )
-    db.delete(workflow_state)
+
+    if scope in ("website", "both"):
+        wp_errors = await _delete_wordpress_posts_for_workflow(
+            db, workflow_id, current_user.id
+        )
+        if wp_errors and scope == "website":
+            # Website-only: surface WP failures but still clear tracking rows.
+            logger.warning(
+                "WordPress delete issues for workflow %s: %s",
+                workflow_id,
+                "; ".join(wp_errors),
+            )
+
+    if scope in ("app", "both"):
+        # Re-fetch in case website cleanup already mutated the row.
+        workflow_state = get_workflow_state(db, workflow_id, current_user.id)
+        if workflow_state:
+            db.delete(workflow_state)
+
     db.commit()
     return None
 
