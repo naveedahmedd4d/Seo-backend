@@ -473,14 +473,12 @@ async def pick_graphic_featured_image(
             break
 
     if not candidates:
-        # Retry without title filter if every result was rejected as non-graphic.
-        for item in pool:
-            display_url = _resolve_display_url(item)
-            if display_url:
-                candidates.append(item)
-            if len(candidates) >= 10:
-                break
-    if not candidates:
+        # Do not fall back to diagrams/infographics — better no featured image than a chart.
+        logger.info(
+            "No photographic/graphic featured candidates for keyword %r (filtered %s results)",
+            keyword,
+            len(pool),
+        )
         return None
 
     from app.services.openrouter_service import select_featured_image

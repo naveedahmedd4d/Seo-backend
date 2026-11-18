@@ -34,10 +34,14 @@ from app.services.infographic_storage import resolve_infographic_path, save_png_
 @pytest.fixture(autouse=True)
 def _render_service_configured(monkeypatch):
     # Rendering is mocked in these tests, but the pipeline only runs when it's configured;
-    # don't depend on the developer's .env.
+    # don't depend on the developer's .env. Force the in-body flag on so unit tests still
+    # exercise the pipeline while production keeps it off.
     from app.config import settings
+    import app.services.technology_ai_infographics as infographics
+
     monkeypatch.setattr(settings, "frontend_url", "http://frontend.test")
     monkeypatch.setattr(settings, "infographic_render_secret", "test-secret")
+    monkeypatch.setattr(infographics, "IN_BODY_INFOGRAPHICS_ENABLED", True)
 
 BODY = (
     "## Choosing a Workflow\n\nMeasure baseline latency before switching tools. "

@@ -7,6 +7,9 @@ layouts (icon cards, checklists, takeaway banners) are disabled — they look li
 captures rather than topic graphics. The render route in the Next.js app draws it in
 headless Chromium (the backend has no Node runtime). Every step is non-fatal: a failure
 degrades to fewer (or zero) infographics plus a warning.
+
+In-body insertion is gated by IN_BODY_INFOGRAPHICS_ENABLED. Featured images are picked
+separately via Custom Image Search / SerpAPI (see blog_image_service).
 """
 
 import html
@@ -25,6 +28,9 @@ from app.services.technology_ai_content import parse_object
 logger = logging.getLogger(__name__)
 
 TARGET_INFOGRAPHIC_COUNT = 3
+# Pause in-body AntV infographics for now; featured images still come from Custom Image Search.
+# Flip to True when ready to re-enable body graphics.
+IN_BODY_INFOGRAPHICS_ENABLED = False
 # Ask for more than we need: some proposals fail grounding/layout checks.
 MAX_PROPOSALS = 6
 RENDER_TIMEOUT_SECONDS = 60.0
@@ -1380,6 +1386,9 @@ async def add_infographics_to_article(
     article's lists and subsections. Valid extras are kept in reserve and rendered when a
     chosen graphic fails to render. Returns (body, warnings, featured_image).
     """
+    if not IN_BODY_INFOGRAPHICS_ENABLED:
+        logger.info("In-body Tech & AI infographics are disabled; leaving article body unchanged.")
+        return body, [], None
     try:
         pool, warnings = await _candidate_pool(topic, body, generate, delay)
         if not (settings.frontend_url or "").strip() or not settings.infographic_render_secret:
