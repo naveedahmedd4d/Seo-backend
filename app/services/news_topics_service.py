@@ -270,14 +270,22 @@ def social_topic_from_stories(
     }
 
 
-def _pick_prompt(stories: list[dict[str, Any]]) -> str:
+def _pick_prompt(stories: list[dict[str, Any]], niche: Optional[str] = None) -> str:
     lines = [
         f"{story['id']}. {story['title']} (sources: {', '.join(story['sources'])})"
         for story in stories
     ]
+    niche_line = ""
+    cleaned = (niche or "").strip()
+    if cleaned:
+        niche_line = (
+            f"Audience niche / category / context: {cleaned}\n"
+            "Strongly prefer stories that match this niche. Deprioritize unrelated headlines.\n"
+        )
     return (
         "These are today's IT and AI news stories. Choose exactly 3 for a blog and social audience, "
         "then choose 1 of those 3 to publish as today's single blog.\n"
+        f"{niche_line}"
         "Prefer stories confirmed by more than one source and a clear explanation angle. "
         "Skip pure celebrity gossip, local outages, and stories that will be stale tomorrow.\n"
         "Use only ids from this list.\n\n"
@@ -288,7 +296,61 @@ def _pick_prompt(stories: list[dict[str, Any]]) -> str:
     )
 
 
-async def _fetch_enabled_items(source_ids: list[str]) -> list[dict[str, str]]:
+def _feed_url_for_source(source_id: str, niche: Optional[str] = None) -> str:
+    """Build the feed URL, injecting niche terms into Google News queries when set."""
+    source = _SOURCE_BY_ID[source_id]
+    url = source["url"]
+    cleaned = (niche or "").strip()
+    if not cleaned or source_id not in ("google_ai", "google_it"):
+        return url
+    from urllib.parse import quote_plus
+
+    if source_id == "google_ai":
+        base = (
+            '(OpenAI OR Anthropic OR "generative AI" OR ChatGPT OR "AI model")'
+            f" AND ({cleaned}) when:1d"
+        )
+    else:
+        base = (
+            '(cybersecurity OR "cloud computing" OR "data breach" OR "software outage")'
+            f" AND ({cleaned}) when:1d"
+        )
+    return (
+        "https://news.google.com/rss/search?q="
+        + quote_plus(base)
+        + "&hl=en-US&gl=US&ceid=US:en"
+    )
+
+
+def _niche_tokens(niche: Optional[str]) -> list[str]:
+    cleaned = (niche or "").strip().lower()
+    if not cleaned:
+        return []
+    return [
+        token
+        for token in re.split(r"[^a-z0-9]+", cleaned)
+        if len(token) >= 3 and token not in _STOPWORDS
+    ]
+
+
+def _rank_with_niche(stories: list[dict[str, Any]], niche: Optional[str]) -> list[dict[str, Any]]:
+    """Boost stories whose titles overlap the niche; preserve relative order otherwise."""
+    tokens = _niche_tokens(niche)
+    if not tokens:
+        return stories
+
+    def score(story: dict[str, Any]) -> tuple[int, int]:
+        title = (story.get("title") or "").lower()
+        hits = sum(1 for token in tokens if token in title)
+        return (hits, int(story.get("headline_count") or 0))
+
+    return sorted(stories, key=score, reverse=True)
+
+
+async def _fetch_enabled_items(
+    source_ids: list[str],
+    niche: Optional[str] = None,
+) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     errors: list[str] = []
     async with httpx.AsyncClient(
@@ -298,9 +360,8 @@ async def _fetch_enabled_items(source_ids: list[str]) -> list[dict[str, str]]:
         follow_redirects=True,
     ) as client:
         for source_id in source_ids:
-            source = _SOURCE_BY_ID[source_id]
             try:
-                response = await client.get(source["url"])
+                response = await client.get(_feed_url_for_source(source_id, niche))
                 response.raise_for_status()
                 items.extend(parse_feed_xml(response.text, source_id))
             except Exception as exc:
@@ -400,11 +461,13 @@ def settings_payload(row: UserLlmSettings) -> dict[str, Any]:
     sources = row.news_topic_sources if isinstance(row.news_topic_sources, list) else list(SOURCE_IDS)
     sources = [source_id for source_id in sources if source_id in _SOURCE_BY_ID] or list(SOURCE_IDS)
     last_run = row.news_topics if isinstance(row.news_topics, dict) else None
+    niche = (row.news_topic_niche or "").strip() or None
     return {
         "sources": sources_catalog(),
         "enabled_sources": sources,
         "daily_blog_enabled": bool(row.news_daily_blog_enabled),
         "wordpress_site_id": row.news_wordpress_site_id,
+        "niche": niche,
         "last_run": last_run,
     }
 
@@ -417,6 +480,8 @@ def update_news_settings(
     daily_blog_enabled: Optional[bool] = None,
     wordpress_site_id: Optional[int] = None,
     clear_wordpress_site: bool = False,
+    niche: Optional[str] = None,
+    update_niche: bool = False,
 ) -> UserLlmSettings:
     row = get_or_create_settings(db, user_id)
     if enabled_sources is not None:
@@ -434,19 +499,27 @@ def update_news_settings(
         if not site:
             raise ValueError("WordPress site not found")
         row.news_wordpress_site_id = site.id
+    if update_niche:
+        cleaned = (niche or "").strip()
+        row.news_topic_niche = cleaned[:500] if cleaned else None
     db.commit()
     db.refresh(row)
     return row
 
 
-async def _choose_topics(db: Session, user_id: int, stories: list[dict[str, Any]]) -> dict[str, Any]:
+async def _choose_topics(
+    db: Session,
+    user_id: int,
+    stories: list[dict[str, Any]],
+    niche: Optional[str] = None,
+) -> dict[str, Any]:
     from app.services.llm_settings_service import resolve_llm_credentials
     from app.services.openrouter_service import generate_content, reset_llm_context, set_llm_context
 
     token = set_llm_context(resolve_llm_credentials(db, user_id))
     try:
         raw = await generate_content(
-            _pick_prompt(stories),
+            _pick_prompt(stories, niche=niche),
             max_tokens=700,
             temperature=0.2,
             system="You choose blog topics from a supplied list. Return only JSON.",
@@ -614,15 +687,16 @@ async def run_news_topics_for_user(
     if already_published and isinstance(row.news_topics, dict):
         previous_blog = row.news_topics.get("blog")
 
-    items = await _fetch_enabled_items(source_ids)
-    stories = rank_stories(items)
+    niche = (row.news_topic_niche or "").strip() or None
+    items = await _fetch_enabled_items(source_ids, niche=niche)
+    stories = _rank_with_niche(rank_stories(items), niche)
     if not stories:
         raise ValueError("No stories returned")
 
     choice: dict[str, Any] = {"picks": [], "publish_id": None, "why": ""}
     pick_error = None
     try:
-        choice = await _choose_topics(db, user.id, stories)
+        choice = await _choose_topics(db, user.id, stories, niche=niche)
     except Exception as exc:
         logger.exception("News topic pick failed for user %s", user.id)
         pick_error = str(exc)[:500]

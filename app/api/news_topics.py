@@ -55,6 +55,8 @@ async def save_news_topics(
             daily_blog_enabled=body.daily_blog_enabled if "daily_blog_enabled" in fields else None,
             wordpress_site_id=None if clear_site else body.wordpress_site_id,
             clear_wordpress_site=clear_site,
+            niche=body.niche if "niche" in fields else None,
+            update_niche="niche" in fields,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc

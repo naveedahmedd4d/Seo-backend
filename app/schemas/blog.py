@@ -93,6 +93,7 @@ class BlogWorkflowListItem(BaseModel):
     category: Optional[str] = None
     is_tree: Optional[bool] = None
     religion_skipped: Optional[bool] = None  # celebrity tree: only parent + net worth
+    wp_link: Optional[str] = None  # live WordPress URL when published
 
 
 class BlogWorkflowListResponse(BaseModel):

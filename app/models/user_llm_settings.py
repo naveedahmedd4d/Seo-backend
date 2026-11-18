@@ -46,6 +46,8 @@ class UserLlmSettings(Base):
     news_topics = Column(JSON, nullable=True)
     news_daily_blog_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     news_wordpress_site_id = Column(Integer, nullable=True)
+    # Free-text niche / category / context used to bias trending topic fetch + LLM pick.
+    news_topic_niche = Column(Text, nullable=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     user = relationship("User", back_populates="llm_settings")

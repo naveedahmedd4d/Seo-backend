@@ -14,6 +14,7 @@ class NewsTopicsSettingsUpdate(BaseModel):
     daily_blog_enabled: Optional[bool] = None
     wordpress_site_id: Optional[int] = None
     clear_wordpress_site: bool = False
+    niche: Optional[str] = None
 
 
 class NewsTopicsSettingsResponse(BaseModel):
@@ -21,6 +22,7 @@ class NewsTopicsSettingsResponse(BaseModel):
     enabled_sources: list[str]
     daily_blog_enabled: bool
     wordpress_site_id: Optional[int] = None
+    niche: Optional[str] = None
     last_run: Optional[dict[str, Any]] = None
 
 

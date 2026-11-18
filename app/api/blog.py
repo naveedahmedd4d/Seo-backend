@@ -1618,6 +1618,8 @@ async def list_blog_workflows(
     db: Session = Depends(get_db)
 ):
     """List current user's blog workflows (completed or not), newest first."""
+    from app.models.published_post import PublishedPost
+
     rows = (
         db.query(WorkflowState)
         .filter(
@@ -1628,6 +1630,25 @@ async def list_blog_workflows(
         .limit(limit)
         .all()
     )
+    workflow_ids = [w.id for w in rows]
+    link_by_workflow: Dict[int, str] = {}
+    if workflow_ids:
+        published = (
+            db.query(PublishedPost)
+            .filter(
+                PublishedPost.user_id == current_user.id,
+                PublishedPost.workflow_id.in_(workflow_ids),
+                PublishedPost.wp_link.isnot(None),
+            )
+            .order_by(PublishedPost.published_at.desc())
+            .all()
+        )
+        for post in published:
+            if not post.wp_link:
+                continue
+            # Prefer the parent article link; otherwise keep the first available link.
+            if post.blog_key == "parent" or post.workflow_id not in link_by_workflow:
+                link_by_workflow[post.workflow_id] = post.wp_link
     workflows = []
     for w in rows:
         state = w.state_data or {}
@@ -1641,6 +1662,7 @@ async def list_blog_workflows(
                 category=state.get("category"),
                 is_tree=state.get("is_tree"),
                 religion_skipped=state.get("religion_skipped"),
+                wp_link=link_by_workflow.get(w.id),
             )
         )
     return BlogWorkflowListResponse(workflows=workflows)
