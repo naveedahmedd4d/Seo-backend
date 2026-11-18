@@ -260,6 +260,20 @@ def _state_data_for_api(state_data: Optional[Dict[str, Any]]) -> Optional[Dict[s
     return _state_data_without_toc(_state_data_with_rewritten_tree_links(state_data))
 
 
+def _set_blog_progress(db: Session, workflow_state, step: str, label: str) -> None:
+    """Persist the current generation step so the UI can show live progress."""
+    if not workflow_state:
+        return
+    data = dict(workflow_state.state_data or {})
+    data["progress_step"] = step
+    data["progress_label"] = label
+    workflow_state.state_data = data
+    if workflow_state.status not in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED, WorkflowStatus.CANCELLED):
+        workflow_state.status = WorkflowStatus.RUNNING
+    flag_modified(workflow_state, "state_data")
+    db.commit()
+
+
 def _inject_youtube_embed(body: str, youtube_url: Optional[str]) -> str:
     """Replace [YOUTUBE_EMBED: ...] placeholder with a proper YouTube iframe embed. Remove placeholder if no URL."""
     if not body:
@@ -981,6 +995,11 @@ async def run_blog_workflow(
                 db.commit()
             return
 
+        workflow_state = get_workflow_state(db, workflow_id, user_id)
+        if not workflow_state:
+            return
+        _set_blog_progress(db, workflow_state, "starting", "Starting blog generation…")
+
         # Step 0: Research via Tavily (if enabled and user has a key)
         research_context: Optional[str] = None
         tech_sources: List[Dict[str, Any]] = []
@@ -993,6 +1012,7 @@ async def run_blog_workflow(
                 "Research is disabled." if not include_research else "Research is enabled but no Tavily key is configured."
             )
         if include_research and has_tavily:
+            _set_blog_progress(db, workflow_state, "research", "Researching topic and sources…")
             try:
                 query = topic
                 if celebrity_content_type == "net_worth":
@@ -1014,6 +1034,7 @@ async def run_blog_workflow(
 
         # Step 0b: Research enrichment - if LLM says context insufficient, run extra Tavily queries (one round only)
         if include_research and research_context and has_tavily:
+            _set_blog_progress(db, workflow_state, "enrich", "Enriching research with follow-up queries…")
             try:
                 sufficient, extra_queries = await assess_research_sufficiency(topic, research_context, category)
                 if not sufficient and extra_queries:
@@ -1039,6 +1060,7 @@ async def run_blog_workflow(
             and has_tavily
             and category == "Celebrities & Public Figures"
         ):
+            _set_blog_progress(db, workflow_state, "enrich", "Gathering celebrity details…")
             from datetime import date as _date
             _year = _date.today().year
             _celebrity_queries = [
@@ -1062,6 +1084,7 @@ async def run_blog_workflow(
             else:
                 research_context = news_block
 
+        # Refresh in case another commit raced; keep the same row for progress updates.
         workflow_state = get_workflow_state(db, workflow_id, user_id)
         if not workflow_state:
             return
@@ -1075,6 +1098,7 @@ async def run_blog_workflow(
             else state_payload.get("cluster_member_facts")
         )
         if resolved_intent in NEWS_CONTENT_INTENTS:
+            _set_blog_progress(db, workflow_state, "write", "Writing news article…")
             await _run_news_article(
                 db,
                 workflow_state,
@@ -1091,6 +1115,7 @@ async def run_blog_workflow(
             return
 
         if resolved_intent == "cluster_hub":
+            _set_blog_progress(db, workflow_state, "write", "Writing cluster hub article…")
             await _run_cluster_hub_article(
                 db,
                 workflow_state,
@@ -1108,6 +1133,7 @@ async def run_blog_workflow(
 
         if category != "Celebrities & Public Figures":
             # Single-blog flow (batched: 2 LLM calls instead of 6, shared context)
+            _set_blog_progress(db, workflow_state, "write", "Writing title, body, FAQs, and SEO…")
             generic_cfg = _resolve_workflow_blog_config(
                 db,
                 workflow_state,
@@ -1168,6 +1194,7 @@ async def run_blog_workflow(
                 except Exception:
                     pass
                 if auto_featured:
+                    _set_blog_progress(db, workflow_state, "image", "Selecting featured image…")
                     try:
                         from app.services.blog_image_service import pick_graphic_featured_image
 
@@ -1186,12 +1213,14 @@ async def run_blog_workflow(
                             workflow_id,
                             featured_exc,
                         )
+            _set_blog_progress(db, workflow_state, "finalize", "Finalizing article…")
             workflow_state.state_data = state_data
             workflow_state.status = WorkflowStatus.COMPLETED
             db.commit()
             return
 
         if celebrity_content_type and celebrity_content_type in CELEBRITY_CONTENT_TYPE_INTENTS:
+            _set_blog_progress(db, workflow_state, "write", "Writing celebrity article…")
             await _run_celebrity_single_article(
                 db, workflow_state, topic, description, keywords, category,
                 research_context, celebrity_content_type,
@@ -1202,6 +1231,7 @@ async def run_blog_workflow(
             return
 
         # Tree flow: Celebrities & Public Figures (batched to reduce LLM calls and rate limits)
+        _set_blog_progress(db, workflow_state, "write", "Planning celebrity article tree…")
         keyword_strategy: Optional[Dict[str, Any]] = None
         if research_context:
             try:
@@ -1218,6 +1248,7 @@ async def run_blog_workflow(
             include_religion = False
 
         # Batch 1: titles + meta descriptions (1 or 3 child metas depending on include_religion)
+        _set_blog_progress(db, workflow_state, "write", "Generating titles and meta descriptions…")
         metas = await generate_tree_titles_metas_batch(
             topic, description, keywords, category, research_context, include_religion=include_religion
         )
@@ -1252,6 +1283,7 @@ async def run_blog_workflow(
         )
 
         # Generate each body separately so parent and religion get full token budget (2,500-3,000 words each)
+        _set_blog_progress(db, workflow_state, "write", "Writing parent biography…")
         parent_body = await generate_blog_body(
             topic, description, keywords, category,
             research_context=research_context,
@@ -1265,6 +1297,7 @@ async def run_blog_workflow(
         await _blog_delay()
         c1_body = ""
         if include_religion:
+            _set_blog_progress(db, workflow_state, "write", "Writing religion article…")
             c1_body = await generate_blog_body(
                 topic, description, keywords, category,
                 research_context=research_context,
@@ -1274,6 +1307,7 @@ async def run_blog_workflow(
             )
             c1_body = sanitize_religion_body(c1_body)
             await _blog_delay()
+        _set_blog_progress(db, workflow_state, "write", "Writing net worth article…")
         c2_body = await generate_blog_body(
             topic, description, keywords, category,
             research_context=research_context,
@@ -1291,6 +1325,7 @@ async def run_blog_workflow(
         parent_body = sanitize_filmography_table(parent_body, topic)
 
         # Batch 3: FAQs + related_queries
+        _set_blog_progress(db, workflow_state, "finalize", "Generating FAQs, links, and schema…")
         faqs_queries = await generate_tree_faqs_queries_batch(
             topic, description, keywords, category, research_context, include_religion=include_religion
         )
