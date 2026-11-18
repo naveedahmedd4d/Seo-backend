@@ -227,29 +227,39 @@ def test_icons_are_removed_from_layouts_without_icon_slots():
 
 # --- Validation and layout switching ---
 
-def test_validate_candidates_normalizes_icons_and_strips_frame_titles():
-    syntax = _cards(3).replace("data\n", "data\n  title Should Be Removed\n")
-    survivors, _ = validate_candidates([_candidate(heading="Strategy Options", template_id="cards", syntax=syntax)], BODY)
-    assert "title Should Be Removed" not in survivors[0]["syntax"]
+def test_validate_candidates_normalizes_icons_and_keeps_wheel_center_title():
+    wheel = normalize_icons("list-sector", TEMPLATES["list-sector"]["example"])
+    survivors, _ = validate_candidates(
+        [_candidate(heading="Strategy Options", template_id="list-sector", syntax=wheel)], BODY
+    )
+    assert survivors[0]["template_id"] == "list-sector"
+    assert "title Zero Trust" in survivors[0]["syntax"]
     assert ICON_URL in survivors[0]["syntax"]
 
 
-def test_three_item_wheel_becomes_icon_cards_without_its_center_title():
+def test_three_item_wheel_is_rejected_without_screenshot_card_fallback():
+    # list-sector needs 4-6 items; cards fallback is disabled, so a 3-item wheel is dropped.
     wheel = TEMPLATES["list-sector"]["example"]
     wheel = wheel.replace("    - label Data\n      desc Encrypt at rest\n      icon lock", "").rstrip()
     survivors, _ = validate_candidates([_candidate(heading="Strategy Options", template_id="list-sector", syntax=wheel)], BODY)
-    assert survivors[0]["template_id"] == "cards"
-    assert "title Zero Trust" not in survivors[0]["syntax"]
+    assert survivors == []
 
 
-def test_wheel_with_long_labels_switches_to_cards():
+def test_wheel_with_long_labels_is_rejected_without_screenshot_card_fallback():
     wheel = TEMPLATES["list-sector"]["example"].replace("Identity", "Identity Verification")
     survivors, _ = validate_candidates([_candidate(heading="Strategy Options", template_id="list-sector", syntax=wheel)], BODY)
-    assert survivors[0]["template_id"] == "cards"
+    assert survivors == []
 
 
-def test_seven_cards_have_no_layout_and_are_rejected():
-    assert validate_candidates([_candidate(heading="Strategy Options", template_id="cards", syntax=_cards(7))], BODY)[0] == []
+def test_screenshot_style_layouts_are_disabled():
+    assert TEMPLATES["cards"]["disabled"] and TEMPLATES["checklist"]["disabled"] and TEMPLATES["takeaway"]["disabled"]
+    assert validate_candidates([_candidate(heading="Strategy Options", template_id="cards", syntax=_cards(3))], BODY)[0] == []
+    assert validate_candidates(
+        [_candidate(heading="Readiness Questions", template_id="checklist", syntax=CHECKLIST_SYNTAX)], BODY
+    )[0] == []
+    prompt = extraction_prompt("AI", BODY)
+    assert '"checklist"' not in prompt and '"cards"' not in prompt and '"takeaway"' not in prompt
+    assert 'infographic checklist' not in prompt and 'infographic cards' not in prompt
 
 
 def test_two_step_sequence_becomes_a_comparison():
@@ -322,44 +332,56 @@ def test_next_step_and_conclusion_sections_are_skipped():
 
 
 def test_graphics_repeating_another_graphics_items_are_skipped():
-    same_items_as_checklist = (
-        "infographic checklist\ndata\n  lists\n"
-        "    - label Plan the change\n    - label Run a pilot\n    - label Scale up"
+    same_items_as_steps = (
+        "infographic steps\ndata\n  sequences\n"
+        "    - label Plan the Change\n      desc Set a latency baseline\n"
+        "    - label Run a Pilot\n      desc Test with one team\n"
+        "    - label Scale Up\n      desc Expand once errors drop"
     )
     survivors, _ = validate_candidates(
-        [_candidate(), _candidate(heading="Readiness Questions", template_id="checklist", syntax=same_items_as_checklist)], BODY
+        [_candidate(), _candidate(heading="Choosing a Workflow", template_id="steps", syntax=same_items_as_steps)], BODY
     )
     assert [s["heading"] for s in survivors] == ["Rollout Steps"]
 
 
-def test_layout_variety_limits_checklists_and_repeats():
-    other_checklist = CHECKLIST_SYNTAX.replace("clean", "labelled").replace("stack host it", "budget cover it").replace(
-        "team trained", "owner named")
-    survivors, _ = validate_candidates([
-        _candidate(heading="Readiness Questions", template_id="checklist", syntax=CHECKLIST_SYNTAX),
-        _candidate(heading="Choosing a Workflow", template_id="checklist", syntax=other_checklist),
-    ], BODY)
-    assert [s["heading"] for s in survivors] == ["Readiness Questions"]
-
-    cards = [
-        _candidate(heading=h, template_id="cards", syntax=_cards(3, label="", words=words))
-        for h, words in (("Strategy Options", ("Cloud", "Edge", "Hybrid")), ("Rehosting", ("Servers", "Storage", "Network")),
-                         ("Refactoring", ("Modules", "Services", "Tests")))
+def test_layout_variety_limits_repeats():
+    wheels = [
+        _candidate(
+            heading=h,
+            template_id="list-sector",
+            syntax=normalize_icons(
+                "list-sector",
+                "infographic list-sector\ndata\n  title Overview\n  lists\n"
+                + "".join(
+                    f"    - label {w}\n      desc Short facet\n      icon cloud\n" for w in words
+                ),
+            ),
+        )
+        for h, words in (
+            ("Strategy Options", ("Cloud", "Edge", "Hybrid", "Core")),
+            ("Rehosting", ("Servers", "Storage", "Network", "Backup")),
+            ("Refactoring", ("Modules", "Services", "Tests", "APIs")),
+        )
     ]
-    survivors, _ = validate_candidates(cards, BODY)
+    survivors, _ = validate_candidates(wheels, BODY)
     assert [s["heading"] for s in survivors] == ["Strategy Options", "Rehosting"]
 
 
 def test_only_three_infographics_are_kept():
+    wheel = normalize_icons("list-sector", TEMPLATES["list-sector"]["example"])
     candidates = [
         _candidate(),
         _candidate(heading="Strategy Options", template_id="comparison", syntax=COMPARISON_SYNTAX),
-        _candidate(heading="Readiness Questions", template_id="checklist", syntax=CHECKLIST_SYNTAX),
-        _candidate(heading="Choosing a Workflow", template_id="cards", syntax=_cards(3)),
+        _candidate(heading="Choosing a Workflow", template_id="list-sector", syntax=wheel,
+                   headline="Zero trust facets for every request"),
+        _candidate(heading="Rehosting", template_id="stats",
+                   syntax=("infographic stats\ndata\n  values\n"
+                           "    - label Errors after change\n      value 42%\n"
+                           "    - label Baseline checks\n      value 1")),
     ]
     survivors, _ = validate_candidates(candidates, BODY)
     assert len(survivors) == TARGET_INFOGRAPHIC_COUNT == 3
-    assert [s["template_id"] for s in survivors] == ["steps", "comparison", "checklist"]
+    assert [s["template_id"] for s in survivors] == ["steps", "comparison", "list-sector"]
 
 
 # --- Charts and stats (regressions from the live test runs) ---
@@ -410,12 +432,10 @@ def test_stats_keep_their_units():
 
 # --- Fallback ---
 
-def test_only_diagram_lists_fall_back_to_cards():
+def test_diagram_lists_do_not_fall_back_to_screenshot_cards():
     wheel = TEMPLATES["list-sector"]["example"]
-    result = fallback_syntax("list-sector", wheel)
-    assert result.startswith("infographic cards")
-    assert "title" not in result and ICON_URL in result
-    assert fallback_syntax("cards", _cards(3)) is None  # HTML layouts retry at compact density instead
+    assert fallback_syntax("list-sector", wheel) is None
+    assert fallback_syntax("cards", _cards(3)) is None
     assert fallback_syntax("chart-bar-plain-text", "infographic chart-bar-plain-text") is None
     assert fallback_syntax("hierarchy-tree", TEMPLATES["hierarchy-tree"]["example"]) is None
 
@@ -496,23 +516,21 @@ async def test_render_request_carries_frame_brand_and_specs():
         s.infographic_brand_name = "example.com"
         s.infographic_brand_logo_url = None
         results = await render_infographics([
-            {**_candidate(template_id="cards", syntax=normalize_icons("cards", _cards(3)), eyebrow=""), "source": "Guide"},
+            {**_candidate(template_id="steps", syntax=STEPS_SYNTAX, eyebrow=""), "source": "Guide"},
             _candidate(template_id="list-sector", syntax=wheel),
         ])
-    cards, diagram = captured["items"]
+    steps, diagram = captured["items"]
     assert captured["url"] == "http://frontend/api/infographic/render"
     assert captured["headers"] == {"x-infographic-secret": "secret"}
     assert results[0]["ok"] is True and results[1]["ok"] is True
-    assert cards["frame"] == {"headline": "How to roll out the workflow", "subtitle": "Plan, pilot, then scale the change.",
+    assert steps["frame"] == {"headline": "How to roll out the workflow", "subtitle": "Plan, pilot, then scale the change.",
                               "eyebrow": EYEBROW, "source": "Guide", "brand_color": "#2563eb",
                               "brand_name": "example.com", "brand_logo_url": ""}
-    assert cards["primary"]["kind"] == "html" and cards["primary"]["template"] == "cards"
-    assert cards["primary"]["items"][0]["icon"].startswith("https://api.iconify.design/mdi/")
-    assert cards["fallback"] is None
+    assert steps["primary"]["kind"] == "html" and steps["primary"]["template"] == "steps"
+    assert steps["fallback"] is None
     assert diagram["frame"]["eyebrow"] == "Workflows · Rollout"
     assert diagram["primary"] == {"kind": "antv", "template": "list-sector", "syntax": wheel}
-    assert diagram["fallback"]["kind"] == "html" and diagram["fallback"]["template"] == "cards"
-    assert [i["label"] for i in diagram["fallback"]["items"]] == ["Identity", "Devices", "Network", "Data"]
+    assert diagram["fallback"] is None
 
 
 @pytest.mark.asyncio
@@ -581,41 +599,38 @@ async def test_shortening_is_skipped_when_nothing_is_too_long_and_ignores_bad_fi
 
 @pytest.mark.asyncio
 async def test_shortened_items_without_header_are_spliced_back_in():
-    long_cards = _cards(3).replace("Option Alpha", "Maintain Complete System Integrity")
-    items_only = ("  - label Integrity\n    desc Short supporting text\n    icon check\n"
-                  "  - label Option Beta\n    desc Short supporting text\n    icon cloud\n"
-                  "  - label Option Gamma\n    desc Short supporting text\n    icon cloud")
+    long_steps = STEPS_SYNTAX.replace("Plan the Change", "Maintain Complete System Integrity")
+    items_only = ("  - label Integrity\n    desc Set a latency baseline\n"
+                  "  - label Run a Pilot\n    desc Test with one team\n"
+                  "  - label Scale Up\n    desc Expand once errors drop")
     generate = AsyncMock(return_value=json.dumps({"fixes": [{"index": 0, "syntax": items_only}]}))
-    out = await shorten_overlong([_candidate(template_id="cards", syntax=long_cards)], generate, AsyncMock())
-    assert out[0]["syntax"].startswith("infographic cards\ndata\n  lists\n    - label Integrity\n      desc")
-    assert syntax_issues("cards", out[0]["syntax"]) == []
+    out = await shorten_overlong([_candidate(template_id="steps", syntax=long_steps)], generate, AsyncMock())
+    assert out[0]["syntax"].startswith("infographic steps\ndata\n  sequences\n    - label Integrity\n      desc")
+    assert syntax_issues("steps", out[0]["syntax"]) == []
 
 
 @pytest.mark.asyncio
 async def test_shortening_fix_that_changes_item_count_is_ignored():
-    long_cards = _cards(3).replace("Option Alpha", "Maintain Complete System Integrity")
-    one_item = "  - label Integrity\n    desc Short supporting text\n    icon check"
+    long_steps = STEPS_SYNTAX.replace("Plan the Change", "Maintain Complete System Integrity")
+    one_item = "  - label Integrity\n    desc Set a latency baseline"
     generate = AsyncMock(return_value=json.dumps({"fixes": [{"index": 0, "syntax": one_item}]}))
-    out = await shorten_overlong([_candidate(template_id="cards", syntax=long_cards)], generate, AsyncMock())
-    assert out[0]["syntax"] == long_cards
+    out = await shorten_overlong([_candidate(template_id="steps", syntax=long_steps)], generate, AsyncMock())
+    assert out[0]["syntax"] == long_steps
 
 
 @pytest.mark.asyncio
-async def test_text_is_measured_against_the_layout_it_will_switch_to():
-    # A 3-item wheel must become cards (labels <= 26). Its 14-char labels are too long for
-    # the wheel but fine as cards, so no shortening call is spent on it.
+async def test_three_item_wheel_is_not_rewritten_to_screenshot_cards():
+    # A 3-item wheel no longer falls back to cards; without an enabled alternative it is dropped.
     three_wheel = (
         "infographic list-sector\ndata\n  title Migration\n  lists\n"
         "    - label Rehost Quickly\n      desc Move as-is\n      icon cloud\n"
         "    - label Refactor Parts\n      desc Redesign\n      icon code\n"
         "    - label Retire Legacy!\n      desc Switch off\n      icon server"
     )
-    generate = AsyncMock()
-    out = await shorten_overlong([_candidate(heading="Strategy Options", template_id="list-sector", syntax=three_wheel)],
-                                 generate, AsyncMock())
-    generate.assert_not_awaited()
-    survivors, _ = validate_candidates(out, BODY)
-    assert survivors[0]["template_id"] == "cards"
+    survivors, _ = validate_candidates(
+        [_candidate(heading="Strategy Options", template_id="list-sector", syntax=three_wheel)], BODY
+    )
+    assert survivors == []
 
 
 def test_trailing_full_stops_are_removed_from_descriptions():
@@ -664,9 +679,8 @@ def test_items_that_all_open_with_a_figure_are_drawn_as_stats():
     assert survivors[0]["template_id"] == "stats"
     items = parse_items(survivors[0]["syntax"])
     assert [(i["value"], i["desc"]) for i in items][0] == ("420 ms", "Median response time with older GPUs")
-    # Cards whose descriptions are ordinary text stay cards.
-    assert validate_candidates([_candidate(heading="Strategy Options", template_id="cards", syntax=_cards(3))], BODY)[0][0][
-        "template_id"] == "cards"
+    # Ordinary card panels are disabled rather than kept.
+    assert validate_candidates([_candidate(heading="Strategy Options", template_id="cards", syntax=_cards(3))], BODY)[0] == []
 
 
 # --- Guaranteed count: top-up round, article-structure fallback, render reserve ---
@@ -680,10 +694,16 @@ STRUCTURED_BODY = (
     "1. **Skipping Assessment**: Teams start without knowing what they have.\n"
     "2. **Ignoring Stakeholders**: Users are not consulted.\n"
     "3. **Underestimating Complexity**: Timelines slip.\n\n"
+    "## Zero Trust Pillars\n\n"
+    "1. **Identity**: Verify every user.\n"
+    "2. **Devices**: Check each device.\n"
+    "3. **Network**: Segment every zone.\n"
+    "4. **Data**: Encrypt at rest.\n\n"
     "## Migration Options\n\n"
-    "### Rehosting\n\nMoving applications to the cloud with minimal changes.\n\n"
-    "### Refactoring\n\nRedesigning applications to improve performance.\n\n"
-    "### Rebuilding\n\nWriting the application again on a modern stack.\n\n"
+    "### Rehosting\n\nMove apps as-is.\n\n"
+    "### Refactoring\n\nRedesign for scale.\n\n"
+    "### Rebuilding\n\nRewrite the stack.\n\n"
+    "### Retiring\n\nSwitch systems off.\n\n"
     "## Readiness\n\n"
     "- Business impact\n- Technical debt\n- Compliance risk\n\n"
     "## Conclusion\n\n- Plan the work\n- Test the plan\n- Ship it"
@@ -696,18 +716,16 @@ def test_structural_candidates_use_the_articles_own_lists_and_subsections():
     assert steps["template_id"] == "steps"
     # Three steps leave room for the article's full description.
     assert "desc Look for indicators of poor design, such as duplicated code, long methods, and large classes\n" in steps["syntax"]
-    # A numbered list of non-actions is an enumeration, not a process.
-    assert by_heading["Common Pitfalls"]["template_id"] == "cards"
-    options = by_heading["Migration Options"]
-    assert options["template_id"] == "cards" and "label Rehosting" in options["syntax"]
-    # Label-only topics never become a checklist; framing sections are skipped.
+    # Enumerations and subsection groups become AntV wheels when labels fit — never cards/checklists.
+    assert by_heading["Zero Trust Pillars"]["template_id"] == "list-sector"
+    assert by_heading["Migration Options"]["template_id"] == "list-sector"
+    assert "label Rehosting" in by_heading["Migration Options"]["syntax"]
+    # Three-item non-process lists and label-only topics are skipped; framing sections too.
+    assert "Common Pitfalls" not in by_heading
     assert "Readiness" not in by_heading and "Conclusion" not in by_heading
-    # A key sentence from a prose section comes last, as the lowest-priority fallback.
-    takeaways = [c for c in structural_candidates(STRUCTURED_BODY) if c["template_id"] == "takeaway"]
-    assert takeaways and structural_candidates(STRUCTURED_BODY)[-1]["template_id"] == "takeaway"
-    assert "label Moving applications to the cloud with minimal changes." in takeaways[0]["syntax"]
+    assert all(c["template_id"] != "takeaway" for c in structural_candidates(STRUCTURED_BODY))
     survivors, _ = validate_candidates(structural_candidates(STRUCTURED_BODY), STRUCTURED_BODY, limit=6)
-    assert [s["template_id"] for s in survivors][:3] == ["steps", "cards", "cards"]
+    assert [s["template_id"] for s in survivors][:3] == ["steps", "list-sector", "list-sector"]
 
 
 def test_short_desc_never_cuts_at_a_plain_comma():
@@ -734,11 +752,24 @@ async def test_article_structure_fills_the_gap_when_the_model_falls_short():
 
 @pytest.mark.asyncio
 async def test_a_failed_render_is_replaced_by_a_spare():
+    wheel = normalize_icons("list-sector", TEMPLATES["list-sector"]["example"])
     candidates = [
         _candidate(),
         _candidate(heading="Strategy Options", template_id="comparison", syntax=COMPARISON_SYNTAX),
-        _candidate(heading="Readiness Questions", template_id="checklist", syntax=CHECKLIST_SYNTAX),
-        _candidate(heading="Choosing a Workflow", template_id="cards", syntax=_cards(3)),
+        _candidate(heading="Choosing a Workflow", template_id="list-sector", syntax=wheel,
+                   headline="Zero trust facets for every request"),
+        _candidate(
+            heading="Readiness Questions",
+            template_id="steps",
+            syntax=(
+                "infographic steps\ndata\n  sequences\n"
+                "    - label Ask Data Owners\n      desc Confirm sources are ready\n"
+                "    - label Check Stack Fit\n      desc Verify hosting capacity\n"
+                "    - label Train The Team\n      desc Cover the new workflow"
+            ),
+            headline="Three readiness checks before kickoff",
+            subtitle="Confirm owners, stack, and training first.",
+        ),
     ]
     generate = AsyncMock(return_value=json.dumps({"infographics": candidates}))
     batches = []
@@ -754,16 +785,14 @@ async def test_a_failed_render_is_replaced_by_a_spare():
         patch("app.services.technology_ai_infographics.public_infographic_url", side_effect=lambda f: f"https://api.example.com/{f}"),
     ):
         body, warnings, _ = await add_infographics_to_article("AI", BODY, generate, AsyncMock())
-    assert batches == [["Rollout Steps", "Strategy Options", "Readiness Questions"], ["Choosing a Workflow"]]
+    assert batches == [["Rollout Steps", "Strategy Options", "Choosing a Workflow"], ["Readiness Questions"]]
     assert body.count("<img ") == 3 and warnings == []
     assert generate.await_count == 1  # the first round already had enough candidates
 
 
-def test_closing_sections_can_give_a_takeaway_but_never_a_diagram():
+def test_closing_sections_do_not_emit_takeaway_banners():
     body = "## Why Stability Wins\n\nShort.\n\n## Next Step\n\nWrite down the one AI capability your product needs this quarter and defer everything else."
-    takeaways = [c for c in structural_candidates(body) if c["template_id"] == "takeaway"]
-    assert [c["heading"] for c in takeaways] == ["Next Step"]
-    assert validate_candidates(takeaways, body)[0][0]["heading"] == "Next Step"
+    assert structural_candidates(body) == []
     assert validate_candidates([_candidate(heading="Conclusion")], BODY)[0] == []
 
 

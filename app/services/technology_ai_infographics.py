@@ -1,10 +1,12 @@
 """Auto-generated thumbnail infographics for Technology & AI articles only.
 
 Each infographic is a 16:9 graphic: an eyebrow, headline and subtitle framing content
-built from the article (cards, numbered steps, checklist, comparison, stats, or a themed
-cycle/wheel/tree/bar diagram), with a source + brand footer. The render route in the
-Next.js app draws it in headless Chromium (the backend has no Node runtime). Every step
-is non-fatal: a failure degrades to fewer (or zero) infographics plus a warning.
+built from the article (numbered steps, comparison, stats, or a themed
+cycle/wheel/tree/bar diagram), with a source + brand footer. Screenshot-style HTML
+layouts (icon cards, checklists, takeaway banners) are disabled — they look like UI
+captures rather than topic graphics. The render route in the Next.js app draws it in
+headless Chromium (the backend has no Node runtime). Every step is non-fatal: a failure
+degrades to fewer (or zero) infographics plus a warning.
 """
 
 import html
@@ -35,8 +37,8 @@ MAX_HEADLINE_CHARS = 64
 MAX_SUBTITLE_CHARS = 120
 MAX_EYEBROW_CHARS = 40
 MAX_TREE_NODES = 10
-# Variety across one article's graphics: one checklist at most, no layout used 3 times.
-MAX_PER_TEMPLATE = {"checklist": 1, "takeaway": 1}
+# Variety across one article's graphics: no layout used 3 times.
+MAX_PER_TEMPLATE: dict[str, int] = {}
 MAX_SAME_TEMPLATE = 2
 # Two graphics whose item labels share this much vocabulary say the same thing.
 DUPLICATE_LABEL_OVERLAP = 0.6
@@ -139,8 +141,10 @@ ICON_KEYWORDS: dict[str, str] = {
 # roadmap) are deliberately excluded. `counts` are item counts that lay out cleanly;
 # label/desc limits were measured by rendering on the 1200x675 canvas.
 TEMPLATES: dict[str, dict[str, Any]] = {
+    # Screenshot-style HTML panels (blue sidebar + icon/checkbox rows). Kept for syntax
+    # helpers and older fixtures, but never offered, proposed, or inserted into new posts.
     "cards": {
-        "kind": "html",
+        "kind": "html", "disabled": True,
         "shape": "Icon cards for 2-6 parallel options, use cases, sectors, benefits, or risks.",
         "data_key": "lists", "counts": {2, 3, 4, 5, 6}, "label_chars": 26, "desc_chars": 140,
         # Measured on the 1200x675 canvas: six cards wrap to two rows and leave little room.
@@ -181,7 +185,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
         ),
     },
     "checklist": {
-        "kind": "html",
+        "kind": "html", "disabled": True,
         "shape": "A to-do or readiness checklist of 3-6 actions or yes/no questions. Only when the "
                  "items really are things to do or check; never for categories or examples.",
         "data_key": "lists", "counts": {3, 4, 5, 6}, "label_chars": 60, "desc_chars": 70,
@@ -230,7 +234,7 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     # Last resort, built only from the article (never offered to the model): one verbatim
     # sentence set large, for prose sections with nothing list-like to draw.
     "takeaway": {
-        "kind": "html", "structural_only": True,
+        "kind": "html", "structural_only": True, "disabled": True,
         "shape": "One key sentence from the section.",
         "data_key": "lists", "counts": {1}, "label_chars": 170, "desc_chars": 0,
         "needs_desc": False, "icons": False,
@@ -322,11 +326,17 @@ TEMPLATES: dict[str, dict[str, Any]] = {
     },
 }
 
-# When an AntV diagram fails its render checks, its items are re-drawn as HTML cards.
-FALLBACK_TEMPLATE = "cards"
+# Screenshot-style HTML cards/checklists are disabled. Failed AntV diagrams are skipped
+# rather than redrawn as UI-panel screenshots.
+FALLBACK_TEMPLATE: Optional[str] = None
 # Prefix for issues fixable by switching to another layout (item count, text length,
 # missing descriptions), as opposed to content problems that must be rejected.
 _LAYOUT_ISSUE = "layout: "
+
+
+def _template_enabled(template_id: str) -> bool:
+    info = TEMPLATES.get(template_id)
+    return bool(info) and not info.get("disabled")
 
 _NUMERIC_TOKEN = re.compile(r"\d[\d,.]*\s*(?:%|percent|billion|million)|\$\s*\d[\d,.]*", re.I)
 _CHART_VALUE = re.compile(r"^\s*value\s+([\d,.]+)", re.I | re.M)
@@ -345,7 +355,7 @@ _VALUE_WITH_UNIT = re.compile(r"^(\s*value\s+)(\d[\d,]*(?:\.\d+)?)\s*([A-Za-z%$�
 def _template_guide() -> str:
     lines = []
     for tid, info in TEMPLATES.items():
-        if info.get("structural_only"):
+        if info.get("structural_only") or info.get("disabled"):
             continue
         counts = "root + 2-4 branches" if info["counts"] is None else ", ".join(map(str, sorted(info["counts"])))
         limits = f"labels <= {info['label_chars']} chars"
@@ -420,11 +430,13 @@ Writing rules (graphics breaking these are discarded or stripped):
 - Labels use the article's own terms. Never generic labels like "Step 1" or "Option A".
 - Keep descriptions for every item that has one in the article.
 - Numbers first: if a section gives figures for 2-4 things, use "stats" (3-6 figures: the bar chart),
-  not a comparison or cards. A stat "value" must be the figure itself ("420 ms", "42%"), never words.
-- "comparison" is for exactly 2 options. Three or more options are "cards".
-- Use a checklist only when the article itself tells the reader to do or check those things, and at
-  most once. Never rewrite plain statements or factors as questions to make a checklist.
-- Don't propose two graphics with the same items (e.g. a process and a checklist of the same steps).
+  not a comparison. A stat "value" must be the figure itself ("420 ms", "42%"), never words.
+- "comparison" is for exactly 2 options. Three or more parallel options use "list-sector" when
+  labels are short one-word facets; otherwise skip that section.
+- Never propose checklist, cards, or takeaway layouts (screenshot-style UI panels). Prefer
+  AntV diagrams (list-sector, sequence-circular, hierarchy-tree, chart-bar-plain-text), steps,
+  comparison, or stats.
+- Don't propose two graphics with the same items (e.g. a process and a wheel of the same steps).
 - Prefer different layouts across the graphics.
 - Tie each graphic to the most specific heading (the "###" subsection when the content lives there).
 - Do not put a "title" line in the syntax, except the short center title the wheel needs.
@@ -669,8 +681,13 @@ def convert_syntax(syntax: str, from_id: str, to_id: str, center_title: str = ""
 
 
 def fallback_syntax(template_id: str, syntax: str) -> Optional[str]:
-    """Re-express an AntV list/sequence diagram as HTML cards, for when the diagram fails
-    its render checks. HTML templates have their own compact-density retry instead."""
+    """Optional HTML redraw when an AntV diagram fails render checks.
+
+    Screenshot-style cards/checklists are disabled, so this usually returns None and the
+    graphic is skipped. HTML templates have their own compact-density retry instead.
+    """
+    if not FALLBACK_TEMPLATE or not _template_enabled(FALLBACK_TEMPLATE):
+        return None
     info = TEMPLATES[template_id]
     if info["kind"] != "antv" or info["data_key"] not in ("lists", "sequences"):
         return None
@@ -681,11 +698,10 @@ def fallback_syntax(template_id: str, syntax: str) -> Optional[str]:
 # When the model picks a layout that can't show its items cleanly (wrong count, text too
 # long for the layout, missing descriptions), try these alternatives in order.
 _RETEMPLATE_ORDER = {
-    # Keep the order visible: numbered steps first.
-    "sequences": ["steps", "comparison", "checklist"],
-    # Never turn unordered items into a sequence (that implies an order the article doesn't
-    # state) or into a checklist (checkboxes on "Finance" or "Healthcare" read as nonsense).
-    "lists": ["cards", "list-sector", "comparison"],
+    # Keep the order visible: numbered steps first. Never fall back to checklist panels.
+    "sequences": ["steps", "sequence-circular", "comparison"],
+    # Prefer AntV wheels over screenshot-style icon cards; comparison only for exactly 2.
+    "lists": ["list-sector", "comparison"],
     "values": ["stats", "chart-bar-plain-text"],
 }
 
@@ -730,10 +746,11 @@ def retemplate(template_id: str, syntax: str, heading: str = "") -> Optional[tup
     """Return (template_id, syntax) using a layout that fits the content, if one exists.
 
     A wheel needs a short center label; the section heading is used when it fits.
+    Disabled screenshot-style layouts are never chosen as the alternative.
     """
     source_key = TEMPLATES[template_id]["data_key"]
     for alternative in _RETEMPLATE_ORDER.get(source_key, []):
-        if alternative == template_id:
+        if alternative == template_id or not _template_enabled(alternative):
             continue
         converted = convert_syntax(syntax, template_id, alternative, center_title=heading)
         if not syntax_issues(alternative, converted):
@@ -756,7 +773,8 @@ def parse_candidates(raw: str) -> list[dict[str, str]]:
             continue
         # Models sometimes echo the syntax's first line ("infographic steps") as the id.
         template_id = re.sub(r"^infographic\s+", "", fields["template_id"].strip())
-        if template_id not in TEMPLATES or TEMPLATES[template_id].get("structural_only"):
+        if (template_id not in TEMPLATES or TEMPLATES[template_id].get("structural_only")
+                or TEMPLATES[template_id].get("disabled")):
             continue
         eyebrow = item.get("eyebrow")
         out.append({
@@ -805,8 +823,8 @@ def _shorten_target(candidate: dict[str, str]) -> tuple[str, list[str]]:
     """Which layout's limits the text must fit, and what's too long for it.
 
     Usually the chosen layout. But when the item count forces a switch (a 3-item cycle
-    becomes 3D steps), shorten for the layout it will switch to, so it isn't downgraded to
-    a plain checklist over a couple of characters.
+    becomes numbered steps), shorten for the layout it will switch to, so a couple of
+    overlong characters don't force the graphic to be dropped.
     """
     template_id = candidate["template_id"]
     syntax = _tidy(candidate["syntax"])
@@ -815,7 +833,9 @@ def _shorten_target(candidate: dict[str, str]) -> tuple[str, list[str]]:
     issues = syntax_issues(template_id, syntax)
     if any("don't fit" in i for i in issues):
         for alternative in _RETEMPLATE_ORDER.get(TEMPLATES[template_id]["data_key"], []):
-            if alternative in (template_id, "comparison", "checklist"):
+            if alternative == template_id or not _template_enabled(alternative):
+                continue
+            if alternative == "comparison":
                 continue
             converted = convert_syntax(syntax, template_id, alternative, center_title=candidate["heading"])
             alt_issues = syntax_issues(alternative, converted)
@@ -966,6 +986,14 @@ def validate_candidates(
         stats = as_stats(candidate["template_id"], candidate["syntax"])
         if stats:
             candidate = {**candidate, "template_id": "stats", "syntax": stats}
+        # Screenshot-style layouts (cards/checklist/takeaway) must be rewritten or dropped.
+        if not _template_enabled(candidate["template_id"]):
+            swapped = retemplate(candidate["template_id"], candidate["syntax"], heading)
+            if not swapped:
+                logger.info("Infographic for '%s' rejected: layout %s is disabled",
+                            heading, candidate["template_id"])
+                continue
+            candidate = {**candidate, "template_id": swapped[0], "syntax": swapped[1]}
         issues = syntax_issues(candidate["template_id"], candidate["syntax"])
         if issues and all(issue.startswith(_LAYOUT_ISSUE) for issue in issues):
             swapped = retemplate(candidate["template_id"], candidate["syntax"], heading)
@@ -974,6 +1002,10 @@ def validate_candidates(
                 issues = []
         if issues:
             logger.info("Infographic for '%s' rejected: %s", heading, "; ".join(issues))
+            continue
+        if not _template_enabled(candidate["template_id"]):
+            logger.info("Infographic for '%s' rejected: layout %s is disabled",
+                        heading, candidate["template_id"])
             continue
         candidate = {**candidate, "syntax": normalize_icons(candidate["template_id"], candidate["syntax"])}
         if _duplicates_existing(candidate, chosen):
@@ -1098,21 +1130,34 @@ def _structural(heading: str, template_id: str, items: list[tuple[str, str]]) ->
     }
 
 
-_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
-
-
-def _takeaway_sentence(lines: list[str]) -> str:
-    """The section's most informative sentence that fits: one with a figure, else the first."""
-    prose = " ".join(l.strip() for l in lines if l.strip() and not _LIST_ITEM.match(l) and not l.lstrip().startswith(("<", "|", ">")))
-    sentences = [s.strip() for s in _SENTENCE.split(re.sub(r"[*_`]+", "", prose)) if s.strip()]
-    sentences = [s for s in sentences if 50 <= len(s) <= TEMPLATES["takeaway"]["label_chars"] and not s.endswith("?")]
-    return next((s for s in sentences if re.search(r"\d", s)), sentences[0] if sentences else "")
+def _as_list_sector(heading: str, items: list[tuple[str, str]]) -> Optional[dict[str, str]]:
+    """Build an AntV wheel when item count and label lengths fit; otherwise None."""
+    template_id = "list-sector"
+    info = TEMPLATES[template_id]
+    if len(items) not in info["counts"]:
+        return None
+    limit = desc_limit(template_id, len(items))
+    short = [(label, _short_desc(desc, limit)) for label, desc in items]
+    if not all(desc for _, desc in short):
+        return None
+    if not all(len(label) <= info["label_chars"] for label, _ in short):
+        return None
+    center = _plain(heading)[:18] or "Overview"
+    candidate = _structural(heading, template_id, short)
+    candidate["syntax"] = candidate["syntax"].replace(
+        "data\n  lists\n", f"data\n  title {center}\n  lists\n", 1
+    )
+    return candidate
 
 
 def structural_candidates(body: str) -> list[dict[str, str]]:
     """Graphics taken directly from the article: its 3-6 item lists, and sections split into
     3-6 subsections. No model involved, so every word is the article's own. Used only when
-    the model's proposals don't reach the target count."""
+    the model's proposals don't reach the target count.
+
+    Screenshot-style cards/checklists/takeaways are never emitted — prefer steps, comparison,
+    or AntV wheels when the article structure supports them.
+    """
     out: list[dict[str, str]] = []
     sections = _sections(body)
     for n, (level, heading, lines) in enumerate(sections):
@@ -1124,14 +1169,23 @@ def structural_candidates(body: str) -> list[dict[str, str]]:
                 # Numbered lists are often just enumerations ("1. Skipping Assessment"); only
                 # action items read as an ordered process.
                 is_process = numbered and all(_is_action(label) for label, _ in items)
-                template_id = "steps" if is_process else "cards"
-                limit = desc_limit(template_id, len(items))
-                items = [(label, _short_desc(desc, limit)) for label, desc in items]
-                if all(desc for _, desc in items):
-                    out.append(_structural(heading, template_id, items))
+                if is_process:
+                    template_id = "steps"
+                    limit = desc_limit(template_id, len(items))
+                    stepped = [(label, _short_desc(desc, limit)) for label, desc in items]
+                    if all(desc for _, desc in stepped) and len(stepped) in TEMPLATES["steps"]["counts"]:
+                        out.append(_structural(heading, template_id, stepped))
+                        continue
+                wheel = _as_list_sector(heading, items)
+                if wheel:
+                    out.append(wheel)
                     continue
-            if all(len(label) <= TEMPLATES["checklist"]["label_chars"] and _is_action(label) for label, _ in items):
-                out.append(_structural(heading, "checklist", [(label, "") for label, _ in items]))
+                if len(items) == 2:
+                    limit = desc_limit("comparison", 2)
+                    paired = [(label, _short_desc(desc, limit)) for label, desc in items]
+                    if all(desc for _, desc in paired):
+                        out.append(_structural(heading, "comparison", paired))
+            # Action-only checklists are skipped (disabled screenshot layout).
         if level == 2:
             children = []
             for sub_level, sub_heading, sub_lines in sections[n + 1:]:
@@ -1139,15 +1193,13 @@ def structural_candidates(body: str) -> list[dict[str, str]]:
                     break
                 if sub_level == 3:
                     children.append((sub_heading, _short_desc(" ".join(l for l in sub_lines if l.strip() and not _LIST_ITEM.match(l)), 80)))
-            if 3 <= len(children) <= 6 and all(desc for _, desc in children):
-                out.append(_structural(heading, "cards", [(_plain(h), d) for h, d in children]))
-    # Lowest priority: a key sentence from a prose section.
-    for level, heading, lines in sections:
-        if level in (2, 3) and not _skipped(heading, "takeaway") and len(heading) <= MAX_HEADLINE_CHARS:
-            sentence = _takeaway_sentence(lines)
-            if sentence:
-                candidate = _structural(heading, "takeaway", [(sentence, "")])
-                out.append({**candidate, "alt_text": f"Key takeaway: {sentence}"[:120]})
+            # Subsection groups only become wheels when count/labels fit AntV; never
+            # screenshot cards, and never a 2-item comparison (too weak as a structural fill).
+            if children and all(desc for _, desc in children):
+                wheel = _as_list_sector(heading, [(_plain(h), d) for h, d in children])
+                if wheel:
+                    out.append(wheel)
+    # Takeaway banners are disabled — no prose-sentence fallback graphics.
     return out
 
 
