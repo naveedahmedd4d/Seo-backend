@@ -439,9 +439,10 @@ def get_or_create_settings(db: Session, user_id: int) -> WeeklyContentSettings:
     row = WeeklyContentSettings(
         user_id=user_id,
         countries=list(DEFAULT_COUNTRIES),
-        max_social_per_week=7,
+        # 2/day = one trending topic + one UN/custom observance (spread by 4h gap).
+        max_social_per_week=14,
         blogs_per_week=2,
-        social_posts_per_day=1,
+        social_posts_per_day=2,
         blog_posts_per_day=1,
         run_frequency="weekly",
         goal1_enabled=False,
@@ -1009,11 +1010,11 @@ async def run_goal1_for_user(
         )
     }
 
-    # Build candidates with settled rows excluded first, then prefer unsettled
-    # trending, then observances — so a single-slot tick is not stuck on a
-    # already-published trending event.
+    # Daily/weekly social plan: one trending topic + one UN/custom observance.
+    # Cron still publishes at most one post per tick (4h gap); later ticks fill
+    # the second slot once day_remaining allows.
     pool = _goal1_events_for_week(
-        db, user.id, week=week, countries=countries, cap=max(remaining + 5, 8)
+        db, user.id, week=week, countries=countries, cap=max(remaining + 8, 12)
     )
     trending = await ensure_social_trending_event(db, user)
     candidates: list[CalendarEvent] = []
@@ -1023,14 +1024,34 @@ async def run_goal1_for_user(
         and trending.id not in settled_ids
     ):
         candidates.append(trending)
+
+    observance: Optional[CalendarEvent] = None
     for event in pool:
+        if event.id in settled_ids:
+            continue
+        if trending and event.id == trending.id:
+            continue
+        if event.source == "news_trending":
+            continue
+        # Prefer today's observance, then soonest upcoming in the week window.
+        if event.event_date == date.today():
+            observance = event
+            break
+        if observance is None:
+            observance = event
+    if observance is not None:
+        candidates.append(observance)
+
+    # If still short (e.g. no observance today), fill from remaining pool.
+    for event in pool:
+        if len(candidates) >= max(remaining, 2):
+            break
         if event.id in settled_ids:
             continue
         if any(c.id == event.id for c in candidates):
             continue
         candidates.append(event)
-        if len(candidates) >= remaining:
-            break
+
     events = candidates[:remaining]
 
     platforms = _connected_platforms(db, user.id, include_outreach=False)
