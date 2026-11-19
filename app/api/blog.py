@@ -1355,17 +1355,27 @@ async def run_blog_workflow(
                 if auto_featured:
                     _set_blog_progress(db, workflow_state, "image", "Selecting featured image…")
                     try:
-                        from app.services.blog_image_service import pick_graphic_featured_image
+                        from app.services.blog_image_service import (
+                            collect_recent_featured_image_urls,
+                            pick_graphic_featured_image,
+                        )
 
+                        exclude_featured = collect_recent_featured_image_urls(db, user_id)
                         featured = await pick_graphic_featured_image(
                             db,
                             user_id,
                             title=title,
                             topic=topic,
                             meta=meta_description or "",
+                            exclude_urls=exclude_featured,
                         )
                         if featured:
                             state_data["featured_image"] = featured
+                            # Persist immediately so a concurrent blog generation
+                            # can exclude this URL before finalize completes.
+                            workflow_state.state_data = state_data
+                            flag_modified(workflow_state, "state_data")
+                            db.commit()
                     except Exception as featured_exc:
                         logger.warning(
                             "Graphic featured image pick failed for workflow %s: %s",

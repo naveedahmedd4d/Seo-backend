@@ -315,12 +315,25 @@ async def _sideload_inline_images_in_html(
     return out, url_to_media_id
 
 
+def _looks_like_generated_infographic_url(url: str) -> bool:
+    """True for our AntV /api/blog/infographics assets (must not be WP featured/OG)."""
+    u = (url or "").strip().lower()
+    if not u:
+        return False
+    return "/api/blog/infographics/" in u or "/uploads/infographics/" in u
+
+
 def _rank_math_meta(
     focus_keyword: Optional[str] = None,
     seo_title: Optional[str] = None,
     meta_description: Optional[str] = None,
+    social_image_url: Optional[str] = None,
 ) -> Dict[str, str]:
-    """Build Rank Math meta dict for REST API (only non-empty values)."""
+    """Build Rank Math meta dict for REST API (only non-empty values).
+
+    When ``social_image_url`` is set, Facebook/Twitter cards use the featured photo
+    instead of the first in-body image (e.g. an AntV infographic).
+    """
     meta: Dict[str, str] = {}
     if focus_keyword and str(focus_keyword).strip():
         meta["rank_math_focus_keyword"] = str(focus_keyword).strip()
@@ -328,7 +341,58 @@ def _rank_math_meta(
         meta["rank_math_title"] = str(seo_title).strip()
     if meta_description and str(meta_description).strip():
         meta["rank_math_description"] = str(meta_description).strip()
+    if social_image_url and str(social_image_url).strip():
+        img = str(social_image_url).strip()
+        meta["rank_math_facebook_image"] = img
+        meta["rank_math_twitter_image"] = img
     return meta
+
+
+async def _resolve_featured_media(
+    site: WordPressSite,
+    client: httpx.AsyncClient,
+    featured_image: Any,
+    sideload_url_to_media_id: Dict[str, int],
+) -> Tuple[Optional[int], Optional[str]]:
+    """Upload/resolve featured media. Never promotes generated infographics.
+
+    Returns (media_id, public_source_url_for_og).
+    """
+    image_url = None
+    if featured_image and isinstance(featured_image, dict):
+        image_url = featured_image.get("url") or featured_image.get("original")
+    if not image_url or not isinstance(image_url, str) or not image_url.strip():
+        return None, None
+    iu = image_url.strip()
+    if _looks_like_generated_infographic_url(iu):
+        logger.warning(
+            "Refusing generated infographic as WordPress featured/OG image: %s",
+            iu,
+        )
+        return None, None
+
+    # Always upload the featured photo separately so body AntV sideloads cannot
+    # become the post's featured_media when URLs collide.
+    fetched = await _fetch_image_from_url(iu)
+    if not fetched:
+        # Fall back to a prior sideload only for non-infographic photos.
+        # Do not set OG to a third-party hotlink — Rank Math can use featured_media.
+        mid = sideload_url_to_media_id.get(iu)
+        if mid is not None:
+            return mid, None
+        return None, None
+    image_bytes, content_type, filename = fetched
+    up = await _upload_media_to_wordpress(
+        site, client, image_bytes, content_type, filename
+    )
+    if not up:
+        mid = sideload_url_to_media_id.get(iu)
+        if mid is not None:
+            return mid, None
+        return None, None
+    media_id, src_url = up
+    og = src_url.strip() if isinstance(src_url, str) and src_url.strip() else None
+    return media_id, og
 
 
 async def publish_page_to_wordpress(
@@ -355,23 +419,9 @@ async def publish_page_to_wordpress(
         async with httpx.AsyncClient(verify=httpx_verify(), timeout=120.0) as client:
             content, sideload_url_to_media_id = await _sideload_inline_images_in_html(site, client, content)
 
-            featured_media_id: Optional[int] = None
-            image_url = None
-            if featured_image and isinstance(featured_image, dict):
-                image_url = featured_image.get("url") or featured_image.get("original")
-            if image_url and isinstance(image_url, str) and image_url.strip():
-                iu = image_url.strip()
-                if iu in sideload_url_to_media_id:
-                    featured_media_id = sideload_url_to_media_id[iu]
-                else:
-                    fetched = await _fetch_image_from_url(iu)
-                    if fetched:
-                        image_bytes, content_type, filename = fetched
-                        up = await _upload_media_to_wordpress(
-                            site, client, image_bytes, content_type, filename
-                        )
-                        if up:
-                            featured_media_id = up[0]
+            featured_media_id, featured_og_url = await _resolve_featured_media(
+                site, client, featured_image, sideload_url_to_media_id
+            )
 
             page_payload: Dict[str, Any] = {
                 "title": title,
@@ -382,7 +432,12 @@ async def publish_page_to_wordpress(
                 page_payload["featured_media"] = featured_media_id
             if slug and str(slug).strip():
                 page_payload["slug"] = str(slug).strip()
-            meta = _rank_math_meta(focus_keyword, seo_title, meta_description)
+            meta = _rank_math_meta(
+                focus_keyword,
+                seo_title,
+                meta_description,
+                social_image_url=featured_og_url,
+            )
             if meta:
                 page_payload["meta"] = meta
             response = await client.post(
@@ -456,23 +511,9 @@ async def publish_to_wordpress(
         async with httpx.AsyncClient(verify=httpx_verify(), timeout=120.0) as client:
             content, sideload_url_to_media_id = await _sideload_inline_images_in_html(site, client, content)
 
-            featured_media_id: Optional[int] = None
-            image_url = None
-            if featured_image and isinstance(featured_image, dict):
-                image_url = featured_image.get("url") or featured_image.get("original")
-            if image_url and isinstance(image_url, str) and image_url.strip():
-                iu = image_url.strip()
-                if iu in sideload_url_to_media_id:
-                    featured_media_id = sideload_url_to_media_id[iu]
-                else:
-                    fetched = await _fetch_image_from_url(iu)
-                    if fetched:
-                        image_bytes, content_type, filename = fetched
-                        up = await _upload_media_to_wordpress(
-                            site, client, image_bytes, content_type, filename
-                        )
-                        if up:
-                            featured_media_id = up[0]
+            featured_media_id, featured_og_url = await _resolve_featured_media(
+                site, client, featured_image, sideload_url_to_media_id
+            )
 
             post_payload: Dict[str, Any] = {
                 "title": title,
@@ -485,7 +526,12 @@ async def publish_to_wordpress(
                 post_payload["slug"] = str(slug).strip()
             if category_ids:
                 post_payload["categories"] = category_ids
-            meta = _rank_math_meta(focus_keyword, seo_title, meta_description)
+            meta = _rank_math_meta(
+                focus_keyword,
+                seo_title,
+                meta_description,
+                social_image_url=featured_og_url,
+            )
             if meta:
                 post_payload["meta"] = meta
             response = await client.post(

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.image_search_history import ImageSearchHistory
-from app.models.workflow_state import WorkflowState, WorkflowStatus
+from app.models.workflow_state import WorkflowState, WorkflowStatus, WorkflowType
 from app.services.http_ssl import httpx_verify
 from app.services.serpapi_service import search_images as serpapi_search_images
 
@@ -450,6 +450,74 @@ async def _fetch_graphic_featured_candidates(
         return []
 
 
+def collect_recent_featured_image_urls(
+    db: Session,
+    user_id: int,
+    *,
+    limit_workflows: int = 50,
+) -> Set[str]:
+    """URLs already used as featured images on this user's recent blogs.
+
+    Includes COMPLETED and RUNNING so a pick written mid-generation is visible to
+    a concurrent blog before the first workflow finishes.
+    """
+    used: Set[str] = set()
+    try:
+        rows = (
+            db.query(WorkflowState)
+            .filter(
+                WorkflowState.user_id == user_id,
+                WorkflowState.workflow_type == WorkflowType.BLOG,
+                WorkflowState.status.in_(
+                    (WorkflowStatus.COMPLETED, WorkflowStatus.RUNNING)
+                ),
+            )
+            .order_by(WorkflowState.id.desc())
+            .limit(limit_workflows)
+            .all()
+        )
+    except Exception as exc:
+        logger.warning("Could not load recent featured image URLs: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return used
+
+    for row in rows:
+        data = row.state_data if isinstance(row.state_data, dict) else {}
+        fi = data.get("featured_image")
+        if isinstance(fi, dict):
+            add_image_urls_to_used(used, fi)
+        parent = data.get("parent")
+        if isinstance(parent, dict) and isinstance(parent.get("featured_image"), dict):
+            add_image_urls_to_used(used, parent["featured_image"])
+        for child in data.get("children") or []:
+            if isinstance(child, dict) and isinstance(child.get("featured_image"), dict):
+                add_image_urls_to_used(used, child["featured_image"])
+    return used
+
+
+def _graphic_candidates_from_pool(
+    pool: List[Dict[str, Any]],
+    blocked: Set[str],
+    *,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
+    for item in pool:
+        if is_non_graphic_featured_candidate(item):
+            continue
+        if blocked and _candidate_is_used(item, blocked):
+            continue
+        if not _resolve_display_url(item):
+            continue
+        candidates.append(item)
+        if len(candidates) >= limit:
+            break
+    return candidates
+
+
 async def pick_graphic_featured_image(
     db: Session,
     user_id: int,
@@ -457,27 +525,41 @@ async def pick_graphic_featured_image(
     title: str = "",
     topic: str = "",
     meta: str = "",
+    exclude_urls: Optional[Set[str] | List[str]] = None,
 ) -> Optional[Dict[str, str]]:
-    """Pick a photographic featured image via Custom Image Search (SerpAPI fallback)."""
+    """Pick a photographic featured image via Custom Image Search (SerpAPI fallback).
+
+    ``exclude_urls`` skips images already used as featured on other blogs so each
+    post gets a distinct photo when the search pool has alternatives. If every
+    photo is already used, falls back to the full photo pool rather than leaving
+    the post without a featured image.
+    """
+    blocked: Set[str] = set()
+    if exclude_urls:
+        for u in exclude_urls:
+            if u and str(u).strip():
+                blocked.add(str(u).strip())
+
     keyword = graphic_featured_search_keyword(title=title, topic=topic)
     pool = await _fetch_graphic_featured_candidates(db, user_id, keyword)
-    candidates: List[Dict[str, Any]] = []
-    for item in pool:
-        if is_non_graphic_featured_candidate(item):
-            continue
-        display_url = _resolve_display_url(item)
-        if not display_url:
-            continue
-        candidates.append(item)
-        if len(candidates) >= 10:
-            break
+    candidates = _graphic_candidates_from_pool(pool, blocked)
+    if not candidates and blocked:
+        logger.info(
+            "All photographic featured candidates for %r were previously used "
+            "(%s excluded); falling back to full photo pool",
+            keyword,
+            len(blocked),
+        )
+        candidates = _graphic_candidates_from_pool(pool, set())
 
     if not candidates:
         # Do not fall back to diagrams/infographics — better no featured image than a chart.
         logger.info(
-            "No photographic/graphic featured candidates for keyword %r (filtered %s results)",
+            "No photographic/graphic featured candidates for keyword %r "
+            "(filtered %s results, excluded %s urls)",
             keyword,
             len(pool),
+            len(blocked),
         )
         return None
 

@@ -8,6 +8,7 @@ from app.services.blog_image_service import (
     add_image_urls_to_used,
     apply_auto_images_batch,
     apply_auto_images_to_workflow,
+    collect_recent_featured_image_urls,
     collect_used_urls_from_body,
     graphic_featured_search_keyword,
     insert_image_after_section,
@@ -17,6 +18,10 @@ from app.services.blog_image_service import (
     POSITIONAL_PICK_INDICES,
     resolve_verified_url,
     SECTION_HEADINGS,
+)
+from app.services.wordpress_service import (
+    _looks_like_generated_infographic_url,
+    _rank_math_meta,
 )
 from app.services.serpapi_service import _build_image_tbs
 
@@ -416,3 +421,118 @@ async def test_pick_graphic_featured_image_uses_custom_image_search():
     assert picked is not None
     assert picked["url"] == "https://cdn.example/office.jpg"
     assert "office" in picked["alt"].lower() or "SSH" in picked["alt"]
+
+
+@pytest.mark.asyncio
+async def test_pick_graphic_featured_image_excludes_prior_featured_urls():
+    db = MagicMock()
+    custom_pool = [
+        {
+            "title": "Trading floor photo",
+            "original": "https://cdn.example/reuse-me.jpg",
+            "thumbnail": "https://cdn.example/reuse-me-t.jpg",
+            "source": "Custom Image Search",
+        },
+        {
+            "title": "Different office photo",
+            "original": "https://cdn.example/unique.jpg",
+            "thumbnail": "https://cdn.example/unique-t.jpg",
+            "source": "Custom Image Search",
+        },
+    ]
+    with (
+        patch(
+            "app.services.custom_image_search_service.is_custom_image_search_configured",
+            return_value=True,
+        ),
+        patch(
+            "app.services.custom_image_search_service.search_images_for_user",
+            new=AsyncMock(return_value=custom_pool),
+        ),
+        patch(
+            "app.services.openrouter_service.select_featured_image",
+            new=AsyncMock(return_value=0),
+        ),
+    ):
+        picked = await pick_graphic_featured_image(
+            db,
+            user_id=7,
+            title="Anthropic IPO",
+            topic="Anthropic",
+            exclude_urls={"https://cdn.example/reuse-me.jpg"},
+        )
+    assert picked is not None
+    assert picked["url"] == "https://cdn.example/unique.jpg"
+
+
+@pytest.mark.asyncio
+async def test_pick_graphic_featured_image_falls_back_when_all_excluded():
+    db = MagicMock()
+    custom_pool = [
+        {
+            "title": "Only photo",
+            "original": "https://cdn.example/only.jpg",
+            "thumbnail": "https://cdn.example/only-t.jpg",
+            "source": "Custom Image Search",
+        },
+    ]
+    with (
+        patch(
+            "app.services.custom_image_search_service.is_custom_image_search_configured",
+            return_value=True,
+        ),
+        patch(
+            "app.services.custom_image_search_service.search_images_for_user",
+            new=AsyncMock(return_value=custom_pool),
+        ),
+        patch(
+            "app.services.openrouter_service.select_featured_image",
+            new=AsyncMock(return_value=0),
+        ),
+    ):
+        picked = await pick_graphic_featured_image(
+            db,
+            user_id=7,
+            title="SSH Vulnerability",
+            exclude_urls={"https://cdn.example/only.jpg"},
+        )
+    assert picked is not None
+    assert picked["url"] == "https://cdn.example/only.jpg"
+
+
+def test_collect_recent_featured_image_urls_reads_workflow_state():
+    db = MagicMock()
+    row = MagicMock()
+    row.state_data = {
+        "featured_image": {
+            "url": "https://cdn.example/a.jpg",
+            "thumbnail": "https://cdn.example/a-t.jpg",
+        }
+    }
+    q = MagicMock()
+    db.query.return_value = q
+    q.filter.return_value = q
+    q.order_by.return_value = q
+    q.limit.return_value = q
+    q.all.return_value = [row]
+    used = collect_recent_featured_image_urls(db, user_id=3)
+    assert "https://cdn.example/a.jpg" in used
+    assert "https://cdn.example/a-t.jpg" in used
+
+
+def test_rank_math_meta_sets_social_image():
+    meta = _rank_math_meta(
+        focus_keyword="ssh",
+        social_image_url="https://wp.example/uploads/photo.jpg",
+    )
+    assert meta["rank_math_facebook_image"] == "https://wp.example/uploads/photo.jpg"
+    assert meta["rank_math_twitter_image"] == "https://wp.example/uploads/photo.jpg"
+
+
+def test_looks_like_generated_infographic_url():
+    assert _looks_like_generated_infographic_url(
+        "https://api.example/api/blog/infographics/five-actions-abc.png"
+    )
+    assert not _looks_like_generated_infographic_url(
+        "https://cdn.example/office.jpg"
+    )
