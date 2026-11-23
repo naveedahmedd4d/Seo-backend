@@ -1449,7 +1449,7 @@ async def linkedin_add_organization(
     if not (request.vanity_name or "").strip() and not (request.organization_id or "").strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Provide a company slug (e.g. webkitsolutions) or organization id",
+            detail="Provide a company slug or organization id",
         )
     try:
         updated, _org = await add_linkedin_organization(
