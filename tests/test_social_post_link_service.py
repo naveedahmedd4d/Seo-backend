@@ -41,6 +41,7 @@ def _seed(
     query="Bryce Miller Mariners",
     related=False,
     news_link="https://external-news.example/story",
+    settings_snapshot=None,
 ):
     user = User(email="links@example.com", password_hash="x")
     link_db.add(user)
@@ -84,6 +85,7 @@ def _seed(
         description="Latest story",
         news_results=[{"link": news_link}] if news_link else [],
         related_published_post_id=relevant.id if related else None,
+        settings_snapshot=settings_snapshot,
     )
     link_db.add(history)
     link_db.commit()
@@ -106,11 +108,37 @@ async def test_standalone_social_post_has_no_blog_url(link_db):
 
 
 @pytest.mark.asyncio
+async def test_social_post_ignores_first_party_news_link(link_db):
+    """Even a WordPress URL in news_results must not appear on Social Posts."""
+    user, _site, _relevant, history = _seed(
+        link_db,
+        query="Apple AI agent",
+        news_link="https://trendifypress.com/google-gives-gemini-the-ability/",
+        settings_snapshot={"post_type": "social"},
+    )
+    result = await resolve_facebook_destination_url(link_db, user.id, history)
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_first_party_news_link_is_used_for_blog_promotion(link_db):
     user, _site, _relevant, history = _seed(
         link_db,
         query="Quantum battery breakthrough",
         news_link="https://trendifypress.com/quantum-battery-guide/",
+        settings_snapshot={"match_blog": True},
+    )
+    result = await resolve_facebook_destination_url(link_db, user.id, history)
+    assert result == "https://trendifypress.com/quantum-battery-guide/"
+
+
+@pytest.mark.asyncio
+async def test_post_type_blog_uses_first_party_news_link(link_db):
+    user, _site, _relevant, history = _seed(
+        link_db,
+        query="Quantum battery breakthrough",
+        news_link="https://trendifypress.com/quantum-battery-guide/",
+        settings_snapshot={"post_type": "blog"},
     )
     result = await resolve_facebook_destination_url(link_db, user.id, history)
     assert result == "https://trendifypress.com/quantum-battery-guide/"
@@ -122,6 +150,7 @@ async def test_external_news_link_is_never_used(link_db):
         link_db,
         query="Quantum battery breakthrough",
         news_link="https://external-news.example/quantum",
+        settings_snapshot={"match_blog": True},
     )
     result = await resolve_facebook_destination_url(link_db, user.id, history)
     assert result is None

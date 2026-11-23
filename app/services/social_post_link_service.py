@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
@@ -31,13 +32,29 @@ def _site_hosts(sites: list[WordPressSite]) -> set[str]:
     return hosts
 
 
-def _first_party_news_link(history: SocialPostHistory, site_hosts: set[str]) -> str | None:
-    """Return a news_results link that already points at the user's WordPress site.
+def _settings_snapshot(history: SocialPostHistory) -> dict[str, Any]:
+    snap = history.settings_snapshot
+    return snap if isinstance(snap, dict) else {}
 
-    Used by weekly blog-promotion flows that stash the WordPress permalink in
-    news_results without setting related_published_post_id. External research
-    URLs are ignored so standalone social posts stay link-free.
+
+def is_blog_promotion_post(history: SocialPostHistory) -> bool:
+    """True only when the post is meant to promote a blog (include website URL).
+
+    Standalone Social Posts must stay link-free even if news_results happen to
+    contain a first-party WordPress URL.
     """
+    if history.related_published_post_id:
+        return True
+    snap = _settings_snapshot(history)
+    if snap.get("match_blog") is True:
+        return True
+    if snap.get("post_type") == "blog":
+        return True
+    return False
+
+
+def _first_party_news_link(history: SocialPostHistory, site_hosts: set[str]) -> str | None:
+    """Return a news_results link that already points at the user's WordPress site."""
     if not site_hosts:
         return None
     rows = history.news_results if isinstance(history.news_results, list) else []
@@ -60,11 +77,13 @@ async def resolve_facebook_destination_url(
 ) -> str | None:
     """Choose a first-party URL for a Facebook photo caption.
 
-    Blog posts (explicit related article, or a first-party WordPress link already
-    stored on the history row) get that URL. Standalone social posts get None —
-    no fuzzy article match and no homepage fallback — so Facebook captions are
-    not forced to include a blog link.
+    Social Posts return None (no website URL in the caption). Blog Posts return
+    the related article URL, or a first-party WordPress permalink already stored
+    on the history row for weekly blog-promotion flows.
     """
+    if not is_blog_promotion_post(history):
+        return None
+
     sites = (
         db.query(WordPressSite)
         .filter(WordPressSite.user_id == user_id)
