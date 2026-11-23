@@ -23,8 +23,10 @@ logger = logging.getLogger(__name__)
 LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 LINKEDIN_API_BASE = "https://api.linkedin.com"
-# Marketing / Community Management versioned REST calls.
-LINKEDIN_REST_VERSION = "202411"
+# Marketing / Community Management versioned REST calls (YYYYMM).
+# LinkedIn sunsets versions after ~1 year; 426 NONEXISTENT_VERSION means bump this.
+# See https://learn.microsoft.com/en-us/linkedin/marketing/versioning
+LINKEDIN_REST_VERSION = "202611"
 
 # w_organization_social: post as a Company Page the member administers.
 # rw_organization_admin: list organization ACLs so we can offer a Page picker.
@@ -498,6 +500,12 @@ async def _create_organization_post(
         )
     if response.status_code >= 400:
         logger.error("LinkedIn organization posts failed: %s", response.text)
+        if response.status_code == 426:
+            raise ValueError(
+                "LinkedIn API version is outdated (426 Upgrade Required). "
+                f"Server is using Linkedin-Version {LINKEDIN_REST_VERSION}; "
+                "ask an admin to update LINKEDIN_REST_VERSION to a current YYYYMM release."
+            )
         response.raise_for_status()
     post_id = response.headers.get("x-restli-id") or response.headers.get("X-RestLi-Id")
     if post_id:
