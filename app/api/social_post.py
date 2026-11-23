@@ -650,7 +650,7 @@ async def publish_social_post_from_history(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    if not request.platforms:
+    if not request.platforms and not request.also_publish_to_backlinks:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Select at least one platform")
     try:
         results, history, media_url = await publish_history_post(
@@ -660,6 +660,7 @@ async def publish_social_post_from_history(
             request.platforms,
             image_base64=request.image_base64,
             platform_options=request.platform_options,
+            also_publish_to_backlinks=request.also_publish_to_backlinks,
             request=http_request,
         )
         return SocialPostPublishResponse(

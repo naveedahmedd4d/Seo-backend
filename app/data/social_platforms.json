@@ -13,19 +13,6 @@
     "docs_url": "https://www.reddit.com/dev/api"
   },
   {
-    "id": "devto",
-    "name": "Dev.to",
-    "category": "article",
-    "auth_type": "api_key",
-    "content_types": ["article", "link"],
-    "status": "active",
-    "post_api_available": true,
-    "connect_enabled": true,
-    "sort_order": 20,
-    "description": "Publish markdown articles to the Dev.to community.",
-    "docs_url": "https://developers.forem.com/api"
-  },
-  {
     "id": "pinterest",
     "name": "Pinterest",
     "category": "social",
@@ -117,19 +104,6 @@
     "docs_url": "https://docs.bsky.app/"
   },
   {
-    "id": "tumblr",
-    "name": "Tumblr",
-    "category": "social",
-    "auth_type": "oauth2",
-    "content_types": ["link", "image_card"],
-    "status": "coming_soon",
-    "post_api_available": true,
-    "connect_enabled": false,
-    "sort_order": 100,
-    "description": "Share photo and link posts to Tumblr blogs.",
-    "docs_url": "https://www.tumblr.com/docs/en/api/v2"
-  },
-  {
     "id": "threads",
     "name": "Threads",
     "category": "social",
@@ -169,6 +143,19 @@
     "docs_url": "https://discord.com/developers/docs/resources/webhook"
   },
   {
+    "id": "devto",
+    "name": "Dev.to",
+    "category": "article",
+    "auth_type": "api_key",
+    "content_types": ["article", "link"],
+    "status": "active",
+    "post_api_available": true,
+    "connect_enabled": true,
+    "sort_order": 150,
+    "description": "Publish markdown articles to the Dev.to community.",
+    "docs_url": "https://developers.forem.com/api"
+  },
+  {
     "id": "hashnode",
     "name": "Hashnode",
     "category": "article",
@@ -177,7 +164,7 @@
     "status": "active",
     "post_api_available": true,
     "connect_enabled": true,
-    "sort_order": 150,
+    "sort_order": 160,
     "description": "Publish developer articles to Hashnode.",
     "docs_url": "https://apidocs.hashnode.com/"
   },
@@ -190,9 +177,48 @@
     "status": "active",
     "post_api_available": true,
     "connect_enabled": true,
-    "sort_order": 160,
+    "sort_order": 170,
     "description": "Publish blog posts to Blogger via Google OAuth.",
     "docs_url": "https://developers.google.com/blogger/docs/3.0/using"
+  },
+  {
+    "id": "tumblr",
+    "name": "Tumblr",
+    "category": "article",
+    "auth_type": "oauth2",
+    "content_types": ["article", "link"],
+    "status": "active",
+    "post_api_available": true,
+    "connect_enabled": true,
+    "sort_order": 180,
+    "description": "Publish text posts with backlinks to your Tumblr blog.",
+    "docs_url": "https://www.tumblr.com/docs/en/api/v2"
+  },
+  {
+    "id": "wordpress_com",
+    "name": "WordPress.com",
+    "category": "article",
+    "auth_type": "oauth2",
+    "content_types": ["article"],
+    "status": "active",
+    "post_api_available": true,
+    "connect_enabled": true,
+    "sort_order": 190,
+    "description": "Publish articles to a free WordPress.com blog with a crawlable backlink.",
+    "docs_url": "https://developer.wordpress.com/docs/api/"
+  },
+  {
+    "id": "telegraph",
+    "name": "Telegra.ph",
+    "category": "article",
+    "auth_type": "api_key",
+    "content_types": ["article"],
+    "status": "active",
+    "post_api_available": true,
+    "connect_enabled": true,
+    "sort_order": 200,
+    "description": "Publish Instant View pages on Telegra.ph with a link back to your site.",
+    "docs_url": "https://telegra.ph/api"
   },
   {
     "id": "pocket",
@@ -203,7 +229,7 @@
     "status": "coming_soon",
     "post_api_available": true,
     "connect_enabled": false,
-    "sort_order": 170,
+    "sort_order": 210,
     "description": "Save article URLs to Pocket for read-later.",
     "docs_url": "https://getpocket.com/developer/docs/v3/add"
   }

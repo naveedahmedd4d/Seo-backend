@@ -42,6 +42,7 @@ class BlogGenerateRequest(BaseModel):
     # publish requires content + featured image; otherwise the post is saved as draft.
     publication_mode: Optional[Literal["draft", "publish"]] = None
     wordpress_site_id: Optional[int] = None
+    also_publish_to_backlinks: bool = False
 
     @field_validator("celebrity_content_type")
     @classmethod
@@ -121,6 +122,7 @@ class BlogPublishRequest(BaseModel):
     blog_key: Optional[str] = None  # "parent", "child_0", "child_1" for tree; default parent
     body_content_html: Optional[str] = None  # when set, use as post body (same as preview); backend appends related + schema
     source_category: Optional[str] = None  # app keyword category; mapped to WordPress taxonomy on publish
+    also_publish_to_backlinks: bool = False
 
 
 class BlogPublishResponse(BaseModel):

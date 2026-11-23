@@ -319,7 +319,7 @@ def _carry_publication_prefs(workflow_state, state_data: Dict[str, Any]) -> Dict
     """Keep generate-time WordPress prefs when replacing state_data on completion."""
     prev = workflow_state.state_data if isinstance(workflow_state.state_data, dict) else {}
     out = dict(state_data)
-    for key in ("publication_mode", "wordpress_site_id"):
+    for key in ("publication_mode", "wordpress_site_id", "also_publish_to_backlinks"):
         if out.get(key) is None and prev.get(key) is not None:
             out[key] = prev[key]
     return out
@@ -380,6 +380,10 @@ async def _maybe_auto_publish_generated_blog(
                     status=wp_status,
                     blog_key=blog_key,
                     source_category=state_data.get("category"),
+                    also_publish_to_backlinks=bool(
+                        state_data.get("also_publish_to_backlinks")
+                    )
+                    and wp_status == "publish",
                 ),
                 current_user=user,
                 db=db,
@@ -1798,6 +1802,11 @@ async def generate_blog(
                     if request.wordpress_site_id is not None
                     else {}
                 ),
+                **(
+                    {"also_publish_to_backlinks": True}
+                    if request.also_publish_to_backlinks
+                    else {}
+                ),
             }
         )
         db.add(workflow_state)
@@ -2757,6 +2766,48 @@ async def publish_blog(
                 state_data["wordpress_post_id"] = result.get("post_id")
             workflow_state.state_data = state_data
             db.commit()
+
+            if (
+                request.status == "publish"
+                and request.also_publish_to_backlinks
+                and result.get("link")
+            ):
+                try:
+                    from app.services.weekly_content_service import (
+                        _generate_and_publish_social,
+                        platforms_for_blog_share,
+                    )
+
+                    outreach = platforms_for_blog_share(
+                        db,
+                        current_user.id,
+                        share_social=False,
+                        share_outreach=True,
+                    )
+                    if outreach:
+                        await _generate_and_publish_social(
+                            db,
+                            current_user,
+                            query=title,
+                            source_title=title,
+                            source_snippet=(content or "")[:1200],
+                            source_url=result.get("link"),
+                            platforms=outreach,
+                            settings_snapshot={
+                                "source": "blog_publish_backlinks",
+                                "workflow_id": request.workflow_id,
+                                "published_post_id": record.id,
+                            },
+                            body_html=content if use_html else None,
+                            match_blog=True,
+                        )
+                except Exception as outreach_exc:
+                    # WordPress publish already succeeded; outreach is best-effort.
+                    logger.warning(
+                        "Blog→backlinks publish failed for workflow %s: %s",
+                        request.workflow_id,
+                        outreach_exc,
+                    )
         else:
             db.add(BlogPublicationAttempt(
                 user_id=current_user.id,

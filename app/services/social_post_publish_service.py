@@ -98,6 +98,8 @@ def _platform_options_dict(
         "reddit": platform_options.reddit,
         "facebook": platform_options.facebook,
         "instagram": platform_options.instagram,
+        "tumblr": platform_options.tumblr,
+        "wordpress_com": platform_options.wordpress_com,
     }
     opts = mapping.get(platform)
     return opts if isinstance(opts, dict) else {}
@@ -129,7 +131,7 @@ async def publish_to_platforms(
                 image_bytes = None
 
     # Outreach platforms use the blog URL in-body for backlinks when present.
-    outreach_platforms = {"devto", "hashnode", "blogger"}
+    from app.services.outreach_platforms import OUTREACH_PLATFORMS
 
     results: list[SocialPostPublishResultItem] = []
     for platform in platforms:
@@ -138,7 +140,7 @@ async def publish_to_platforms(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user_id, history)
             platform_ctx = replace(ctx, source_url=first_party_url)
-        elif platform in outreach_platforms:
+        elif platform in OUTREACH_PLATFORMS:
             blog_url = await resolve_facebook_destination_url(db, user_id, history)
             if blog_url:
                 platform_ctx = replace(ctx, source_url=blog_url)
@@ -244,20 +246,50 @@ async def publish_history_post(
     *,
     image_base64: Optional[str] = None,
     platform_options: Optional[SocialPostPublishPlatformOptions] = None,
+    also_publish_to_backlinks: bool = False,
     request: Optional[Request] = None,
 ) -> tuple[list[SocialPostPublishResultItem], SocialPostHistory, str | None]:
+    from app.services.outreach_platforms import OUTREACH_PLATFORMS
+    from app.services.social_account_service import get_user_social_accounts
+
     history = load_history_post(db, user_id, history_id)
     history.publish_status = "publishing"
     db.commit()
 
-    filename, media_url = ensure_media_saved(db, history, image_base64, request=request)
-    db.refresh(history)
+    resolved_platforms = [p.strip().lower() for p in platforms if p and str(p).strip()]
+    if also_publish_to_backlinks:
+        connected = {
+            (a.platform or "").strip().lower()
+            for a in get_user_social_accounts(db, user_id)
+            if a.platform
+        }
+        for platform in sorted(OUTREACH_PLATFORMS):
+            if platform in connected and platform not in resolved_platforms:
+                resolved_platforms.append(platform)
+
+    outreach_only = bool(resolved_platforms) and all(
+        p in OUTREACH_PLATFORMS for p in resolved_platforms
+    )
+    media_url: str | None = None
+    if outreach_only:
+        # Article/backlink publishes do not need a social card image.
+        if history.media_filename:
+            try:
+                from app.services.social_media_storage import public_image_url, resolve_media_path
+
+                resolve_media_path(history.media_filename)
+                media_url = public_image_url(history.media_filename, request)
+            except Exception:
+                media_url = None
+    else:
+        _, media_url = ensure_media_saved(db, history, image_base64, request=request)
+        db.refresh(history)
 
     results = await publish_to_platforms(
         db,
         user_id,
         history,
-        platforms,
+        resolved_platforms,
         platform_options=platform_options,
         request=request,
     )

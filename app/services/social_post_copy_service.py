@@ -135,8 +135,25 @@ def build_hashnode_markdown(ctx: PublishCopyContext) -> str:
 
 
 def build_blogger_html(ctx: PublishCopyContext) -> str:
+    return _build_article_html(ctx)
+
+
+def build_tumblr_html(ctx: PublishCopyContext) -> str:
+    return _build_article_html(ctx, include_h1=False)
+
+
+def build_wordpress_com_html(ctx: PublishCopyContext) -> str:
+    return _build_article_html(ctx)
+
+
+def build_telegraph_text(ctx: PublishCopyContext) -> str:
+    """Plain/markdown body for Telegra.ph Node conversion (includes backlink)."""
+    return _build_article_markdown(ctx)
+
+
+def _build_article_html(ctx: PublishCopyContext, *, include_h1: bool = True) -> str:
     headline = (ctx.headline or "").strip()
-    html_parts = [f"<h1>{headline}</h1>"] if headline else []
+    html_parts = [f"<h1>{headline}</h1>"] if include_h1 and headline else []
     body = (ctx.story_caption or ctx.short_description or "").strip()
     if body:
         for paragraph in body.split("\n\n"):
@@ -183,6 +200,12 @@ def build_platform_copy(platform: str, ctx: PublishCopyContext) -> dict[str, str
         return {"title": ctx.headline, "content_markdown": build_hashnode_markdown(ctx)}
     if platform == "blogger":
         return {"title": ctx.headline, "content_html": build_blogger_html(ctx)}
+    if platform == "tumblr":
+        return {"title": ctx.headline, "body_html": build_tumblr_html(ctx)}
+    if platform == "wordpress_com":
+        return {"title": ctx.headline, "content_html": build_wordpress_com_html(ctx)}
+    if platform == "telegraph":
+        return {"title": ctx.headline, "content_text": build_telegraph_text(ctx)}
     # fallback: combined long form
     return {"text": _build_long_form_post(ctx)}
 
@@ -202,6 +225,12 @@ def publish_context_from_history(history) -> PublishCopyContext:
             if value:
                 source_url = value
                 break
+    if not source_url:
+        snap = getattr(history, "settings_snapshot", None)
+        if isinstance(snap, dict):
+            snap_url = snap.get("source_url")
+            if isinstance(snap_url, str) and snap_url.strip():
+                source_url = snap_url.strip()
     if not source_url:
         news = history.news_results
         if isinstance(news, list) and news:

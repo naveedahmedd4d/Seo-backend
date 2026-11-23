@@ -24,6 +24,7 @@ from app.models.social_post_history import SocialPostHistory
 from app.models.user import User
 from app.models.wordpress_site import WordPressSite
 from app.models.workflow_state import WorkflowState, WorkflowStatus, WorkflowType
+from app.services.outreach_platforms import OUTREACH_PLATFORMS
 
 logger = logging.getLogger(__name__)
 
@@ -617,7 +618,7 @@ async def _run_social(
                 if platform == "facebook":
                     first_party_url = await resolve_facebook_destination_url(db, user.id, history)
                     platform_ctx = replace(ctx, source_url=first_party_url)
-                elif platform in {"devto", "hashnode", "blogger"}:
+                elif platform in OUTREACH_PLATFORMS:
                     blog_url = await resolve_facebook_destination_url(db, user.id, history)
                     if blog_url:
                         platform_ctx = replace(ctx, source_url=blog_url)

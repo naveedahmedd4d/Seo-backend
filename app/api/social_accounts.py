@@ -44,6 +44,13 @@ from app.schemas.social_account import (
     RedditSubredditUpdateRequest,
     SocialAccountConnectResponse,
     SocialAccountResponse,
+    TelegraphConnectRequest,
+    TumblrBlogItem,
+    TumblrBlogUpdateRequest,
+    TumblrBlogsResponse,
+    WordPressComSiteItem,
+    WordPressComSitesResponse,
+    WordPressComSiteUpdateRequest,
 )
 from app.services.auth_service import (
     create_oauth_state_token,
@@ -61,6 +68,21 @@ from app.services.blogger_service import (
 from app.services.bluesky_service import save_bluesky_account_from_credentials
 from app.services.devto_service import save_devto_account_from_api_key
 from app.services.hashnode_service import save_hashnode_account_from_token
+from app.services.telegraph_service import save_telegraph_account
+from app.services.tumblr_service import (
+    pop_pending_request_token,
+    save_tumblr_account_from_verifier,
+    set_default_blog as set_tumblr_default_blog,
+    start_tumblr_oauth,
+    store_pending_request_token,
+)
+from app.services.wordpress_com_service import (
+    build_authorization_url as build_wordpress_com_authorization_url,
+    fetch_sites as fetch_wordpress_com_sites,
+    get_valid_wordpress_com_access_token,
+    save_wordpress_com_account_from_code,
+    set_default_site as set_wordpress_com_default_site,
+)
 from app.services.facebook_service import (
     build_authorization_url as build_facebook_authorization_url,
     get_valid_facebook_page_context,
@@ -118,7 +140,10 @@ from app.services.social_platform_app_service import (
     get_reddit_redirect_uri,
     get_pinterest_app_credentials,
     get_pinterest_redirect_uri,
+    get_tumblr_redirect_uri,
     get_user_platform_app,
+    get_wordpress_com_app_credentials,
+    get_wordpress_com_redirect_uri,
     get_x_app_credentials,
     get_x_redirect_uri,
     upsert_user_platform_app,
@@ -128,6 +153,8 @@ from app.services.social_platform_app_service import (
     user_has_linkedin_app,
     user_has_mastodon_app,
     user_has_pinterest_app,
+    user_has_tumblr_app,
+    user_has_wordpress_com_app,
     user_has_reddit_app,
     user_has_x_app,
 )
@@ -220,14 +247,21 @@ def _account_to_response(account) -> SocialAccountResponse:
 
 
 def _oauth_callback_redirect(platform: str, *, error: str | None = None) -> RedirectResponse:
+    from app.services.outreach_platforms import OUTREACH_PLATFORMS
+
     frontend = settings.frontend_url.rstrip("/")
+    path = (
+        "/dashboard/backlinks"
+        if platform in OUTREACH_PLATFORMS
+        else "/dashboard/social-post"
+    )
     if error:
         params = urlencode(
             {"social_error": sanitize_oauth_error(error), "platform": platform}
         )
     else:
         params = urlencode({"connected": platform})
-    return RedirectResponse(f"{frontend}/dashboard/social-post?{params}")
+    return RedirectResponse(f"{frontend}{path}?{params}")
 
 
 @router.get("", response_model=List[SocialAccountResponse])
@@ -777,6 +811,292 @@ async def blogger_set_default_blog(
         account,
         request.blog_id,
         str(match.get("name") or "Blog"),
+    )
+    return _account_to_response(updated)
+
+
+# --- Telegra.ph ---
+
+
+@router.post("/telegraph/connect", response_model=ApiKeyConnectResponse)
+async def telegraph_connect(
+    request: TelegraphConnectRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        account = await save_telegraph_account(
+            db,
+            current_user.id,
+            short_name=request.short_name or "SeoAutomation",
+            author_name=request.author_name,
+            author_url=request.author_url,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    return ApiKeyConnectResponse(connected=True, account_label=account.account_label)
+
+
+# --- Tumblr ---
+
+
+@router.get("/tumblr/setup", response_model=OAuthSetupResponse)
+async def tumblr_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_row = get_user_platform_app(db, current_user.id, "tumblr")
+    return OAuthSetupResponse(
+        redirect_uri=get_tumblr_redirect_uri(http_request),
+        has_app_credentials=user_has_tumblr_app(db, current_user.id),
+        client_id=app_row.client_id if app_row else None,
+        developer_portal_url="https://www.tumblr.com/oauth/apps",
+    )
+
+
+@router.post("/tumblr/connect", response_model=SocialAccountConnectResponse)
+async def tumblr_connect(
+    request: OAuthConnectRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        upsert_user_platform_app(
+            db,
+            current_user.id,
+            "tumblr",
+            request.client_id,
+            request.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    redirect_uri = get_tumblr_redirect_uri(http_request)
+    try:
+        oauth_start = await start_tumblr_oauth(
+            db, current_user.id, redirect_uri=redirect_uri
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    store_pending_request_token(
+        oauth_start["oauth_token"],
+        user_id=current_user.id,
+        oauth_token_secret=oauth_start["oauth_token_secret"],
+    )
+    return SocialAccountConnectResponse(authorization_url=oauth_start["authorization_url"])
+
+
+@router.get("/tumblr/callback")
+async def tumblr_callback(
+    http_request: Request,
+    oauth_token: str = Query(default=""),
+    oauth_verifier: str = Query(default=""),
+    error: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    if error:
+        return _oauth_callback_redirect("tumblr", error=error)
+    if not oauth_token or not oauth_verifier:
+        return _oauth_callback_redirect("tumblr", error="missing_verifier")
+
+    pending = pop_pending_request_token(oauth_token)
+    if not pending:
+        return _oauth_callback_redirect("tumblr", error="expired_or_unknown_token")
+
+    redirect_uri = get_tumblr_redirect_uri(http_request)
+    try:
+        await save_tumblr_account_from_verifier(
+            db,
+            int(pending["user_id"]),
+            oauth_token=oauth_token,
+            oauth_token_secret=str(pending["oauth_token_secret"]),
+            oauth_verifier=oauth_verifier,
+            redirect_uri=redirect_uri,
+        )
+    except Exception as exc:
+        return _oauth_callback_redirect("tumblr", error=str(exc))
+
+    return _oauth_callback_redirect("tumblr")
+
+
+@router.get("/tumblr/blogs", response_model=TumblrBlogsResponse)
+async def tumblr_blogs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "tumblr")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tumblr not connected")
+    metadata = get_account_metadata(account)
+    blogs = [
+        TumblrBlogItem(
+            name=str(b["name"]),
+            title=b.get("title"),
+            url=b.get("url"),
+        )
+        for b in (metadata.get("blogs") or [])
+        if b.get("name")
+    ]
+    return TumblrBlogsResponse(
+        blogs=blogs,
+        default_blog_name=metadata.get("default_blog_name"),
+    )
+
+
+@router.put("/tumblr/blog", response_model=SocialAccountResponse)
+async def tumblr_set_default_blog(
+    request: TumblrBlogUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "tumblr")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tumblr not connected")
+    metadata = get_account_metadata(account)
+    match = next(
+        (b for b in (metadata.get("blogs") or []) if b.get("name") == request.blog_name),
+        None,
+    )
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Blog not found")
+    updated = set_tumblr_default_blog(
+        db,
+        account,
+        request.blog_name,
+        blog_url=match.get("url"),
+    )
+    return _account_to_response(updated)
+
+
+# --- WordPress.com ---
+
+
+@router.get("/wordpress_com/setup", response_model=OAuthSetupResponse)
+async def wordpress_com_setup(
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_row = get_user_platform_app(db, current_user.id, "wordpress_com")
+    return OAuthSetupResponse(
+        redirect_uri=get_wordpress_com_redirect_uri(http_request),
+        has_app_credentials=user_has_wordpress_com_app(db, current_user.id),
+        client_id=app_row.client_id if app_row else None,
+        developer_portal_url="https://developer.wordpress.com/apps/",
+    )
+
+
+@router.post("/wordpress_com/connect", response_model=SocialAccountConnectResponse)
+async def wordpress_com_connect(
+    request: OAuthConnectRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        upsert_user_platform_app(
+            db,
+            current_user.id,
+            "wordpress_com",
+            request.client_id,
+            request.client_secret,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    redirect_uri = get_wordpress_com_redirect_uri(http_request)
+    credentials = get_wordpress_com_app_credentials(
+        db, current_user.id, redirect_uri=redirect_uri
+    )
+    if not credentials:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save WordPress.com app credentials",
+        )
+
+    state = create_oauth_state_token(current_user, "wordpress_com")
+    return SocialAccountConnectResponse(
+        authorization_url=build_wordpress_com_authorization_url(credentials, state)
+    )
+
+
+@router.get("/wordpress_com/callback")
+async def wordpress_com_callback(
+    http_request: Request,
+    code: str = Query(default=""),
+    state: str = Query(default=""),
+    error: str = Query(default=""),
+    db: Session = Depends(get_db),
+):
+    if error:
+        return _oauth_callback_redirect("wordpress_com", error=error)
+    if not code or not state:
+        return _oauth_callback_redirect("wordpress_com", error="missing_code")
+
+    user = get_user_from_oauth_state(state, db, "wordpress_com")
+    if not user:
+        return _oauth_callback_redirect("wordpress_com", error="invalid_state")
+
+    redirect_uri = get_wordpress_com_redirect_uri(http_request)
+    try:
+        await save_wordpress_com_account_from_code(
+            db, user.id, code, redirect_uri=redirect_uri
+        )
+    except Exception as exc:
+        return _oauth_callback_redirect("wordpress_com", error=str(exc))
+
+    return _oauth_callback_redirect("wordpress_com")
+
+
+@router.get("/wordpress_com/sites", response_model=WordPressComSitesResponse)
+async def wordpress_com_sites(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "wordpress_com")
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="WordPress.com not connected"
+        )
+    access_token = await get_valid_wordpress_com_access_token(db, current_user.id)
+    sites_raw = await fetch_wordpress_com_sites(access_token)
+    metadata = get_account_metadata(account)
+    sites = [
+        WordPressComSiteItem(id=str(s["id"]), name=str(s.get("name") or "Site"), url=s.get("url"))
+        for s in sites_raw
+        if s.get("id")
+    ]
+    return WordPressComSitesResponse(
+        sites=sites,
+        default_site_id=metadata.get("default_site_id"),
+    )
+
+
+@router.put("/wordpress_com/site", response_model=SocialAccountResponse)
+async def wordpress_com_set_default_site(
+    request: WordPressComSiteUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "wordpress_com")
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="WordPress.com not connected"
+        )
+    access_token = await get_valid_wordpress_com_access_token(db, current_user.id)
+    sites_raw = await fetch_wordpress_com_sites(access_token)
+    match = next((s for s in sites_raw if str(s.get("id")) == request.site_id), None)
+    if not match:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Site not found")
+    updated = set_wordpress_com_default_site(
+        db,
+        account,
+        request.site_id,
+        str(match.get("name") or "Site"),
     )
     return _account_to_response(updated)
 

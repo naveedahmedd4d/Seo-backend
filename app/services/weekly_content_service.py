@@ -30,11 +30,11 @@ from app.services.international_events_service import (
     sync_calendar_events,
     upcoming_week_window,
 )
+from app.services.outreach_platforms import OUTREACH_PLATFORMS
 from app.services.social_account_service import get_user_social_accounts
 
 logger = logging.getLogger(__name__)
 
-OUTREACH_PLATFORMS = {"devto", "hashnode", "blogger"}
 SOCIAL_IMAGE_PLATFORMS = {
     "facebook",
     "instagram",

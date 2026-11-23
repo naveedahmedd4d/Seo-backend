@@ -164,6 +164,36 @@ def test_blogger_setup_returns_redirect_uri(client, auth_headers):
     )
 
 
+def test_tumblr_setup_returns_redirect_uri(client, auth_headers):
+    response = client.get(
+        "/api/social-accounts/tumblr/setup",
+        headers={
+            **auth_headers,
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "api.example.com",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["redirect_uri"] == (
+        "https://api.example.com/api/social-accounts/tumblr/callback"
+    )
+
+
+def test_wordpress_com_setup_returns_redirect_uri(client, auth_headers):
+    response = client.get(
+        "/api/social-accounts/wordpress_com/setup",
+        headers={
+            **auth_headers,
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": "api.example.com",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["redirect_uri"] == (
+        "https://api.example.com/api/social-accounts/wordpress_com/callback"
+    )
+
+
 def test_reddit_setup_returns_redirect_uri(client, auth_headers):
     response = client.get("/api/social-accounts/reddit/setup", headers=auth_headers)
     assert response.status_code == 200

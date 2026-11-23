@@ -102,6 +102,7 @@ class SocialPostHistoryPublishRequest(BaseModel):
     platforms: List[str]
     image_base64: Optional[str] = None
     platform_options: Optional["SocialPostPublishPlatformOptions"] = None
+    also_publish_to_backlinks: bool = False
 
 
 class SocialPostHistoryMediaRequest(BaseModel):
@@ -114,6 +115,8 @@ class SocialPostPublishPlatformOptions(BaseModel):
     reddit: Optional[dict[str, Any]] = None
     facebook: Optional[dict[str, Any]] = None
     instagram: Optional[dict[str, Any]] = None
+    tumblr: Optional[dict[str, Any]] = None
+    wordpress_com: Optional[dict[str, Any]] = None
 
 
 class SocialPostPublishRequest(BaseModel):
@@ -125,6 +128,7 @@ class SocialPostPublishRequest(BaseModel):
     hashtags: Optional[List[str]] = None
     image_base64: Optional[str] = None
     platform_options: Optional[SocialPostPublishPlatformOptions] = None
+    also_publish_to_backlinks: bool = False
 
 
 class SocialPostPublishResultItem(BaseModel):

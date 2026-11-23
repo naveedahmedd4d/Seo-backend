@@ -143,6 +143,42 @@ def test_devto_markdown_omits_backlink_without_blog_url():
     assert "http" not in md
 
 
+def test_tumblr_html_includes_backlink():
+    from app.services.social_post_copy_service import build_tumblr_html
+
+    html = build_tumblr_html(_ctx(source_url="https://example.com/post"))
+    assert "Originally published at" in html
+    assert "https://example.com/post" in html
+
+
+def test_wordpress_com_html_includes_backlink():
+    from app.services.social_post_copy_service import build_wordpress_com_html
+
+    html = build_wordpress_com_html(_ctx(source_url="https://example.com/post"))
+    assert 'href="https://example.com/post"' in html
+
+
+def test_telegraph_text_includes_backlink():
+    from app.services.social_post_copy_service import build_telegraph_text
+
+    text = build_telegraph_text(_ctx(source_url="https://example.com/post"))
+    assert "Originally published at" in text
+    assert "https://example.com/post" in text
+
+
+def test_outreach_platforms_includes_new_sites():
+    from app.services.outreach_platforms import OUTREACH_PLATFORMS
+
+    assert OUTREACH_PLATFORMS == {
+        "devto",
+        "hashnode",
+        "blogger",
+        "tumblr",
+        "wordpress_com",
+        "telegraph",
+    }
+
+
 def test_publish_context_prefers_related_blog_url():
     class _Related:
         canonical_url = "https://webkitsolutions.com/canonical/"

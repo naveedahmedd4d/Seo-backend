@@ -52,6 +52,14 @@ def get_blogger_redirect_uri(request: Optional["Request"] = None) -> str:
     return get_platform_redirect_uri("blogger", request)
 
 
+def get_tumblr_redirect_uri(request: Optional["Request"] = None) -> str:
+    return get_platform_redirect_uri("tumblr", request)
+
+
+def get_wordpress_com_redirect_uri(request: Optional["Request"] = None) -> str:
+    return get_platform_redirect_uri("wordpress_com", request)
+
+
 def get_reddit_redirect_uri(request: Optional["Request"] = None) -> str:
     return get_platform_redirect_uri("reddit", request)
 
@@ -151,7 +159,7 @@ def upsert_user_platform_app(
         validation_error = validate_pinterest_app_credentials(client_id, client_secret)
     elif platform == "x":
         validation_error = validate_x_app_credentials(client_id, client_secret)
-    elif platform in {"blogger", "gsc"}:
+    elif platform in {"blogger", "gsc", "tumblr", "wordpress_com"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
     elif platform in {"reddit", "facebook"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
@@ -256,6 +264,38 @@ def get_blogger_app_credentials(
         client_id=row.client_id,
         client_secret=decrypt_api_key(row.client_secret),
         redirect_uri=redirect_uri or get_blogger_redirect_uri(),
+    )
+
+
+def get_tumblr_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    row = get_user_platform_app(db, user_id, "tumblr")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_tumblr_redirect_uri(),
+    )
+
+
+def get_wordpress_com_app_credentials(
+    db: Session,
+    user_id: int,
+    *,
+    redirect_uri: Optional[str] = None,
+) -> Optional[OAuthAppCredentials]:
+    row = get_user_platform_app(db, user_id, "wordpress_com")
+    if not row:
+        return None
+    return OAuthAppCredentials(
+        client_id=row.client_id,
+        client_secret=decrypt_api_key(row.client_secret),
+        redirect_uri=redirect_uri or get_wordpress_com_redirect_uri(),
     )
 
 
@@ -441,6 +481,14 @@ def user_has_blogger_app(db: Session, user_id: int) -> bool:
     return get_blogger_app_credentials(db, user_id) is not None
 
 
+def user_has_tumblr_app(db: Session, user_id: int) -> bool:
+    return get_tumblr_app_credentials(db, user_id) is not None
+
+
+def user_has_wordpress_com_app(db: Session, user_id: int) -> bool:
+    return get_wordpress_com_app_credentials(db, user_id) is not None
+
+
 def user_has_gsc_app(db: Session, user_id: int) -> bool:
     return get_gsc_app_credentials(db, user_id) is not None
 
@@ -462,7 +510,7 @@ def user_has_instagram_app(db: Session, user_id: int) -> bool:
 
 
 # Platforms that store credentials only on social_accounts (no social_platform_apps row)
-CREDENTIAL_ONLY_PLATFORMS = frozenset({"bluesky", "devto", "hashnode"})
+CREDENTIAL_ONLY_PLATFORMS = frozenset({"bluesky", "devto", "hashnode", "telegraph"})
 
 
 # Backward-compatible alias used by pinterest_service

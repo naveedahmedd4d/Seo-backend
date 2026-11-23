@@ -121,6 +121,42 @@ class BloggerBlogUpdateRequest(BaseModel):
     blog_id: str
 
 
+class TelegraphConnectRequest(BaseModel):
+    short_name: str = "SeoAutomation"
+    author_name: Optional[str] = None
+    author_url: Optional[str] = None
+
+
+class TumblrBlogItem(BaseModel):
+    name: str
+    title: Optional[str] = None
+    url: Optional[str] = None
+
+
+class TumblrBlogsResponse(BaseModel):
+    blogs: List[TumblrBlogItem]
+    default_blog_name: Optional[str] = None
+
+
+class TumblrBlogUpdateRequest(BaseModel):
+    blog_name: str
+
+
+class WordPressComSiteItem(BaseModel):
+    id: str
+    name: str
+    url: Optional[str] = None
+
+
+class WordPressComSitesResponse(BaseModel):
+    sites: List[WordPressComSiteItem]
+    default_site_id: Optional[str] = None
+
+
+class WordPressComSiteUpdateRequest(BaseModel):
+    site_id: str
+
+
 class RedditSubredditItem(BaseModel):
     name: str
     title: str
