@@ -617,6 +617,12 @@ async def _run_social(
                 if platform == "facebook":
                     first_party_url = await resolve_facebook_destination_url(db, user.id, history)
                     platform_ctx = replace(ctx, source_url=first_party_url)
+                elif platform in {"devto", "hashnode", "blogger"}:
+                    blog_url = await resolve_facebook_destination_url(db, user.id, history)
+                    if blog_url:
+                        platform_ctx = replace(ctx, source_url=blog_url)
+                    elif post.get("source_url"):
+                        platform_ctx = replace(ctx, source_url=post.get("source_url"))
                 results.append(await publish_to_platform(
                     db,
                     user.id,

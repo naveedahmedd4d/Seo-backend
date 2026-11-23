@@ -128,6 +128,9 @@ async def publish_to_platforms(
             except Exception:
                 image_bytes = None
 
+    # Outreach platforms use the blog URL in-body for backlinks when present.
+    outreach_platforms = {"devto", "hashnode", "blogger"}
+
     results: list[SocialPostPublishResultItem] = []
     for platform in platforms:
         opts = _platform_options_dict(platform, platform_options)
@@ -135,6 +138,10 @@ async def publish_to_platforms(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user_id, history)
             platform_ctx = replace(ctx, source_url=first_party_url)
+        elif platform in outreach_platforms:
+            blog_url = await resolve_facebook_destination_url(db, user_id, history)
+            if blog_url:
+                platform_ctx = replace(ctx, source_url=blog_url)
         result = await publish_to_platform(
             db,
             user_id,

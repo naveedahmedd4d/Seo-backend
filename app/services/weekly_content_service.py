@@ -864,6 +864,13 @@ async def _generate_and_publish_social(
         if platform == "facebook":
             first_party_url = await resolve_facebook_destination_url(db, user.id, history)
             platform_ctx = replace(platform_ctx, source_url=first_party_url)
+        elif platform in OUTREACH_PLATFORMS:
+            blog_url = await resolve_facebook_destination_url(db, user.id, history)
+            if blog_url:
+                platform_ctx = replace(platform_ctx, source_url=blog_url)
+            elif source_url and match_blog:
+                # Weekly blog promotion: WordPress permalink is the backlink target.
+                platform_ctx = replace(platform_ctx, source_url=source_url)
         results.append(
             await publish_to_platform(
                 db,

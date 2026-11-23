@@ -9,6 +9,7 @@ from app.services.social_post_copy_service import (
     build_mastodon_text,
     build_facebook_message,
     build_reddit_title,
+    build_devto_markdown,
     build_platform_copy,
     publish_context_from_history,
 )
@@ -127,3 +128,28 @@ def test_publish_context_from_history():
     assert ctx.story_caption == "Story"
     assert ctx.source_url == "https://news.test/item"
     assert ctx.hashtags == ["a", "b"]
+
+
+def test_devto_markdown_includes_blog_url_backlink():
+    md = build_devto_markdown(_ctx(source_url="https://webkitsolutions.com/ai-agent/"))
+    assert "https://webkitsolutions.com/ai-agent/" in md
+    assert "[https://webkitsolutions.com/ai-agent/](https://webkitsolutions.com/ai-agent/)" in md
+    assert "Originally published at" in md
+
+
+def test_devto_markdown_omits_backlink_without_blog_url():
+    md = build_devto_markdown(_ctx(source_url=None))
+    assert "Originally published at" not in md
+    assert "http" not in md
+
+
+def test_publish_context_prefers_related_blog_url():
+    class _Related:
+        canonical_url = "https://webkitsolutions.com/canonical/"
+        wp_link = "https://webkitsolutions.com/wp/"
+
+    class _History(_FakeHistory):
+        related_published_post = _Related()
+
+    ctx = publish_context_from_history(_History())
+    assert ctx.source_url == "https://webkitsolutions.com/canonical/"

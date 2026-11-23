@@ -148,7 +148,9 @@ def build_blogger_html(ctx: PublishCopyContext) -> str:
         html_parts.append(f"<p>{tags}</p>")
     source = (ctx.source_url or "").strip()
     if source:
-        html_parts.append(f'<p><a href="{source}">Read more</a></p>')
+        html_parts.append(
+            f'<p>Originally published at <a href="{source}">{source}</a></p>'
+        )
     return "\n".join(html_parts)
 
 
@@ -188,11 +190,26 @@ def build_platform_copy(platform: str, ctx: PublishCopyContext) -> dict[str, str
 def publish_context_from_history(history) -> PublishCopyContext:
     hashtags = history.hashtags if isinstance(history.hashtags, list) else []
     source_url = None
-    news = history.news_results
-    if isinstance(news, list) and news:
-        first = news[0]
-        if isinstance(first, dict):
-            source_url = first.get("link")
+    # Prefer the linked published blog when present (canonical/wp_link), so
+    # outreach platforms like Dev.to can embed a first-party backlink.
+    related = getattr(history, "related_published_post", None)
+    if related is not None:
+        for raw in (
+            getattr(related, "canonical_url", None),
+            getattr(related, "wp_link", None),
+        ):
+            value = str(raw or "").strip()
+            if value:
+                source_url = value
+                break
+    if not source_url:
+        news = history.news_results
+        if isinstance(news, list) and news:
+            first = news[0]
+            if isinstance(first, dict):
+                link = first.get("link")
+                if isinstance(link, str) and link.strip():
+                    source_url = link.strip()
     return PublishCopyContext(
         headline=history.headline or "",
         short_description=history.description,
@@ -220,6 +237,7 @@ def _build_long_form_post(ctx: PublishCopyContext) -> str:
 
 
 def _build_article_markdown(ctx: PublishCopyContext) -> str:
+    """Long-form outreach body (Dev.to / Hashnode). Include blog URL for backlinks."""
     parts = [f"# {(ctx.headline or '').strip()}"]
     body = (ctx.story_caption or ctx.short_description or "").strip()
     if body:
@@ -229,5 +247,6 @@ def _build_article_markdown(ctx: PublishCopyContext) -> str:
         parts.append(tags)
     source = (ctx.source_url or "").strip()
     if source:
-        parts.append(f"[Read more]({source})")
+        # Visible URL + markdown href so Dev.to/Hashnode render a crawlable backlink.
+        parts.append(f"Originally published at [{source}]({source})")
     return "\n\n".join(p for p in parts if p)
