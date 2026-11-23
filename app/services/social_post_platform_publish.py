@@ -186,6 +186,7 @@ async def publish_to_platform(
             user_id,
             text=str(copy.get("text") or ""),
             source_url=ctx.source_url,
+            platform_options=platform_options,
         )
     if platform == "facebook":
         return await _publish_to_facebook(
@@ -647,16 +648,24 @@ async def _publish_to_linkedin(
     *,
     text: str,
     source_url: str | None,
+    platform_options: dict,
 ) -> SocialPostPublishResultItem:
     account = get_user_social_account(db, user_id, "linkedin")
     if not account:
         return SocialPostPublishResultItem(platform="linkedin", success=False, error="LinkedIn account not connected")
 
     try:
-        access_token, person_urn = await get_valid_linkedin_access_token(db, user_id)
+        organization_id = platform_options.get("organization_id")
+        if organization_id is not None:
+            organization_id = str(organization_id)
+        access_token, author_urn = await get_valid_linkedin_access_token(
+            db,
+            user_id,
+            organization_id=organization_id,
+        )
         result = await create_text_share(
             access_token,
-            person_urn=person_urn,
+            author_urn=author_urn,
             text=text,
             article_url=source_url,
         )

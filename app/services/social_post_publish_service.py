@@ -100,6 +100,7 @@ def _platform_options_dict(
         "instagram": platform_options.instagram,
         "tumblr": platform_options.tumblr,
         "wordpress_com": platform_options.wordpress_com,
+        "linkedin": platform_options.linkedin,
     }
     opts = mapping.get(platform)
     return opts if isinstance(opts, dict) else {}

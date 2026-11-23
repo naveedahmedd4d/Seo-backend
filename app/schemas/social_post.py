@@ -117,6 +117,7 @@ class SocialPostPublishPlatformOptions(BaseModel):
     instagram: Optional[dict[str, Any]] = None
     tumblr: Optional[dict[str, Any]] = None
     wordpress_com: Optional[dict[str, Any]] = None
+    linkedin: Optional[dict[str, Any]] = None
 
 
 class SocialPostPublishRequest(BaseModel):

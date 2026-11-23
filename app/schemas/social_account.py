@@ -197,3 +197,34 @@ class InstagramAccountsResponse(BaseModel):
 
 class InstagramAccountUpdateRequest(BaseModel):
     instagram_id: str
+
+
+class SocialAccountTestPostRequest(BaseModel):
+    """Optional destination overrides (page, board, blog, subreddit, …)."""
+
+    platform_options: Optional[dict[str, Any]] = None
+
+
+class SocialAccountTestPostResponse(BaseModel):
+    platform: str
+    success: bool
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error: Optional[str] = None
+
+
+class LinkedInOrganizationItem(BaseModel):
+    id: str
+    name: str
+
+
+class LinkedInOrganizationsResponse(BaseModel):
+    organizations: List[LinkedInOrganizationItem]
+    default_organization_id: Optional[str] = None
+    post_as: str = "person"
+
+
+class LinkedInOrganizationUpdateRequest(BaseModel):
+    """Pass organization id, or 'person' to post as the personal profile."""
+
+    organization_id: str

@@ -44,6 +44,11 @@ from app.schemas.social_account import (
     RedditSubredditUpdateRequest,
     SocialAccountConnectResponse,
     SocialAccountResponse,
+    SocialAccountTestPostRequest,
+    SocialAccountTestPostResponse,
+    LinkedInOrganizationItem,
+    LinkedInOrganizationsResponse,
+    LinkedInOrganizationUpdateRequest,
     TelegraphConnectRequest,
     TumblrBlogItem,
     TumblrBlogUpdateRequest,
@@ -96,7 +101,9 @@ from app.services.instagram_service import (
 )
 from app.services.linkedin_service import (
     build_authorization_url as build_linkedin_authorization_url,
+    refresh_linkedin_organizations,
     save_linkedin_account_from_code,
+    set_default_linkedin_organization,
 )
 from app.services.mastodon_service import (
     build_authorization_url as build_mastodon_authorization_url,
@@ -1319,6 +1326,65 @@ async def linkedin_callback(
     return _oauth_callback_redirect("linkedin")
 
 
+@router.get("/linkedin/organizations", response_model=LinkedInOrganizationsResponse)
+async def linkedin_organizations(
+    refresh: bool = Query(default=False),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "linkedin")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LinkedIn not connected")
+
+    metadata = get_account_metadata(account)
+    organizations_raw = metadata.get("organizations") or []
+    if refresh or not isinstance(organizations_raw, list) or not organizations_raw:
+        try:
+            organizations_raw = await refresh_linkedin_organizations(db, current_user.id)
+            db.refresh(account)
+            metadata = get_account_metadata(account)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+
+    organizations = [
+        LinkedInOrganizationItem(id=str(o["id"]), name=str(o.get("name") or o["id"]))
+        for o in organizations_raw
+        if isinstance(o, dict) and o.get("id")
+    ]
+    post_as = str(metadata.get("post_as") or "person")
+    default_id = metadata.get("default_organization_id")
+    if post_as == "person":
+        default_id = None
+    return LinkedInOrganizationsResponse(
+        organizations=organizations,
+        default_organization_id=str(default_id) if default_id else None,
+        post_as=post_as if post_as in ("person", "organization") else "person",
+    )
+
+
+@router.put("/linkedin/organization", response_model=SocialAccountResponse)
+async def linkedin_set_default_organization(
+    request: LinkedInOrganizationUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    account = get_user_social_account(db, current_user.id, "linkedin")
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="LinkedIn not connected")
+    try:
+        updated = set_default_linkedin_organization(
+            db,
+            account,
+            organization_id=request.organization_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return _account_to_response(updated)
+
+
 # --- Facebook Pages ---
 
 
@@ -1667,6 +1733,54 @@ async def instagram_set_default_account(
         str(match.get("username") or request.instagram_id),
     )
     return _account_to_response(updated)
+
+
+@router.post("/{platform}/test-post", response_model=SocialAccountTestPostResponse)
+async def test_social_platform_post(
+    platform: str,
+    request: Request,
+    body: SocialAccountTestPostRequest = SocialAccountTestPostRequest(),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Publish a one-off connection test to a connected platform."""
+    from app.schemas.social_post import SocialPostPublishPlatformOptions
+    from app.services.social_account_test_post_service import (
+        TestPostError,
+        run_platform_test_post,
+    )
+
+    raw_options = body.platform_options
+    try:
+        platform_options = (
+            SocialPostPublishPlatformOptions.model_validate(raw_options)
+            if isinstance(raw_options, dict)
+            else None
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid platform_options",
+        ) from None
+
+    try:
+        result = await run_platform_test_post(
+            db,
+            current_user.id,
+            platform,
+            platform_options=platform_options,
+            request=request,
+        )
+    except TestPostError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    return SocialAccountTestPostResponse(
+        platform=result.platform,
+        success=result.success,
+        external_id=result.external_id,
+        external_url=result.external_url,
+        error=result.error,
+    )
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
