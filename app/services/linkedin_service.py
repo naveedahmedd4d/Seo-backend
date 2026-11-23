@@ -660,10 +660,16 @@ async def add_linkedin_organization(
     next_orgs.append(org)
     metadata["organizations"] = next_orgs
     metadata["organizations_warning"] = None
+    # Keep personal profile available; default destination becomes the new Page
+    # but post_as can still be switched back to person anytime.
     metadata["post_as"] = "organization"
     metadata["default_organization_id"] = org["id"]
     metadata["default_organization_name"] = org["name"]
-    account.account_label = org["name"]
+    person_name = str(metadata.get("name") or "").strip()
+    page_name = str(org.get("name") or org["id"]).strip()
+    account.account_label = (
+        f"{person_name} · {page_name}" if person_name and page_name else page_name or person_name
+    )
     updated = update_social_account_metadata(db, account, metadata)
     return updated, org
 

@@ -48,3 +48,16 @@ def test_resolve_author_person_override():
 def test_resolve_author_falls_back_to_person():
     metadata = {"person_urn": "urn:li:person:abc", "post_as": "person"}
     assert resolve_linkedin_author_urn(metadata) == "urn:li:person:abc"
+
+
+def test_linkedin_publish_targets_supports_both():
+    from app.services.social_post_platform_publish import _linkedin_publish_targets
+
+    assert _linkedin_publish_targets({}) == [None]
+    assert _linkedin_publish_targets({"organization_id": "person"}) == ["person"]
+    assert _linkedin_publish_targets(
+        {"organization_ids": ["person", "145495764"]}
+    ) == ["person", "145495764"]
+    assert _linkedin_publish_targets(
+        {"organization_id": "145495764", "organization_ids": ["person"]}
+    ) == ["person", "145495764"]

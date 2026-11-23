@@ -642,6 +642,29 @@ async def _publish_to_reddit(
         return SocialPostPublishResultItem(platform="reddit", success=False, error=str(exc))
 
 
+def _linkedin_publish_targets(platform_options: dict) -> list[str | None]:
+    """Normalize LinkedIn destinations: personal, one Page, or both.
+
+    Accepts organization_ids: ["person", "145495764"] and/or organization_id.
+    Empty → [None] so account default (personal or Page) is used.
+    """
+    raw_ids = platform_options.get("organization_ids")
+    targets: list[str] = []
+    if isinstance(raw_ids, list):
+        for item in raw_ids:
+            value = str(item or "").strip()
+            if value and value not in targets:
+                targets.append(value)
+    single = platform_options.get("organization_id")
+    if single is not None:
+        value = str(single).strip()
+        if value and value not in targets:
+            targets.append(value)
+    if not targets:
+        return [None]
+    return targets  # type: ignore[return-value]
+
+
 async def _publish_to_linkedin(
     db: Session,
     user_id: int,
@@ -654,31 +677,63 @@ async def _publish_to_linkedin(
     if not account:
         return SocialPostPublishResultItem(platform="linkedin", success=False, error="LinkedIn account not connected")
 
-    try:
-        organization_id = platform_options.get("organization_id")
-        if organization_id is not None:
-            organization_id = str(organization_id)
-        access_token, author_urn = await get_valid_linkedin_access_token(
-            db,
-            user_id,
-            organization_id=organization_id,
+    targets = _linkedin_publish_targets(platform_options)
+    successes: list[str] = []
+    failures: list[str] = []
+    first_external_id: str | None = None
+    first_external_url: str | None = None
+
+    for organization_id in targets:
+        label = (
+            "personal profile"
+            if organization_id in (None, "", "person", "personal", "__person__")
+            else f"Company Page {organization_id}"
         )
-        result = await create_text_share(
-            access_token,
-            author_urn=author_urn,
-            text=text,
-            article_url=source_url,
-        )
-        post_id = result.get("id")
-        external_url = f"https://www.linkedin.com/feed/update/{post_id}/" if post_id else None
+        try:
+            access_token, author_urn = await get_valid_linkedin_access_token(
+                db,
+                user_id,
+                organization_id=organization_id,
+            )
+            result = await create_text_share(
+                access_token,
+                author_urn=author_urn,
+                text=text,
+                article_url=source_url,
+            )
+            post_id = result.get("id")
+            external_url = f"https://www.linkedin.com/feed/update/{post_id}/" if post_id else None
+            successes.append(label)
+            if first_external_id is None and post_id:
+                first_external_id = str(post_id)
+            if first_external_url is None and external_url:
+                first_external_url = external_url
+        except Exception as exc:
+            failures.append(f"{label}: {exc}")
+
+    if successes and not failures:
         return SocialPostPublishResultItem(
             platform="linkedin",
             success=True,
-            external_id=str(post_id) if post_id else None,
-            external_url=external_url,
+            external_id=first_external_id,
+            external_url=first_external_url,
         )
-    except Exception as exc:
-        return SocialPostPublishResultItem(platform="linkedin", success=False, error=str(exc))
+    if successes and failures:
+        return SocialPostPublishResultItem(
+            platform="linkedin",
+            success=True,
+            external_id=first_external_id,
+            external_url=first_external_url,
+            error="Partial LinkedIn publish — ok: "
+            + ", ".join(successes)
+            + "; failed: "
+            + "; ".join(failures),
+        )
+    return SocialPostPublishResultItem(
+        platform="linkedin",
+        success=False,
+        error="; ".join(failures) if failures else "LinkedIn publish failed",
+    )
 
 
 async def _publish_to_facebook(
