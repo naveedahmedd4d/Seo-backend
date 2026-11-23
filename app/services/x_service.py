@@ -21,11 +21,14 @@ from app.services.social_platform_app_service import OAuthAppCredentials, get_x_
 
 logger = logging.getLogger(__name__)
 
-X_AUTH_URL = "https://twitter.com/i/oauth2/authorize"
-X_TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
-X_API_BASE = "https://api.twitter.com/2"
+# Prefer api.x.com / x.com hosts (twitter.com still aliases, but X docs use these).
+X_AUTH_URL = "https://x.com/i/oauth2/authorize"
+X_TOKEN_URL = "https://api.x.com/2/oauth2/token"
+X_API_BASE = "https://api.x.com/2"
 
-X_SCOPES = "tweet.read tweet.write users.read offline.access media.write"
+# Connect scopes: omit media.write — Free/Basic apps often reject it at authorize
+# or token exchange. Image upload still uses the v1.1 media endpoint when allowed.
+X_SCOPES = "tweet.read tweet.write users.read offline.access"
 X_MEDIA_UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json"
 
 
@@ -52,22 +55,75 @@ def _basic_auth_header(credentials: OAuthAppCredentials) -> str:
     return base64.b64encode(raw.encode()).decode()
 
 
+def _x_oauth_error_message(response: httpx.Response) -> str:
+    """Turn an X token/API error body into a short user-facing message."""
+    detail = ""
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            detail = str(
+                payload.get("error_description")
+                or payload.get("error")
+                or payload.get("detail")
+                or ""
+            ).strip()
+    except Exception:
+        detail = (response.text or "").strip()[:200]
+    lower = detail.lower()
+    if response.status_code in {400, 401} and (
+        "invalid_grant" in lower
+        or "expired" in lower
+        or ("code" in lower and ("invalid" in lower or "expired" in lower))
+    ):
+        return (
+            "X authorization code expired or was already used. "
+            "The API host may have been waking from sleep — click Connect again "
+            "and approve promptly."
+        )
+    if "redirect_uri" in lower:
+        return (
+            "X redirect URI mismatch. In the X Developer Portal, set the callback to "
+            "exactly the Redirect URI shown in the Connect dialog."
+        )
+    if "invalid_client" in lower or "unauthorized_client" in lower:
+        return (
+            "X rejected the Client ID/secret. Use OAuth 2.0 Client ID and Client Secret "
+            "(User authentication settings), not the older API Key / API Key Secret."
+        )
+    if "invalid_scope" in lower or ("scope" in lower and "invalid" in lower):
+        return (
+            "X rejected the requested scopes. Enable Read and Write in the app, "
+            "and confirm OAuth 2.0 is turned on."
+        )
+    if detail:
+        return f"X token exchange failed ({response.status_code}): {detail[:220]}"
+    return f"X token exchange failed ({response.status_code})"
+
+
 async def _exchange_token(
     credentials: OAuthAppCredentials,
     data: dict[str, str],
+    *,
+    use_basic_auth: bool = True,
 ) -> dict[str, Any]:
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    body = dict(data)
+    if use_basic_auth:
+        headers["Authorization"] = f"Basic {_basic_auth_header(credentials)}"
+    else:
+        # Public clients authenticate with client_id in the body (no Basic header).
+        body.setdefault("client_id", credentials.client_id)
+
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        response = await client.post(
-            X_TOKEN_URL,
-            data=data,
-            headers={
-                "Authorization": f"Basic {_basic_auth_header(credentials)}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
+        response = await client.post(X_TOKEN_URL, data=body, headers=headers)
     if response.status_code >= 400:
-        logger.error("X token exchange failed: %s", response.text)
-        response.raise_for_status()
+        logger.error(
+            "X token exchange failed basic_auth=%s status=%s body=%s",
+            use_basic_auth,
+            response.status_code,
+            response.text[:500],
+        )
+        raise ValueError(_x_oauth_error_message(response))
     return response.json()
 
 
@@ -76,15 +132,21 @@ async def exchange_code_for_tokens(
     code: str,
     code_verifier: str,
 ) -> dict[str, Any]:
-    return await _exchange_token(
-        credentials,
-        {
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": credentials.redirect_uri,
-            "code_verifier": code_verifier,
-        },
-    )
+    payload = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": credentials.redirect_uri,
+        "code_verifier": code_verifier,
+    }
+    try:
+        return await _exchange_token(credentials, payload, use_basic_auth=True)
+    except ValueError as first_exc:
+        # Some X apps are registered as public clients — retry without Basic auth.
+        message = str(first_exc).lower()
+        if "invalid_client" in message or "unauthorized_client" in message:
+            logger.warning("X confidential token exchange failed; retrying as public client")
+            return await _exchange_token(credentials, payload, use_basic_auth=False)
+        raise
 
 
 async def refresh_access_token(
@@ -176,7 +238,13 @@ async def save_x_account_from_code(
     refresh_token = token_payload.get("refresh_token")
     expires_at = _expires_at_from_token_payload(token_payload)
 
-    profile = await fetch_user_profile(access_token)
+    profile: dict[str, Any] = {}
+    try:
+        profile = await fetch_user_profile(access_token)
+    except Exception as exc:
+        # Token is still valid — don't abandon the connection if /users/me fails.
+        logger.warning("X profile fetch failed after token exchange: %s", exc)
+
     username = profile.get("username") or profile.get("name") or "X"
     label = f"@{username}" if username and not str(username).startswith("@") else str(username)
 
@@ -188,7 +256,11 @@ async def save_x_account_from_code(
         refresh_token=refresh_token,
         token_expires_at=expires_at,
         account_label=label,
-        metadata={"username": username, "profile": profile},
+        metadata={
+            "username": username,
+            "profile": profile,
+            "granted_scope": token_payload.get("scope"),
+        },
     )
 
 

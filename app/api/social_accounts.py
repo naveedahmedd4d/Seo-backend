@@ -567,6 +567,12 @@ async def x_callback(
             db, user.id, code, str(code_verifier), redirect_uri=redirect_uri
         )
     except Exception as exc:
+        logger.warning(
+            "X OAuth callback failed for user_id=%s redirect_uri=%s: %s",
+            user.id,
+            redirect_uri,
+            exc,
+        )
         return _oauth_callback_redirect("x", error=str(exc))
 
     return _oauth_callback_redirect("x")
