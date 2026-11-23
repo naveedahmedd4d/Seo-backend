@@ -392,10 +392,28 @@ def test_instagram_connect_requires_platform_configuration(
         json={},
     )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == (
-        "Instagram connection is not configured. Contact your administrator."
+    assert response.status_code == 400
+    assert "Enter your Meta App ID" in response.json()["detail"]
+
+
+def test_instagram_connect_accepts_byo_credentials(client, auth_headers, monkeypatch):
+    monkeypatch.setattr("app.config.settings.instagram_app_id", None)
+    monkeypatch.setattr("app.config.settings.instagram_app_secret", None)
+    monkeypatch.setattr("app.config.settings.meta_app_id", None)
+    monkeypatch.setattr("app.config.settings.meta_app_secret", None)
+    monkeypatch.setattr("app.config.settings.platform_owner_email", None)
+
+    response = client.post(
+        "/api/social-accounts/instagram/connect",
+        headers=auth_headers,
+        json={"client_id": "ig-byo-app", "client_secret": "ig-byo-secret-value"},
     )
+
+    assert response.status_code == 200
+    authorization_url = response.json()["authorization_url"]
+    assert authorization_url.startswith("https://www.instagram.com/oauth/authorize?")
+    assert "client_id=ig-byo-app" in authorization_url
+    assert "ig-byo-secret-value" not in authorization_url
 
 
 def test_instagram_callback_saves_account_and_returns_to_application(

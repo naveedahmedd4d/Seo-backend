@@ -28,6 +28,7 @@ from app.schemas.social_account import (
     InstagramAccountItem,
     InstagramAccountUpdateRequest,
     InstagramAccountsResponse,
+    InstagramConnectRequest,
     MastodonConnectRequest,
     MastodonSetupResponse,
     MetaAdminSetupResponse,
@@ -46,6 +47,7 @@ from app.schemas.social_account import (
     SocialAccountResponse,
     SocialAccountTestPostRequest,
     SocialAccountTestPostResponse,
+    LinkedInOrganizationAddRequest,
     LinkedInOrganizationItem,
     LinkedInOrganizationsResponse,
     LinkedInOrganizationUpdateRequest,
@@ -100,6 +102,7 @@ from app.services.instagram_service import (
     set_default_instagram_account,
 )
 from app.services.linkedin_service import (
+    add_linkedin_organization,
     build_authorization_url as build_linkedin_authorization_url,
     refresh_linkedin_organizations,
     save_linkedin_account_from_code,
@@ -139,6 +142,7 @@ from app.services.social_platform_app_service import (
     get_facebook_redirect_uri,
     get_instagram_app_credentials,
     get_instagram_redirect_uri,
+    instagram_env_credentials_configured,
     get_linkedin_app_credentials,
     get_linkedin_redirect_uri,
     get_mastodon_app_credentials,
@@ -221,6 +225,47 @@ def _facebook_setup_credentials_meta(db: Session, current_user: User) -> dict:
         "credentials_editable": True,
         "can_clear_credentials": False,
         "client_id": None,
+    }
+
+
+def _instagram_setup_credentials_meta(db: Session, current_user: User) -> dict:
+    """Describe where Instagram Login Meta App ID/secret come from for this user."""
+    if instagram_env_credentials_configured():
+        return {
+            "credentials_source": "environment",
+            "credentials_editable": False,
+            "can_clear_credentials": False,
+            "client_id": None,
+            "reuses_facebook_credentials": False,
+        }
+
+    user_app = get_user_platform_app(db, current_user.id, "instagram")
+    if user_app:
+        return {
+            "credentials_source": "user",
+            "credentials_editable": True,
+            "can_clear_credentials": True,
+            "client_id": user_app.client_id,
+            "reuses_facebook_credentials": False,
+        }
+
+    # Same Meta app the user saved for Facebook Pages can drive Instagram Login.
+    facebook_app = get_user_platform_app(db, current_user.id, "facebook")
+    if facebook_app:
+        return {
+            "credentials_source": "user",
+            "credentials_editable": True,
+            "can_clear_credentials": False,
+            "client_id": facebook_app.client_id,
+            "reuses_facebook_credentials": True,
+        }
+
+    return {
+        "credentials_source": None,
+        "credentials_editable": True,
+        "can_clear_credentials": False,
+        "client_id": None,
+        "reuses_facebook_credentials": False,
     }
 
 
@@ -1338,9 +1383,12 @@ async def linkedin_organizations(
 
     metadata = get_account_metadata(account)
     organizations_raw = metadata.get("organizations") or []
+    warning = metadata.get("organizations_warning")
     if refresh or not isinstance(organizations_raw, list) or not organizations_raw:
         try:
-            organizations_raw = await refresh_linkedin_organizations(db, current_user.id)
+            organizations_raw, warning = await refresh_linkedin_organizations(
+                db, current_user.id
+            )
             db.refresh(account)
             metadata = get_account_metadata(account)
         except Exception as exc:
@@ -1362,6 +1410,7 @@ async def linkedin_organizations(
         organizations=organizations,
         default_organization_id=str(default_id) if default_id else None,
         post_as=post_as if post_as in ("person", "organization") else "person",
+        warning=str(warning) if warning else None,
     )
 
 
@@ -1383,6 +1432,48 @@ async def linkedin_set_default_organization(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     return _account_to_response(updated)
+
+
+@router.post("/linkedin/organizations/add", response_model=LinkedInOrganizationsResponse)
+async def linkedin_add_organization(
+    request: LinkedInOrganizationAddRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not (request.vanity_name or "").strip() and not (request.organization_id or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide a company slug (e.g. webkitsolutions) or organization id",
+        )
+    try:
+        updated, _org = await add_linkedin_organization(
+            db,
+            current_user.id,
+            vanity_name=request.vanity_name,
+            organization_id=request.organization_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    metadata = get_account_metadata(updated)
+    organizations_raw = metadata.get("organizations") or []
+    organizations = [
+        LinkedInOrganizationItem(id=str(o["id"]), name=str(o.get("name") or o["id"]))
+        for o in organizations_raw
+        if isinstance(o, dict) and o.get("id")
+    ]
+    return LinkedInOrganizationsResponse(
+        organizations=organizations,
+        default_organization_id=str(metadata.get("default_organization_id") or "")
+        or None,
+        post_as=str(metadata.get("post_as") or "organization"),
+        warning=None,
+    )
 
 
 # --- Facebook Pages ---
@@ -1620,29 +1711,79 @@ async def instagram_setup(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    meta = _instagram_setup_credentials_meta(db, current_user)
     return OAuthSetupResponse(
         redirect_uri=get_instagram_redirect_uri(http_request),
         has_app_credentials=user_has_instagram_app(db, current_user.id),
-        # Platform credentials are never exposed to customer-facing clients.
-        client_id=None,
+        client_id=meta["client_id"],
         developer_portal_url="https://developers.facebook.com/apps/",
+        credentials_source=meta["credentials_source"],
+        credentials_editable=meta["credentials_editable"],
+        can_clear_credentials=meta["can_clear_credentials"],
     )
+
+
+@router.delete("/instagram/app", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_instagram_app_credentials(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove this account's saved Instagram Meta App ID/secret from social_platform_apps."""
+    if instagram_env_credentials_configured():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Meta credentials are managed by server environment variables.",
+        )
+
+    user_app = get_user_platform_app(db, current_user.id, "instagram")
+    if not user_app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No saved Instagram Meta app credentials to remove for this account.",
+        )
+    delete_user_platform_app(db, current_user.id, "instagram")
+    return None
 
 
 @router.post("/instagram/connect", response_model=SocialAccountConnectResponse)
 async def instagram_connect(
     http_request: Request,
+    request: InstagramConnectRequest = InstagramConnectRequest(),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     redirect_uri = get_instagram_redirect_uri(http_request)
+
+    # Allow each user to save their own Meta app unless server env forces platform credentials.
+    if (
+        request.client_id
+        and request.client_secret
+        and not instagram_env_credentials_configured()
+    ):
+        try:
+            upsert_user_platform_app(
+                db,
+                current_user.id,
+                "instagram",
+                request.client_id,
+                request.client_secret,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
+
     credentials = get_instagram_app_credentials(
         db, current_user.id, redirect_uri=redirect_uri
     )
     if not credentials:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Instagram connection is not configured. Contact your administrator.",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Instagram is not configured. Enter your Meta App ID and App Secret "
+                "in the connect dialog, or ask an administrator to configure "
+                "INSTAGRAM_APP_ID / META_APP_ID."
+            ),
         )
 
     state = create_oauth_state_token(current_user, "instagram")

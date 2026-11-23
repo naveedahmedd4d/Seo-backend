@@ -71,6 +71,13 @@ class FacebookConnectRequest(BaseModel):
     client_secret: Optional[str] = None
 
 
+class InstagramConnectRequest(BaseModel):
+    """Optional BYO Meta app credentials for Instagram Login (same pattern as Facebook)."""
+
+    client_id: Optional[str] = None
+    client_secret: Optional[str] = None
+
+
 class MetaAdminSetupResponse(BaseModel):
     configured: bool
     client_id: Optional[str] = None
@@ -222,9 +229,17 @@ class LinkedInOrganizationsResponse(BaseModel):
     organizations: List[LinkedInOrganizationItem]
     default_organization_id: Optional[str] = None
     post_as: str = "person"
+    warning: Optional[str] = None
 
 
 class LinkedInOrganizationUpdateRequest(BaseModel):
     """Pass organization id, or 'person' to post as the personal profile."""
 
     organization_id: str
+
+
+class LinkedInOrganizationAddRequest(BaseModel):
+    """Add a Company Page by vanity slug (webkitsolutions) or numeric organization id."""
+
+    vanity_name: Optional[str] = None
+    organization_id: Optional[str] = None

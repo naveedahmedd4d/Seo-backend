@@ -161,7 +161,7 @@ def upsert_user_platform_app(
         validation_error = validate_x_app_credentials(client_id, client_secret)
     elif platform in {"blogger", "gsc", "tumblr", "wordpress_com"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
-    elif platform in {"reddit", "facebook"}:
+    elif platform in {"reddit", "facebook", "instagram"}:
         validation_error = validate_oauth_app_credentials(client_id, client_secret)
     elif platform == "mastodon":
         validation_error = validate_mastodon_app_credentials(
@@ -430,38 +430,56 @@ def get_instagram_app_credentials(
     *,
     redirect_uri: Optional[str] = None,
 ) -> Optional[OAuthAppCredentials]:
-    """Return the platform-owned Instagram Login app credentials."""
+    """Resolve Meta app credentials for Instagram Login OAuth.
+
+    Order: matched INSTAGRAM_* env → matched META_* env → this user's Instagram
+    app → this user's Facebook Meta app (same Meta app often powers both).
+
+    Do not fall back to another tenant's Meta app (same rule as Facebook).
+    """
     from app.config import settings
 
     resolved_redirect_uri = redirect_uri or get_instagram_redirect_uri()
-    app_id = settings.instagram_app_id or settings.meta_app_id
-    app_secret = settings.instagram_app_secret or settings.meta_app_secret
-    if app_id and app_secret:
+    if settings.instagram_app_id and settings.instagram_app_secret:
         return OAuthAppCredentials(
-            client_id=app_id.strip(),
-            client_secret=app_secret.strip(),
+            client_id=settings.instagram_app_id.strip(),
+            client_secret=settings.instagram_app_secret.strip(),
+            redirect_uri=resolved_redirect_uri,
+        )
+    if settings.meta_app_id and settings.meta_app_secret:
+        return OAuthAppCredentials(
+            client_id=settings.meta_app_id.strip(),
+            client_secret=settings.meta_app_secret.strip(),
             redirect_uri=resolved_redirect_uri,
         )
 
-    if not settings.platform_owner_email:
-        return None
+    user_row = get_user_platform_app(db, user_id, "instagram")
+    if user_row:
+        return OAuthAppCredentials(
+            client_id=user_row.client_id,
+            client_secret=decrypt_api_key(user_row.client_secret),
+            redirect_uri=resolved_redirect_uri,
+        )
 
-    from app.models.user import User
+    # Reuse Meta keys the user already saved for Facebook Pages.
+    facebook_row = get_user_platform_app(db, user_id, "facebook")
+    if facebook_row:
+        return OAuthAppCredentials(
+            client_id=facebook_row.client_id,
+            client_secret=decrypt_api_key(facebook_row.client_secret),
+            redirect_uri=resolved_redirect_uri,
+        )
 
-    owner = (
-        db.query(User)
-        .filter(func.lower(User.email) == settings.platform_owner_email.strip().casefold())
-        .first()
-    )
-    if not owner:
-        return None
-    row = get_user_platform_app(db, owner.id, "instagram")
-    if not row:
-        return None
-    return OAuthAppCredentials(
-        client_id=row.client_id,
-        client_secret=decrypt_api_key(row.client_secret),
-        redirect_uri=resolved_redirect_uri,
+    return None
+
+
+def instagram_env_credentials_configured() -> bool:
+    """True when a matched INSTAGRAM_* or META_* env pair is configured."""
+    from app.config import settings
+
+    return bool(
+        (settings.instagram_app_id and settings.instagram_app_secret)
+        or (settings.meta_app_id and settings.meta_app_secret)
     )
 
 

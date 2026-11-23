@@ -27,15 +27,18 @@ LINKEDIN_API_BASE = "https://api.linkedin.com"
 LINKEDIN_REST_VERSION = "202411"
 
 # w_organization_social: post as a Company Page the member administers.
-# r_organization_admin: list organization ACLs so we can offer a Page picker.
+# rw_organization_admin: list organization ACLs so we can offer a Page picker.
 LINKEDIN_SCOPES = (
-    "openid profile email w_member_social w_organization_social r_organization_admin"
+    "openid profile email w_member_social w_organization_social "
+    "rw_organization_admin r_organization_admin"
 )
 
+# Wire values from LinkedIn Organization Access Control docs.
 _PAGE_POST_ROLES = frozenset(
     {
         "ADMINISTRATOR",
         "CONTENT_ADMIN",
+        "CONTENT_ADMINISTRATOR",
         "DIRECT_SPONSORED_CONTENT_POSTER",
         "RECRUITING_POSTER",
     }
@@ -156,53 +159,187 @@ def organization_id_from_urn(urn: str) -> str:
     return value
 
 
-async def fetch_administered_organizations(access_token: str) -> list[dict[str, str]]:
-    """Return Company Pages the member can post as (id + name)."""
-    roles_to_try = (
-        "ADMINISTRATOR",
-        "CONTENT_ADMIN",
-        "DIRECT_SPONSORED_CONTENT_POSTER",
-    )
+async def fetch_administered_organizations(
+    access_token: str,
+) -> tuple[list[dict[str, str]], Optional[str]]:
+    """Return (Company Pages the member can post as, optional discovery warning)."""
     by_id: dict[str, dict[str, str]] = {}
+    warnings: list[str] = []
 
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
-        for role in roles_to_try:
-            params = {"q": "roleAssignee", "role": role, "state": "APPROVED", "count": 100}
-            response = await client.get(
-                f"{LINKEDIN_API_BASE}/rest/organizationAcls",
-                params=params,
-                headers=_rest_headers(access_token),
-            )
-            if response.status_code == 403:
-                logger.warning(
-                    "LinkedIn organizationAcls forbidden for role %s (app may lack Community Management)",
-                    role,
-                )
-                continue
-            if response.status_code >= 400:
-                logger.error(
-                    "LinkedIn organizationAcls failed (%s): %s",
-                    role,
-                    response.text,
-                )
-                continue
-            payload = response.json() if response.content else {}
-            for element in payload.get("elements") or []:
-                if not isinstance(element, dict):
-                    continue
-                element_role = str(element.get("role") or role)
-                if element_role not in _PAGE_POST_ROLES:
-                    continue
-                org_urn = str(element.get("organization") or "").strip()
-                if not org_urn:
-                    continue
-                org_id = organization_id_from_urn(org_urn)
-                if not org_id or org_id in by_id:
-                    continue
-                name = await _fetch_organization_name(client, access_token, org_id)
-                by_id[org_id] = {"id": org_id, "name": name or f"Page {org_id}", "urn": org_urn}
+        # Prefer unfiltered roleAssignee (LinkedIn docs); then fall back to explicit roles.
+        query_variants: list[dict[str, str | int]] = [
+            {"q": "roleAssignee", "state": "APPROVED", "count": 100},
+            {"q": "roleAssignee", "role": "ADMINISTRATOR", "state": "APPROVED", "count": 100},
+            {
+                "q": "roleAssignee",
+                "role": "CONTENT_ADMINISTRATOR",
+                "state": "APPROVED",
+                "count": 100,
+            },
+            {
+                "q": "roleAssignee",
+                "role": "DIRECT_SPONSORED_CONTENT_POSTER",
+                "state": "APPROVED",
+                "count": 100,
+            },
+        ]
+        endpoints = (
+            f"{LINKEDIN_API_BASE}/rest/organizationAcls",
+            f"{LINKEDIN_API_BASE}/v2/organizationAcls",
+        )
 
-    return sorted(by_id.values(), key=lambda item: item["name"].lower())
+        for endpoint in endpoints:
+            for params in query_variants:
+                headers = (
+                    _rest_headers(access_token)
+                    if "/rest/" in endpoint
+                    else {
+                        "Authorization": f"Bearer {access_token}",
+                        "X-Restli-Protocol-Version": "2.0.0",
+                    }
+                )
+                response = await client.get(endpoint, params=params, headers=headers)
+                if response.status_code == 403:
+                    warnings.append(
+                        "LinkedIn denied Page listing (need Community Management API + "
+                        "rw_organization_admin). Reconnect after enabling the product."
+                    )
+                    logger.warning(
+                        "LinkedIn organizationAcls forbidden at %s params=%s: %s",
+                        endpoint,
+                        params,
+                        response.text[:300],
+                    )
+                    continue
+                if response.status_code >= 400:
+                    logger.error(
+                        "LinkedIn organizationAcls failed at %s params=%s: %s",
+                        endpoint,
+                        params,
+                        response.text[:500],
+                    )
+                    continue
+                payload = response.json() if response.content else {}
+                for element in payload.get("elements") or []:
+                    if not isinstance(element, dict):
+                        continue
+                    state = str(element.get("state") or "APPROVED").upper()
+                    if state and state != "APPROVED":
+                        continue
+                    element_role = str(element.get("role") or "").upper()
+                    if element_role and element_role not in _PAGE_POST_ROLES:
+                        continue
+                    org_urn = str(element.get("organization") or "").strip()
+                    if not org_urn:
+                        continue
+                    org_id = organization_id_from_urn(org_urn)
+                    if not org_id or org_id in by_id:
+                        continue
+                    name = await _fetch_organization_name(client, access_token, org_id)
+                    by_id[org_id] = {
+                        "id": org_id,
+                        "name": name or f"Page {org_id}",
+                        "urn": org_urn,
+                    }
+            if by_id:
+                break
+
+    warning = warnings[0] if warnings and not by_id else None
+    return sorted(by_id.values(), key=lambda item: item["name"].lower()), warning
+
+
+async def resolve_organization_by_vanity_or_id(
+    access_token: str,
+    *,
+    vanity_name: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> dict[str, str]:
+    """Resolve a Company Page by vanity slug (e.g. webkitsolutions) or numeric id."""
+    vanity = (vanity_name or "").strip().strip("/")
+    if vanity.lower().startswith("https://"):
+        # Accept full LinkedIn company URLs.
+        parts = vanity.rstrip("/").split("/")
+        if "company" in parts:
+            idx = parts.index("company")
+            if idx + 1 < len(parts):
+                vanity = parts[idx + 1]
+    if vanity.lower().startswith("linkedin.com"):
+        parts = vanity.split("/")
+        if "company" in parts:
+            idx = parts.index("company")
+            if idx + 1 < len(parts):
+                vanity = parts[idx + 1]
+
+    org_id = organization_id_from_urn((organization_id or "").strip()) if organization_id else ""
+
+    async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
+        if not org_id and vanity:
+            for endpoint, headers in (
+                (
+                    f"{LINKEDIN_API_BASE}/rest/organizations",
+                    _rest_headers(access_token),
+                ),
+                (
+                    f"{LINKEDIN_API_BASE}/v2/organizations",
+                    {
+                        "Authorization": f"Bearer {access_token}",
+                        "X-Restli-Protocol-Version": "2.0.0",
+                    },
+                ),
+            ):
+                response = await client.get(
+                    endpoint,
+                    params={"q": "vanityName", "vanityName": vanity},
+                    headers=headers,
+                )
+                if response.status_code >= 400:
+                    logger.warning(
+                        "LinkedIn vanity lookup failed for %s via %s: %s",
+                        vanity,
+                        endpoint,
+                        response.text[:400],
+                    )
+                    continue
+                payload = response.json() if response.content else {}
+                elements = payload.get("elements")
+                if isinstance(elements, list) and elements:
+                    first = elements[0]
+                    if isinstance(first, dict):
+                        raw_id = first.get("id") or first.get("organization")
+                        if raw_id is not None:
+                            org_id = organization_id_from_urn(str(raw_id))
+                        name = first.get("localizedName")
+                        if not isinstance(name, str) or not name.strip():
+                            name_obj = first.get("name")
+                            if isinstance(name_obj, dict):
+                                localized = name_obj.get("localized")
+                                if isinstance(localized, dict):
+                                    for value in localized.values():
+                                        if isinstance(value, str) and value.strip():
+                                            name = value
+                                            break
+                        if org_id:
+                            return {
+                                "id": org_id,
+                                "name": (name.strip() if isinstance(name, str) else None)
+                                or vanity
+                                or org_id,
+                                "urn": organization_urn_from_id(org_id),
+                            }
+
+        if not org_id:
+            raise ValueError(
+                "Could not find that LinkedIn Company Page. Use the company slug from the "
+                "page URL (linkedin.com/company/your-slug) or the numeric organization id."
+            )
+
+        name = await _fetch_organization_name(client, access_token, org_id)
+        return {
+            "id": org_id,
+            "name": name or vanity or f"Page {org_id}",
+            "urn": organization_urn_from_id(org_id),
+        }
 
 
 async def _fetch_organization_name(
@@ -362,10 +499,12 @@ async def save_linkedin_account_from_code(
     name = userinfo.get("name") or userinfo.get("email") or "LinkedIn"
 
     organizations: list[dict[str, str]] = []
+    discovery_warning: Optional[str] = None
     try:
-        organizations = await fetch_administered_organizations(access_token)
+        organizations, discovery_warning = await fetch_administered_organizations(access_token)
     except Exception:
         logger.exception("LinkedIn organization discovery failed during connect")
+        discovery_warning = "Could not load Company Pages during connect. Try Refresh or add by slug."
 
     metadata: dict[str, Any] = {
         "person_urn": person_urn,
@@ -373,6 +512,7 @@ async def save_linkedin_account_from_code(
         "name": name,
         "userinfo": userinfo,
         "organizations": organizations,
+        "organizations_warning": discovery_warning,
         # Keep both destinations available; default to personal until the user picks a Page.
         "default_organization_id": None,
         "default_organization_name": None,
@@ -426,14 +566,35 @@ def set_default_linkedin_organization(
     return update_social_account_metadata(db, account, metadata)
 
 
-async def refresh_linkedin_organizations(db: Session, user_id: int) -> list[dict[str, str]]:
+async def refresh_linkedin_organizations(
+    db: Session, user_id: int
+) -> tuple[list[dict[str, str]], Optional[str]]:
     access_token, _author = await get_valid_linkedin_access_token(db, user_id, prefer_person=True)
-    organizations = await fetch_administered_organizations(access_token)
+    organizations, warning = await fetch_administered_organizations(access_token)
     account = get_user_social_account(db, user_id, "linkedin")
     if not account:
         raise ValueError("LinkedIn account not connected")
     metadata = get_account_metadata(account)
+    # Preserve manually added Pages that ACL discovery may not return yet.
+    existing = metadata.get("organizations") or []
+    if isinstance(existing, list):
+        known_ids = {str(o.get("id")) for o in organizations if isinstance(o, dict)}
+        for entry in existing:
+            if not isinstance(entry, dict) or not entry.get("id"):
+                continue
+            if str(entry["id"]) in known_ids:
+                continue
+            if entry.get("manual"):
+                organizations.append(
+                    {
+                        "id": str(entry["id"]),
+                        "name": str(entry.get("name") or entry["id"]),
+                        "urn": str(entry.get("urn") or organization_urn_from_id(str(entry["id"]))),
+                        "manual": True,
+                    }
+                )
     metadata["organizations"] = organizations
+    metadata["organizations_warning"] = warning
     default_id = metadata.get("default_organization_id")
     if default_id and not any(str(o.get("id")) == str(default_id) for o in organizations):
         # Previously selected Page is gone — fall back to personal profile.
@@ -441,7 +602,43 @@ async def refresh_linkedin_organizations(db: Session, user_id: int) -> list[dict
         metadata["default_organization_name"] = None
         metadata["post_as"] = "person"
     update_social_account_metadata(db, account, metadata)
-    return organizations
+    return organizations, warning
+
+
+async def add_linkedin_organization(
+    db: Session,
+    user_id: int,
+    *,
+    vanity_name: Optional[str] = None,
+    organization_id: Optional[str] = None,
+) -> tuple[SocialAccount, dict[str, str]]:
+    """Resolve a Company Page by slug/id and store it on the LinkedIn account."""
+    account = get_user_social_account(db, user_id, "linkedin")
+    if not account:
+        raise ValueError("LinkedIn account not connected")
+    access_token, _author = await get_valid_linkedin_access_token(db, user_id, prefer_person=True)
+    org = await resolve_organization_by_vanity_or_id(
+        access_token,
+        vanity_name=vanity_name,
+        organization_id=organization_id,
+    )
+    org["manual"] = True
+    metadata = get_account_metadata(account)
+    orgs = metadata.get("organizations") or []
+    if not isinstance(orgs, list):
+        orgs = []
+    next_orgs: list[dict[str, Any]] = [
+        o for o in orgs if isinstance(o, dict) and str(o.get("id")) != org["id"]
+    ]
+    next_orgs.append(org)
+    metadata["organizations"] = next_orgs
+    metadata["organizations_warning"] = None
+    metadata["post_as"] = "organization"
+    metadata["default_organization_id"] = org["id"]
+    metadata["default_organization_name"] = org["name"]
+    account.account_label = org["name"]
+    updated = update_social_account_metadata(db, account, metadata)
+    return updated, org
 
 
 def resolve_linkedin_author_urn(
