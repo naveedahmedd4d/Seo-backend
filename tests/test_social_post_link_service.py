@@ -1,7 +1,6 @@
 """Tests for first-party Facebook destination-link selection."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -14,10 +13,7 @@ from app.models.social_post_history import SocialPostHistory
 from app.models.user import User
 from app.models.wordpress_site import WordPressSite
 from app.models.workflow_state import WorkflowState, WorkflowStatus, WorkflowType
-from app.services.social_post_link_service import (
-    relevance_score,
-    resolve_facebook_destination_url,
-)
+from app.services.social_post_link_service import resolve_facebook_destination_url
 
 
 engine = create_engine(
@@ -39,7 +35,13 @@ def link_db():
         Base.metadata.drop_all(engine)
 
 
-def _seed(link_db, *, query="Bryce Miller Mariners", related=False):
+def _seed(
+    link_db,
+    *,
+    query="Bryce Miller Mariners",
+    related=False,
+    news_link="https://external-news.example/story",
+):
     user = User(email="links@example.com", password_hash="x")
     link_db.add(user)
     link_db.flush()
@@ -80,17 +82,12 @@ def _seed(link_db, *, query="Bryce Miller Mariners", related=False):
         query=query,
         headline=f"{query} update",
         description="Latest story",
-        news_results=[{"link": "https://external-news.example/story"}],
+        news_results=[{"link": news_link}] if news_link else [],
         related_published_post_id=relevant.id if related else None,
     )
     link_db.add(history)
     link_db.commit()
     return user, site, relevant, history
-
-
-def test_relevance_score_requires_meaningful_overlap():
-    assert relevance_score("Bryce Miller Mariners", "Bryce Miller leads Mariners") > 0
-    assert relevance_score("Bryce Miller Mariners", "Unrelated technology article") == 0
 
 
 @pytest.mark.asyncio
@@ -101,34 +98,30 @@ async def test_explicit_related_article_is_used_first(link_db):
 
 
 @pytest.mark.asyncio
-async def test_relevant_tracked_article_replaces_external_news_url(link_db):
-    user, _site, relevant, history = _seed(link_db)
+async def test_standalone_social_post_has_no_blog_url(link_db):
+    """Topic/social posts must not auto-attach a WordPress or homepage link."""
+    user, _site, _relevant, history = _seed(link_db)
     result = await resolve_facebook_destination_url(link_db, user.id, history)
-    assert result == relevant.canonical_url
-    assert "external-news.example" not in result
+    assert result is None
 
 
 @pytest.mark.asyncio
-@patch(
-    "app.services.social_post_link_service._search_live_wordpress",
-    new_callable=AsyncMock,
-    return_value=(25, "https://trendifypress.com/quantum-battery-guide/"),
-)
-async def test_live_wordpress_match_is_used_when_not_tracked(mock_live_search, link_db):
-    user, _site, _relevant, history = _seed(link_db, query="Quantum battery breakthrough")
+async def test_first_party_news_link_is_used_for_blog_promotion(link_db):
+    user, _site, _relevant, history = _seed(
+        link_db,
+        query="Quantum battery breakthrough",
+        news_link="https://trendifypress.com/quantum-battery-guide/",
+    )
     result = await resolve_facebook_destination_url(link_db, user.id, history)
     assert result == "https://trendifypress.com/quantum-battery-guide/"
-    assert mock_live_search.await_args.args[1] == "Quantum battery breakthrough"
 
 
 @pytest.mark.asyncio
-@patch(
-    "app.services.social_post_link_service._search_live_wordpress",
-    new_callable=AsyncMock,
-    return_value=None,
-)
-async def test_homepage_is_used_when_no_relevant_article(mock_live_search, link_db):
-    user, site, _relevant, history = _seed(link_db, query="Quantum battery breakthrough")
+async def test_external_news_link_is_never_used(link_db):
+    user, _site, _relevant, history = _seed(
+        link_db,
+        query="Quantum battery breakthrough",
+        news_link="https://external-news.example/quantum",
+    )
     result = await resolve_facebook_destination_url(link_db, user.id, history)
-    assert result == site.url.rstrip("/")
-    mock_live_search.assert_awaited_once()
+    assert result is None
