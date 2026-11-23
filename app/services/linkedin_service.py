@@ -249,6 +249,37 @@ async def fetch_administered_organizations(
     return sorted(by_id.values(), key=lambda item: item["name"].lower()), warning
 
 
+def _parse_linkedin_company_input(raw: str) -> tuple[Optional[str], Optional[str]]:
+    """Extract (vanity_name, organization_id) from a slug, numeric id, or company URL.
+
+    Accepts:
+    - webkitsolutions
+    - 145495764
+    - https://www.linkedin.com/company/webkitsolutions
+    - https://www.linkedin.com/company/145495764/admin/dashboard/
+    """
+    value = (raw or "").strip().strip("/")
+    if not value:
+        return None, None
+
+    lowered = value.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://") or lowered.startswith(
+        "linkedin.com"
+    ) or lowered.startswith("www.linkedin.com"):
+        parts = value.split("?")[0].split("#")[0].rstrip("/").split("/")
+        if "company" in parts:
+            idx = parts.index("company")
+            if idx + 1 < len(parts):
+                value = parts[idx + 1]
+
+    value = value.strip().strip("/")
+    if not value:
+        return None, None
+    if value.isdigit():
+        return None, value
+    return value, None
+
+
 async def resolve_organization_by_vanity_or_id(
     access_token: str,
     *,
@@ -256,22 +287,18 @@ async def resolve_organization_by_vanity_or_id(
     organization_id: Optional[str] = None,
 ) -> dict[str, str]:
     """Resolve a Company Page by vanity slug (e.g. webkitsolutions) or numeric id."""
-    vanity = (vanity_name or "").strip().strip("/")
-    if vanity.lower().startswith("https://"):
-        # Accept full LinkedIn company URLs.
-        parts = vanity.rstrip("/").split("/")
-        if "company" in parts:
-            idx = parts.index("company")
-            if idx + 1 < len(parts):
-                vanity = parts[idx + 1]
-    if vanity.lower().startswith("linkedin.com"):
-        parts = vanity.split("/")
-        if "company" in parts:
-            idx = parts.index("company")
-            if idx + 1 < len(parts):
-                vanity = parts[idx + 1]
+    parsed_vanity, parsed_id = _parse_linkedin_company_input(vanity_name or "")
+    vanity = parsed_vanity or ""
+    org_id = ""
+    if organization_id and str(organization_id).strip():
+        org_id = organization_id_from_urn(str(organization_id).strip())
+    elif parsed_id:
+        org_id = parsed_id
 
-    org_id = organization_id_from_urn((organization_id or "").strip()) if organization_id else ""
+    # If the "vanity" field was actually a numeric id / admin URL, prefer id lookup.
+    if not org_id and vanity and vanity.isdigit():
+        org_id = vanity
+        vanity = ""
 
     async with httpx.AsyncClient(timeout=30.0, verify=httpx_verify()) as client:
         if not org_id and vanity:
