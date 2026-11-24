@@ -63,6 +63,15 @@ class SocialPostHistorySaveRequest(BaseModel):
     related_published_post_id: Optional[int] = None
 
 
+class SocialPostPublicationResponse(BaseModel):
+    platform: str
+    status: str
+    external_id: Optional[str] = None
+    external_url: Optional[str] = None
+    error: Optional[str] = None
+    published_at: Optional[str] = None
+
+
 class SocialPostHistoryItemResponse(BaseModel):
     id: int
     query: str
@@ -80,22 +89,15 @@ class SocialPostHistoryItemResponse(BaseModel):
     related_published_post_id: Optional[int] = None
     created_at: str
     updated_at: Optional[str] = None
+    # Compact per-platform results for dashboards / recent lists (optional).
+    publications: List[SocialPostPublicationResponse] = []
 
     class Config:
         from_attributes = True
 
 
-class SocialPostPublicationResponse(BaseModel):
-    platform: str
-    status: str
-    external_id: Optional[str] = None
-    external_url: Optional[str] = None
-    error: Optional[str] = None
-    published_at: Optional[str] = None
-
-
 class SocialPostHistoryDetailResponse(SocialPostHistoryItemResponse):
-    publications: List[SocialPostPublicationResponse] = []
+    pass
 
 
 class SocialPostHistoryPublishRequest(BaseModel):

@@ -76,6 +76,17 @@ def _history_item_response(
     pubs = publications if publications is not None else list(getattr(record, "publications", []) or [])
     platforms_published = sorted({p.platform for p in pubs if p.status == "success"})
     media_filename = getattr(record, "media_filename", None)
+    publication_items = [
+        SocialPostPublicationResponse(
+            platform=p.platform,
+            status=p.status,
+            external_id=p.external_id,
+            external_url=p.external_url,
+            error=p.error,
+            published_at=p.published_at.isoformat() if p.published_at else None,
+        )
+        for p in pubs
+    ]
     return SocialPostHistoryItemResponse(
         id=record.id,
         query=record.query,
@@ -93,6 +104,7 @@ def _history_item_response(
         related_published_post_id=getattr(record, "related_published_post_id", None),
         created_at=record.created_at.isoformat() if record.created_at else "",
         updated_at=record.updated_at.isoformat() if getattr(record, "updated_at", None) else None,
+        publications=publication_items,
     )
 
 
@@ -102,21 +114,7 @@ def _history_detail_response(
     http_request: Request | None = None,
 ) -> SocialPostHistoryDetailResponse:
     base = _history_item_response(record, http_request=http_request)
-    pubs = list(getattr(record, "publications", []) or [])
-    return SocialPostHistoryDetailResponse(
-        **base.model_dump(),
-        publications=[
-            SocialPostPublicationResponse(
-                platform=p.platform,
-                status=p.status,
-                external_id=p.external_id,
-                external_url=p.external_url,
-                error=p.error,
-                published_at=p.published_at.isoformat() if p.published_at else None,
-            )
-            for p in pubs
-        ],
-    )
+    return SocialPostHistoryDetailResponse(**base.model_dump())
 
 
 def _validate_remote_image_url(url: str) -> str:
