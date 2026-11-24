@@ -16,8 +16,13 @@ from app.services.social_account_service import (
 
 logger = logging.getLogger(__name__)
 
-# gql.hashnode.com historically 301'd to an HTML page; gql-beta is the live GraphQL host.
-HASHNODE_GQL_URL = "https://gql-beta.hashnode.com"
+# Prefer the documented host; fall back to beta if the primary returns HTML/errors.
+HASHNODE_GQL_URLS = (
+    "https://gql.hashnode.com",
+    "https://gql-beta.hashnode.com",
+)
+# Back-compat for tests / imports.
+HASHNODE_GQL_URL = HASHNODE_GQL_URLS[0]
 
 ME_QUERY = """
 query Me {
@@ -30,6 +35,7 @@ query Me {
         node {
           id
           title
+          url
         }
       }
     }
@@ -50,12 +56,21 @@ mutation PublishPost($input: PublishPostInput!) {
 """
 
 
-def _auth_header(token: str) -> str:
-    """Hashnode accepts the PAT with or without a Bearer prefix."""
+def _auth_variants(token: str) -> list[str]:
+    """Hashnode docs use the raw PAT; some gateways also accept Bearer."""
     value = (token or "").strip()
+    if not value:
+        return []
     if value.lower().startswith("bearer "):
-        return value
-    return f"Bearer {value}"
+        raw = value[7:].strip()
+        return [raw, value] if raw else [value]
+    return [value, f"Bearer {value}"]
+
+
+def _auth_header(token: str) -> str:
+    """Preferred Authorization value (raw PAT first)."""
+    variants = _auth_variants(token)
+    return variants[0] if variants else ""
 
 
 def _first_publication_id(profile: dict[str, Any]) -> Optional[str]:
@@ -73,12 +88,44 @@ def _first_publication_id(profile: dict[str, Any]) -> Optional[str]:
     return None
 
 
-async def _graphql(token: str, query: str, variables: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def _publication_hint() -> str:
+    return (
+        "Open your Hashnode blog dashboard → Settings (or the browser URL) and copy the "
+        "Publication ID, or run me { publications(first: 1) { edges { node { id } } } } "
+        "in https://gql.hashnode.com with your PAT. You can paste that ID in Connect."
+    )
+
+
+async def _graphql(
+    token: str,
+    query: str,
+    variables: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    last_error: Optional[Exception] = None
+    for url in HASHNODE_GQL_URLS:
+        for auth in _auth_variants(token):
+            try:
+                return await _graphql_once(url, auth, query, variables)
+            except ValueError as exc:
+                last_error = exc
+                logger.warning("Hashnode GraphQL attempt failed url=%s: %s", url, exc)
+                continue
+    if last_error:
+        raise last_error
+    raise ValueError("Hashnode API request failed")
+
+
+async def _graphql_once(
+    url: str,
+    authorization: str,
+    query: str,
+    variables: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify(), follow_redirects=True) as client:
         response = await client.post(
-            HASHNODE_GQL_URL,
+            url,
             headers={
-                "Authorization": _auth_header(token),
+                "Authorization": authorization,
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
@@ -86,11 +133,11 @@ async def _graphql(token: str, query: str, variables: Optional[dict[str, Any]] =
         )
     if response.status_code >= 400:
         raw = (response.text or "").strip()[:600]
-        logger.error("Hashnode GraphQL HTTP error %s: %s", response.status_code, raw)
+        logger.error("Hashnode GraphQL HTTP error %s at %s: %s", response.status_code, url, raw)
         raise ValueError(
             f"Hashnode API error (HTTP {response.status_code}): "
             f"{raw or 'empty response'}. "
-            "Check that your personal access token is valid and the publication is on a Pro plan."
+            "Check that your personal access token is valid."
         )
     content_type = (response.headers.get("content-type") or "").lower()
     raw = (response.text or "").strip()
@@ -106,10 +153,17 @@ async def _graphql(token: str, query: str, variables: Optional[dict[str, Any]] =
             "Hashnode returned invalid JSON. "
             "Use a Personal Access Token from hashnode.com/settings/developer."
         ) from exc
-    if payload.get("errors"):
-        message = payload["errors"][0].get("message", "Hashnode API error")
+
+    data = payload.get("data") or {}
+    errors = payload.get("errors") or []
+    if errors:
+        message = errors[0].get("message", "Hashnode API error") if isinstance(errors[0], dict) else str(errors[0])
+        # Partial success: me may still be usable when publications field errors.
+        if isinstance(data.get("me"), dict):
+            logger.warning("Hashnode GraphQL partial errors at %s: %s", url, message)
+            return data
         raise ValueError(message)
-    return payload.get("data") or {}
+    return data
 
 
 async def fetch_user(token: str) -> dict[str, Any]:
@@ -131,7 +185,7 @@ async def publish_article(
     if not publication_id:
         raise ValueError(
             "Hashnode publication ID is required. Reconnect Hashnode in Social accounts "
-            "so your blog publication can be detected, or ensure the account has a publication."
+            "and paste your Publication ID if it was not detected automatically."
         )
 
     input_payload: dict[str, Any] = {
@@ -152,15 +206,19 @@ async def save_hashnode_account_from_token(
     db: Session,
     user_id: int,
     api_token: str,
+    *,
+    publication_id: Optional[str] = None,
 ) -> SocialAccount:
     profile = await fetch_user(api_token)
     username = profile.get("username") or profile.get("name") or "Hashnode"
     label = f"@{username}" if username and not str(username).startswith("@") else str(username)
-    publication_id = _first_publication_id(profile)
-    if not publication_id:
+
+    resolved_publication_id = (publication_id or "").strip() or _first_publication_id(profile)
+    if not resolved_publication_id:
         raise ValueError(
             "No Hashnode publication found on this account. "
-            "Create a blog on Hashnode first, then reconnect."
+            "Create a blog on Hashnode (or use a blog you own), then reconnect. "
+            + _publication_hint()
         )
 
     return upsert_social_account_tokens(
@@ -174,7 +232,7 @@ async def save_hashnode_account_from_token(
         metadata={
             "username": username,
             "profile": profile,
-            "publication_id": publication_id,
+            "publication_id": resolved_publication_id,
         },
     )
 

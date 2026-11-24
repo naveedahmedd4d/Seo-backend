@@ -30,9 +30,20 @@ LINKEDIN_REST_VERSION = "202611"
 
 # w_organization_social: post as a Company Page the member administers.
 # rw_organization_admin: list organization ACLs so we can offer a Page picker.
+# These org scopes only appear on the token when the LinkedIn Developer app has
+# Community Management API (or Advertising API) approved — Share on LinkedIn alone
+# grants w_member_social only. Community Management cannot be mixed with Share on LinkedIn.
 LINKEDIN_SCOPES = (
     "openid profile email w_member_social w_organization_social "
     "rw_organization_admin r_organization_admin"
+)
+_ORG_POST_SCOPES = frozenset({"w_organization_social", "w_organization_social_feed"})
+_ORG_PERMISSIONS_HINT = (
+    "Your LinkedIn token is missing organization posting scopes "
+    "(w_organization_social). In LinkedIn Developers: create/use an app with "
+    "Community Management API approved (do not mix it with Share on LinkedIn — "
+    "those products are exclusive), ensure you are Admin/Content Admin on the Page, "
+    "then disconnect and reconnect LinkedIn so the new scopes are granted."
 )
 
 # Wire values from LinkedIn Organization Access Control docs.
@@ -110,6 +121,42 @@ def _expires_at_from_token_payload(payload: dict[str, Any]) -> Optional[datetime
     if not expires_in:
         return None
     return datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+
+
+def _normalize_granted_scopes(raw: Any) -> set[str]:
+    if raw is None:
+        return set()
+    if isinstance(raw, (list, tuple, set)):
+        parts = [str(item).strip() for item in raw]
+    else:
+        text = str(raw).replace(",", " ")
+        parts = text.split()
+    return {part for part in parts if part}
+
+
+def _token_has_organization_post_scope(metadata: dict[str, Any]) -> bool | None:
+    """Return True/False when granted_scope is known; None when unknown (legacy accounts)."""
+    granted = _normalize_granted_scopes(metadata.get("granted_scope"))
+    if not granted:
+        return None
+    return bool(granted & _ORG_POST_SCOPES)
+
+
+def _linkedin_org_post_error_message(status_code: int, body_text: str) -> str:
+    lowered = (body_text or "").lower()
+    if (
+        "organization or events permissions" in lowered
+        or "organization as author" in lowered
+        or "w_organization_social" in lowered
+    ):
+        return (
+            f"LinkedIn Company Page post failed ({status_code}): missing organization "
+            f"posting permission. {_ORG_PERMISSIONS_HINT}"
+        )
+    return (
+        f"LinkedIn Company Page post failed ({status_code}): "
+        f"{(body_text or '')[:400] or 'Bad Request'}"
+    )
 
 
 async def fetch_userinfo(access_token: str) -> dict[str, Any]:
@@ -508,10 +555,7 @@ async def _create_organization_post(
                 f"Server is using Linkedin-Version {LINKEDIN_REST_VERSION}; "
                 "ask an admin to update LINKEDIN_REST_VERSION to a current YYYYMM release."
             )
-        raise ValueError(
-            f"LinkedIn Company Page post failed ({response.status_code}): "
-            f"{body_text[:400] or response.reason_phrase}"
-        )
+        raise ValueError(_linkedin_org_post_error_message(response.status_code, body_text))
     post_id = response.headers.get("x-restli-id") or response.headers.get("X-RestLi-Id")
     if post_id:
         return {"id": post_id}
@@ -546,6 +590,7 @@ async def save_linkedin_account_from_code(
         logger.exception("LinkedIn organization discovery failed during connect")
         discovery_warning = "Could not load Company Pages during connect. Try Refresh or add by slug."
 
+    granted_scope = token_payload.get("scope")
     metadata: dict[str, Any] = {
         "person_urn": person_urn,
         "sub": userinfo.get("sub"),
@@ -557,7 +602,14 @@ async def save_linkedin_account_from_code(
         "default_organization_id": None,
         "default_organization_name": None,
         "post_as": "person",
+        "granted_scope": granted_scope,
     }
+    if granted_scope and not (_normalize_granted_scopes(granted_scope) & _ORG_POST_SCOPES):
+        metadata["organizations_warning"] = (
+            (discovery_warning + " " if discovery_warning else "")
+            + "Token is missing w_organization_social — Company Page posts will fail until "
+            "Community Management API is approved on the app and LinkedIn is reconnected."
+        ).strip()
 
     return upsert_social_account_tokens(
         db,
@@ -743,6 +795,11 @@ async def get_valid_linkedin_access_token(
         prefer_person=prefer_person,
     )
 
+    if author_urn.startswith("urn:li:organization:"):
+        has_org_scope = _token_has_organization_post_scope(metadata)
+        if has_org_scope is False:
+            raise ValueError(_ORG_PERMISSIONS_HINT)
+
     if account.token_expires_at:
         expires_at = account.token_expires_at
         if expires_at.tzinfo is None:
@@ -751,6 +808,9 @@ async def get_valid_linkedin_access_token(
             refresh_token = get_decrypted_refresh_token(account)
             if refresh_token:
                 token_payload = await refresh_access_token(credentials, refresh_token)
+                refreshed_meta = dict(metadata)
+                if token_payload.get("scope"):
+                    refreshed_meta["granted_scope"] = token_payload.get("scope")
                 upsert_social_account_tokens(
                     db,
                     user_id,
@@ -759,7 +819,7 @@ async def get_valid_linkedin_access_token(
                     refresh_token=token_payload.get("refresh_token") or refresh_token,
                     token_expires_at=_expires_at_from_token_payload(token_payload),
                     account_label=account.account_label,
-                    metadata=metadata,
+                    metadata=refreshed_meta,
                 )
                 return token_payload["access_token"], author_urn
 

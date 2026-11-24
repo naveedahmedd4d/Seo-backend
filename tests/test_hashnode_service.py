@@ -7,14 +7,15 @@ import pytest
 from app.services.hashnode_service import HASHNODE_GQL_URL, _auth_header, _graphql, fetch_user
 
 
-def test_hashnode_endpoint_is_current_beta_host():
-    assert HASHNODE_GQL_URL == "https://gql-beta.hashnode.com"
+def test_hashnode_endpoint_prefers_docs_host():
+    assert HASHNODE_GQL_URL == "https://gql.hashnode.com"
 
 
-def test_auth_header_adds_bearer_once():
-    assert _auth_header("abc123") == "Bearer abc123"
-    assert _auth_header("Bearer abc123") == "Bearer abc123"
-    assert _auth_header("bearer abc123") == "bearer abc123"
+def test_auth_header_prefers_raw_pat():
+    # Hashnode docs pass the PAT without a Bearer prefix.
+    assert _auth_header("abc123") == "abc123"
+    assert _auth_header("Bearer abc123") == "abc123"
+    assert _auth_header("bearer abc123") == "abc123"
 
 
 @pytest.mark.asyncio
@@ -80,4 +81,4 @@ async def test_fetch_user_uses_me_payload():
 
     assert me["username"] == "naveed"
     called_url = mock_client.post.await_args.args[0]
-    assert called_url == "https://gql-beta.hashnode.com"
+    assert called_url == "https://gql.hashnode.com"

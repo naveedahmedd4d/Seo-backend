@@ -107,6 +107,8 @@ class BlueskyConnectResponse(BaseModel):
 
 class ApiKeyConnectRequest(BaseModel):
     api_key: str
+    # Optional Hashnode Publication ID when auto-discovery returns none.
+    publication_id: Optional[str] = None
 
 
 class ApiKeyConnectResponse(BaseModel):

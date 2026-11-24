@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 from datetime import datetime, timedelta, timezone
@@ -26,10 +27,12 @@ X_AUTH_URL = "https://x.com/i/oauth2/authorize"
 X_TOKEN_URL = "https://api.x.com/2/oauth2/token"
 X_API_BASE = "https://api.x.com/2"
 
-# Connect scopes: omit media.write — Free/Basic apps often reject it at authorize
-# or token exchange. Image upload still uses the v1.1 media endpoint when allowed.
+# Omit media.write at connect — Free/Basic X apps often hang or reject the authorize
+# screen when it is requested. Text posts work; image upload uses v2 when the token
+# already has media.write (Elevated/paid), otherwise we post text-only.
 X_SCOPES = "tweet.read tweet.write users.read offline.access"
-X_MEDIA_UPLOAD_URL = "https://upload.twitter.com/1.1/media/upload.json"
+X_MEDIA_UPLOAD_URL = "https://api.x.com/2/media/upload"
+X_MEDIA_CHUNK_BYTES = 4 * 1024 * 1024
 
 
 def build_authorization_url(
@@ -182,22 +185,165 @@ async def fetch_user_profile(access_token: str) -> dict[str, Any]:
     return response.json().get("data") or {}
 
 
-async def upload_media(access_token: str, image_bytes: bytes, media_type: str = "image/png") -> str:
-    """Upload image via Twitter v1.1 simple upload; returns media_id_string."""
-    async with httpx.AsyncClient(timeout=60.0, verify=httpx_verify()) as client:
-        response = await client.post(
-            X_MEDIA_UPLOAD_URL,
-            headers={"Authorization": f"Bearer {access_token}"},
-            files={"media": ("image.png", image_bytes, media_type)},
+def _x_response_detail(response: httpx.Response) -> str:
+    try:
+        err = response.json()
+        if isinstance(err, dict):
+            detail = (
+                err.get("detail")
+                or err.get("title")
+                or err.get("error")
+                or (err.get("errors") or [{}])[0].get("message")
+                or ""
+            )
+            if detail:
+                return str(detail)
+    except Exception:
+        pass
+    return (response.text or "").strip()[:300] or response.reason_phrase or "error"
+
+
+def _extract_media_id(payload: dict[str, Any]) -> Optional[str]:
+    data = payload.get("data") if isinstance(payload.get("data"), dict) else None
+    if data:
+        media_id = data.get("id") or data.get("media_id_string") or data.get("media_id")
+        if media_id:
+            return str(media_id)
+    media_id = payload.get("media_id_string") or payload.get("media_id") or payload.get("id")
+    return str(media_id) if media_id else None
+
+
+def _media_upload_error(response: httpx.Response, step: str) -> ValueError:
+    detail = _x_response_detail(response)
+    logger.error("X media upload %s failed %s: %s", step, response.status_code, detail)
+    if response.status_code in {401, 403}:
+        return ValueError(
+            f"X media upload forbidden ({response.status_code}) during {step}: {detail}. "
+            "v1.1 media upload is retired; Free/Basic apps often cannot attach images. "
+            "The tweet can still publish as text-only."
         )
-    if response.status_code >= 400:
-        logger.error("X media upload failed: %s", response.text)
-        response.raise_for_status()
-    payload = response.json()
-    media_id = payload.get("media_id_string") or payload.get("media_id")
-    if not media_id:
-        raise ValueError("X media upload did not return media_id")
-    return str(media_id)
+    return ValueError(f"X media upload failed during {step} ({response.status_code}): {detail}")
+
+
+async def upload_media(access_token: str, image_bytes: bytes, media_type: str = "image/png") -> str:
+    """Upload image via X API v2 media upload (INIT / APPEND / FINALIZE)."""
+    if not image_bytes:
+        raise ValueError("X media upload requires image bytes")
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    total_bytes = len(image_bytes)
+
+    async with httpx.AsyncClient(timeout=90.0, verify=httpx_verify()) as client:
+        init_response = await client.post(
+            X_MEDIA_UPLOAD_URL,
+            headers={**headers, "Content-Type": "application/json"},
+            json={
+                "command": "INIT",
+                "media_type": media_type,
+                "total_bytes": total_bytes,
+                "media_category": "tweet_image",
+            },
+        )
+        if init_response.status_code >= 400:
+            # Some X builds expect form-encoded INIT instead of JSON.
+            init_response = await client.post(
+                X_MEDIA_UPLOAD_URL,
+                headers=headers,
+                data={
+                    "command": "INIT",
+                    "media_type": media_type,
+                    "total_bytes": str(total_bytes),
+                    "media_category": "tweet_image",
+                },
+            )
+        if init_response.status_code >= 400:
+            raise _media_upload_error(init_response, "INIT")
+
+        try:
+            init_payload = init_response.json() if init_response.content else {}
+        except Exception:
+            init_payload = {}
+        media_id = _extract_media_id(init_payload if isinstance(init_payload, dict) else {})
+        if not media_id:
+            raise ValueError("X media INIT did not return a media id")
+
+        for segment_index, start in enumerate(range(0, total_bytes, X_MEDIA_CHUNK_BYTES)):
+            chunk = image_bytes[start : start + X_MEDIA_CHUNK_BYTES]
+            append_response = await client.post(
+                X_MEDIA_UPLOAD_URL,
+                headers=headers,
+                data={
+                    "command": "APPEND",
+                    "media_id": media_id,
+                    "segment_index": str(segment_index),
+                },
+                files={"media": (f"chunk_{segment_index}.bin", chunk, media_type)},
+            )
+            # APPEND often returns 204 No Content.
+            if append_response.status_code >= 400:
+                raise _media_upload_error(append_response, "APPEND")
+
+        finalize_response = await client.post(
+            X_MEDIA_UPLOAD_URL,
+            headers=headers,
+            data={
+                "command": "FINALIZE",
+                "media_id": media_id,
+            },
+        )
+        if finalize_response.status_code >= 400:
+            finalize_response = await client.post(
+                X_MEDIA_UPLOAD_URL,
+                headers={**headers, "Content-Type": "application/json"},
+                json={"command": "FINALIZE", "media_id": media_id},
+            )
+        if finalize_response.status_code >= 400:
+            raise _media_upload_error(finalize_response, "FINALIZE")
+
+        try:
+            final_payload = finalize_response.json() if finalize_response.content else {}
+        except Exception:
+            final_payload = {}
+        if isinstance(final_payload, dict):
+            data = final_payload.get("data") if isinstance(final_payload.get("data"), dict) else final_payload
+            processing = data.get("processing_info") if isinstance(data, dict) else None
+            if isinstance(processing, dict) and processing.get("state") in {"pending", "in_progress"}:
+                # Images are usually sync; poll briefly if X asks.
+                for _ in range(5):
+                    wait_s = int(processing.get("check_after_secs") or 1)
+                    await asyncio.sleep(min(max(wait_s, 1), 5))
+                    status_response = await client.get(
+                        X_MEDIA_UPLOAD_URL,
+                        headers=headers,
+                        params={"command": "STATUS", "media_id": media_id},
+                    )
+                    if status_response.status_code >= 400:
+                        break
+                    try:
+                        status_payload = status_response.json()
+                    except Exception:
+                        break
+                    status_data = (
+                        status_payload.get("data")
+                        if isinstance(status_payload.get("data"), dict)
+                        else status_payload
+                    )
+                    processing = (
+                        status_data.get("processing_info")
+                        if isinstance(status_data, dict)
+                        else None
+                    )
+                    if not isinstance(processing, dict):
+                        break
+                    state = processing.get("state")
+                    if state == "succeeded":
+                        break
+                    if state == "failed":
+                        raise ValueError(
+                            f"X media processing failed: {processing.get('error') or processing}"
+                        )
+
+    return media_id
 
 
 async def create_tweet(

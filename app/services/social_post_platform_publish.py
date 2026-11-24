@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+
 import httpx
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.schemas.social_post import SocialPostPublishResultItem
 from app.services.blogger_service import create_post as create_blogger_post, get_valid_blogger_access_token
@@ -284,9 +288,16 @@ async def _publish_to_x(
     try:
         access_token = await get_valid_x_access_token(db, user_id)
         media_ids: list[str] | None = None
+        media_warning: str | None = None
         if image_bytes:
-            media_id = await upload_x_media(access_token, image_bytes)
-            media_ids = [media_id]
+            try:
+                media_id = await upload_x_media(access_token, image_bytes)
+                media_ids = [media_id]
+            except Exception as media_exc:
+                # Don't block the tweet when media upload is unavailable (sunset v1.1 /
+                # missing media.write). Post text-only and surface the warning.
+                logger.warning("X media upload skipped, posting text only: %s", media_exc)
+                media_warning = f"Posted without image: {media_exc}"
         tweet = await create_tweet(access_token, text, media_ids=media_ids)
         tweet_id = tweet.get("id")
         metadata = get_account_metadata(account)
@@ -301,6 +312,7 @@ async def _publish_to_x(
             success=True,
             external_id=str(tweet_id) if tweet_id else None,
             external_url=external_url,
+            error=media_warning,
         )
     except Exception as exc:
         return SocialPostPublishResultItem(platform="x", success=False, error=str(exc))

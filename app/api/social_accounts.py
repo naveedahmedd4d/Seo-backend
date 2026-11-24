@@ -721,7 +721,12 @@ async def hashnode_connect(
     if not request.api_key.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Hashnode API token is required")
     try:
-        account = await save_hashnode_account_from_token(db, current_user.id, request.api_key)
+        account = await save_hashnode_account_from_token(
+            db,
+            current_user.id,
+            request.api_key,
+            publication_id=request.publication_id,
+        )
     except Exception as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
