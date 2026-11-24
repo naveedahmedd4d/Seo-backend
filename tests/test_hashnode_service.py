@@ -35,13 +35,40 @@ async def test_graphql_rejects_html_announcement_body():
 
 
 @pytest.mark.asyncio
+async def test_graphql_surfaces_http_error_body():
+    response = MagicMock()
+    response.status_code = 400
+    response.headers = {"content-type": "application/json"}
+    response.text = '{"errors":[{"message":"publicationId is required"}]}'
+    response.reason_phrase = "Bad Request"
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.post = AsyncMock(return_value=response)
+
+    with patch("app.services.hashnode_service.httpx.AsyncClient", return_value=mock_client):
+        with pytest.raises(ValueError, match="publicationId is required"):
+            await _graphql("token", "{ me { id } }")
+
+
+@pytest.mark.asyncio
 async def test_fetch_user_uses_me_payload():
     response = MagicMock()
     response.status_code = 200
     response.headers = {"content-type": "application/json"}
-    response.text = '{"data":{"me":{"id":"1","username":"naveed","name":"Naveed"}}}'
+    response.text = (
+        '{"data":{"me":{"id":"1","username":"naveed","name":"Naveed",'
+        '"publications":{"edges":[{"node":{"id":"pub1","title":"Blog"}}]}}}}'
+    )
     response.json.return_value = {
-        "data": {"me": {"id": "1", "username": "naveed", "name": "Naveed"}}
+        "data": {
+            "me": {
+                "id": "1",
+                "username": "naveed",
+                "name": "Naveed",
+                "publications": {"edges": [{"node": {"id": "pub1", "title": "Blog"}}]},
+            }
+        }
     }
 
     mock_client = AsyncMock()

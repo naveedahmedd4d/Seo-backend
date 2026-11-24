@@ -11,7 +11,11 @@ from app.services.bluesky_service import create_post, get_valid_bluesky_session,
 from app.services.devto_service import create_article as create_devto_article, get_devto_api_key
 from app.services.facebook_image_adapt import adapt_social_card_for_facebook_feed
 from app.services.facebook_service import get_valid_facebook_page_context, publish_page_photo
-from app.services.hashnode_service import get_hashnode_token, publish_article as publish_hashnode_article
+from app.services.hashnode_service import (
+    get_hashnode_publication_id,
+    get_hashnode_token,
+    publish_article as publish_hashnode_article,
+)
 from app.services.http_ssl import httpx_verify
 from app.services.instagram_service import get_valid_instagram_context, publish_instagram_image_post
 from app.services.linkedin_service import create_text_share, get_valid_linkedin_access_token
@@ -401,7 +405,22 @@ async def _publish_to_hashnode(
 ) -> SocialPostPublishResultItem:
     try:
         token = get_hashnode_token(db, user_id)
-        post = await publish_hashnode_article(token, title=title, content_markdown=content_markdown)
+        publication_id = get_hashnode_publication_id(db, user_id)
+        if not publication_id:
+            return SocialPostPublishResultItem(
+                platform="hashnode",
+                success=False,
+                error=(
+                    "Hashnode publication ID is missing. Reconnect Hashnode in Social accounts "
+                    "so your blog publication can be detected."
+                ),
+            )
+        post = await publish_hashnode_article(
+            token,
+            title=title,
+            content_markdown=content_markdown,
+            publication_id=publication_id,
+        )
         return SocialPostPublishResultItem(
             platform="hashnode",
             success=True,
@@ -695,6 +714,13 @@ async def _publish_to_linkedin(
                 user_id,
                 organization_id=organization_id,
             )
+            # Prefer label from the resolved author — empty options + Page default
+            # used to say "personal profile" while posting as the Company Page.
+            if author_urn.startswith("urn:li:organization:"):
+                org_id = author_urn.rsplit(":", 1)[-1]
+                label = f"Company Page {org_id}"
+            else:
+                label = "personal profile"
             result = await create_text_share(
                 access_token,
                 author_urn=author_urn,

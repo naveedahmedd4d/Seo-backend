@@ -216,8 +216,27 @@ async def create_tweet(
             json=body,
         )
     if response.status_code >= 400:
-        logger.error("X tweet failed: %s", response.text)
-        response.raise_for_status()
+        detail = ""
+        try:
+            err = response.json()
+            detail = (
+                err.get("detail")
+                or err.get("title")
+                or (err.get("errors") or [{}])[0].get("message")
+                or ""
+            )
+        except Exception:
+            detail = ""
+        if not detail:
+            detail = (response.text or "").strip()[:300]
+        logger.error("X tweet failed %s: %s", response.status_code, detail)
+        if response.status_code == 403:
+            raise ValueError(
+                f"X rejected the tweet (403): {detail or 'Forbidden'}. "
+                "In the X Developer Portal set app permissions to Read and Write, "
+                "then disconnect and reconnect X in Social accounts."
+            )
+        raise ValueError(f"X API error ({response.status_code}): {detail or response.reason_phrase}")
     return response.json().get("data") or {}
 
 
@@ -273,6 +292,15 @@ async def get_valid_x_access_token(db: Session, user_id: int) -> str:
     if not credentials:
         raise ValueError("X app credentials missing")
 
+    metadata = get_account_metadata(account)
+    granted = str(metadata.get("granted_scope") or "")
+    if granted and "tweet.write" not in granted.split():
+        raise ValueError(
+            f"X token scopes [{granted}] are missing tweet.write. "
+            "Set the X app to Read and Write in the Developer Portal, "
+            "then disconnect and reconnect X in Social accounts."
+        )
+
     if account.token_expires_at:
         expires_at = account.token_expires_at
         if expires_at.tzinfo is None:
@@ -289,7 +317,7 @@ async def get_valid_x_access_token(db: Session, user_id: int) -> str:
                     refresh_token=token_payload.get("refresh_token") or refresh_token,
                     token_expires_at=_expires_at_from_token_payload(token_payload),
                     account_label=account.account_label,
-                    metadata=get_account_metadata(account),
+                    metadata=metadata,
                 )
                 return token_payload["access_token"]
 

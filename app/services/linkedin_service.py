@@ -461,8 +461,12 @@ async def create_text_share(
             },
         )
     if response.status_code >= 400:
-        logger.error("LinkedIn ugcPosts failed: %s", response.text)
-        response.raise_for_status()
+        body_text = (response.text or "").strip()
+        logger.error("LinkedIn ugcPosts failed: %s", body_text[:500])
+        raise ValueError(
+            f"LinkedIn personal post failed ({response.status_code}): "
+            f"{body_text[:400] or response.reason_phrase}"
+        )
     if response.status_code == 201:
         post_id = response.headers.get("x-restli-id") or response.headers.get("X-RestLi-Id")
         return {"id": post_id}
@@ -480,15 +484,12 @@ async def _create_organization_post(
     if article_url:
         commentary = f"{commentary}\n\n{article_url}".strip() if commentary else article_url
 
+    # LinkedIn 202506+ rejects empty targetEntities / thirdPartyDistributionChannels arrays.
     body: dict[str, Any] = {
         "author": organization_urn,
         "commentary": commentary[:3000],
         "visibility": "PUBLIC",
-        "distribution": {
-            "feedDistribution": "MAIN_FEED",
-            "targetEntities": [],
-            "thirdPartyDistributionChannels": [],
-        },
+        "distribution": {"feedDistribution": "MAIN_FEED"},
         "lifecycleState": "PUBLISHED",
         "isReshareDisabledByAuthor": False,
     }
@@ -499,14 +500,18 @@ async def _create_organization_post(
             headers=_rest_headers(access_token),
         )
     if response.status_code >= 400:
-        logger.error("LinkedIn organization posts failed: %s", response.text)
+        body_text = (response.text or "").strip()
+        logger.error("LinkedIn organization posts failed: %s", body_text[:500])
         if response.status_code == 426:
             raise ValueError(
                 "LinkedIn API version is outdated (426 Upgrade Required). "
                 f"Server is using Linkedin-Version {LINKEDIN_REST_VERSION}; "
                 "ask an admin to update LINKEDIN_REST_VERSION to a current YYYYMM release."
             )
-        response.raise_for_status()
+        raise ValueError(
+            f"LinkedIn Company Page post failed ({response.status_code}): "
+            f"{body_text[:400] or response.reason_phrase}"
+        )
     post_id = response.headers.get("x-restli-id") or response.headers.get("X-RestLi-Id")
     if post_id:
         return {"id": post_id}
@@ -705,9 +710,9 @@ def resolve_linkedin_author_urn(
 
     post_as = str(metadata.get("post_as") or "").strip().lower()
     default_org = metadata.get("default_organization_id")
+    # Only route to the Company Page when the account default explicitly says so.
+    # Do not treat any non-"person" value as org — that mis-routes personal publishes.
     if post_as == "organization" and default_org:
-        return organization_urn_from_id(str(default_org))
-    if post_as != "person" and default_org:
         return organization_urn_from_id(str(default_org))
 
     person_urn = str(metadata.get("person_urn") or "")

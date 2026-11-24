@@ -50,6 +50,16 @@ def test_resolve_author_falls_back_to_person():
     assert resolve_linkedin_author_urn(metadata) == "urn:li:person:abc"
 
 
+def test_resolve_author_ignores_org_when_post_as_not_organization():
+    """Non-empty default_org must not override personal unless post_as is organization."""
+    metadata = {
+        "person_urn": "urn:li:person:abc",
+        "post_as": "both",
+        "default_organization_id": "5515715",
+    }
+    assert resolve_linkedin_author_urn(metadata) == "urn:li:person:abc"
+
+
 def test_linkedin_publish_targets_supports_both():
     from app.services.social_post_platform_publish import _linkedin_publish_targets
 
